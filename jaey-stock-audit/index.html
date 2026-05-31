@@ -504,6 +504,7 @@ select:focus,input:focus,textarea:focus{border-color:var(--gold);background:var(
       <strong id="ss-prod2"></strong>
       <div class="meta" id="ss-meta"></div>
     </div>
+    <div id="ss-size-display" style="display:none;font-family:'DM Serif Display',serif;font-size:32px;font-weight:700;color:var(--ink);line-height:1;flex-shrink:0;min-width:60px;text-align:right"></div>
   </div>
   <div id="no-csv-warning" style="display:none;background:var(--rose);color:white;padding:9px 14px;font-size:12px;font-weight:600;text-align:center">
     ⚠️ Stock data not loaded — barcodes will show as unknown. Ask admin to upload the CSV.
@@ -1149,6 +1150,8 @@ function openScan(product,color){
 
   document.getElementById('bc-in').value='';
   document.getElementById('bc-fb').className='scan-fb';
+  const szDispReset=document.getElementById('ss-size-display');
+  if(szDispReset){ szDispReset.style.display='none'; szDispReset.textContent=''; }
   renderScanList();
 
   // Show warning if stock CSV not loaded
@@ -1166,6 +1169,8 @@ function closeScanScreen(){
     }
   }
   document.getElementById('scan-screen').classList.remove('active');
+  const szDisp=document.getElementById('ss-size-display');
+  if(szDisp){ szDisp.style.display='none'; szDisp.textContent=''; }
   currentScan=null;
 }
 
@@ -1179,18 +1184,18 @@ function addBC(){
   }
   const found=stockData.find(r=>r.barcode==bc);
   if(!found){
-    showFB('mm','❌ Unknown barcode','Not in system.','');
+    showFB('mm','❌ Unknown barcode','Not in system.','',null);
     currentScan.scanned.push(bc+'__UNKNOWN');
   } else {
     const right=found.product===currentScan.product&&found.color===currentScan.color;
     if(!right){
-      showFB('mm','⚠️ Wrong product!',`Expected: <strong>${currentScan.product}</strong><br>Found: <strong>${found.product} · ${found.color}</strong>`,found.size);
+      showFB('mm','⚠️ Wrong product!',`Expected: <strong>${currentScan.product}</strong><br>Found: <strong>${found.product} · ${found.color}</strong>`,found.size,found.status);
       currentScan.scanned.push(bc+'__WRONG:'+found.product+'|||'+found.color);
     } else if(found.status!=='inward'){
-      showFB('warn','⚠️ System says OUT',`<strong>${found.product} · ${found.color}</strong>`,found.size);
+      showFB('warn','⚠️ System says OUTWARD',`<strong>${found.product} · ${found.color}</strong>`,found.size,found.status);
       currentScan.scanned.push(bc);
     } else {
-      showFB('ok','✓ Match',`<strong>${found.product} · ${found.color}</strong>`,found.size);
+      showFB('ok','✓ Match',`<strong>${found.product} · ${found.color}</strong>`,found.size,found.status);
       currentScan.scanned.push(bc);
     }
   }
@@ -1207,10 +1212,31 @@ function addBulk(){
   toast(lines.length+' barcodes added');
 }
 
-function showFB(type,title,body,size){
+function showFB(type,title,body,size,status){
   const el=document.getElementById('bc-fb');
-  el.className='scan-fb '+type;
-  el.innerHTML=`<div class="fb-name">${title}</div>${body?'<div style="margin-top:2px">'+body+'</div>':''}${size?'<span class="sz-pill">Size: '+size+'</span>':''}`;
+  const realType = type==='warn' ? 'mm' : type;
+  el.className='scan-fb '+realType;
+  const keepAside = realType==='mm';
+  const statusBadge = status
+    ? `<span style="background:${status==='inward'?'var(--sage)':'var(--rose)'};color:white;font-size:11px;font-weight:700;padding:2px 7px;border-radius:10px;margin-left:5px">System: ${status==='inward'?'INWARD':'OUTWARD'}</span>`
+    : '';
+  el.innerHTML=`
+    ${keepAside
+      ? `<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+           <span style="font-size:16px;font-weight:800;color:var(--rose);letter-spacing:.02em">🔴 KEEP ASIDE</span>
+           ${statusBadge}
+         </div>`
+      : `<div style="margin-bottom:4px">${statusBadge}</div>`
+    }
+    <div class="fb-name" style="font-size:14px">${title}</div>
+    ${body ? `<div style="margin-top:4px;font-size:13px;line-height:1.4">${body}</div>` : ''}
+    ${size ? `<span class="sz-pill" style="margin-top:5px;display:inline-block">Size: ${size}</span>` : ''}`;
+  // Big size in context bar
+  const szDisp=document.getElementById('ss-size-display');
+  if(szDisp){
+    if(size){ szDisp.textContent=size; szDisp.style.display='block'; szDisp.style.color=keepAside?'var(--rose)':'var(--sage)'; }
+    else szDisp.style.display='none';
+  }
 }
 
 function renderScanList(){
@@ -1228,9 +1254,13 @@ function renderScanList(){
     const f=stockData.find(r=>r.barcode==bc);
     let szClass='ok', szTxt=f?f.size:'?';
     if(isUnk||!f){szClass='mm';szTxt='?';}else if(isWrong){szClass='mm';}else if(f.status!=='inward'){szClass='mm';}
+    const statusTxt=(!isUnk&&f)?` · ${f.status==='inward'?'IN':'OUT'}`:'';
     html+=`<div class="sc-list-item">
       <span class="sli-bc">${bc}</span>
-      <span class="sli-sz ${szClass}">${szTxt}</span>
+      <div style="display:flex;align-items:center;gap:5px;flex-shrink:0">
+        <span class="sli-sz ${szClass}" style="font-size:13px;padding:3px 9px">${szTxt}</span>
+        ${szClass==='mm'?'<span style="font-size:10px;font-weight:700;color:var(--rose)">KEEP ASIDE</span>':''}
+      </div>
       <button class="sli-del" onclick="removeBC('${e.replace(/'/g,"\\'")}')">×</button>
     </div>`;
   }
@@ -1283,69 +1313,113 @@ function genReport(scan){
   const scanned=scan.scanned;
   const bcs=scanned.map(e=>e.split('__')[0]);
   const sysIn=scan.systemInward;
+
+  // Ghosts = system says inward but not physically scanned
   const ghosts=sysIn.filter(b=>!bcs.includes(b));
-  const extras=bcs.filter(b=>{
-    const e=scanned.find(s=>s===b);
+
+  // Scanned issues: pieces physically in hand but something wrong
+  const extras=bcs.filter(b=>{  // present physically but system says outward
     const f=stockData.find(r=>r.barcode==b);
-    return e&&f&&f.product===scan.product&&f.color===scan.color&&f.status==='outward';
+    return f&&f.product===scan.product&&f.color===scan.color&&f.status==='outward'
+      &&!scanned.find(s=>s.startsWith(b+'__'));
   });
   const wrongProduct=scanned.filter(e=>e.includes('__WRONG:'));
   const unknown=scanned.filter(e=>e.endsWith('__UNKNOWN'));
   const matched=bcs.filter(b=>{
     const f=stockData.find(r=>r.barcode==b);
-    return f&&f.product===scan.product&&f.color===scan.color&&f.status==='inward'&&!scanned.find(s=>s.startsWith(b+'__'));
+    return f&&f.product===scan.product&&f.color===scan.color&&f.status==='inward'
+      &&!scanned.find(s=>s.startsWith(b+'__'));
   }).length;
-  return{totalScanned:bcs.length,matched,ghosts,extras,wrongProduct,unknown};
+
+  // scannedIssues = pieces in hand that have problems
+  const scannedIssues=extras.length+wrongProduct.length+unknown.length;
+  return{totalScanned:bcs.length,matched,scannedIssues,ghosts,extras,wrongProduct,unknown};
 }
 
 function renderReportContent(report,auditId){
   const el=document.getElementById('ss-report-content');
-  const mm=report.ghosts.length+report.extras.length+report.wrongProduct.length+report.unknown.length;
+  const hasScannedIssues=(report.extras?.length||0)+(report.wrongProduct?.length||0)+(report.unknown?.length||0);
+  const hasGhosts=report.ghosts?.length||0;
+  const mm=hasScannedIssues+hasGhosts;
+
   if(!mm){
     el.innerHTML=`<div class="mm-card" style="background:var(--sage-light);border-color:var(--sage);border-left:4px solid var(--sage)">
       <div style="font-size:16px">🎉 Perfect match!</div>
       <div style="font-size:13px;color:var(--sage);margin-top:3px">All barcodes matched. Admin will review and complete.</div>
     </div>`;
-    // Hide the update button if no mismatches
     document.getElementById('update-toggle-btn').style.display='none';
     return;
   }
 
   let html=`<div class="stats-row">
     <div class="sb"><div class="sn">${report.totalScanned}</div><div class="sl">Scanned</div></div>
-    <div class="sb"><div class="sn g">${report.matched}</div><div class="sl">Matched</div></div>
-    <div class="sb"><div class="sn r">${mm}</div><div class="sl">Mismatches</div></div>
+    <div class="sb"><div class="sn g">${report.matched}</div><div class="sl">✓ Correct</div></div>
+    <div class="sb"><div class="sn r">${report.scannedIssues||0}</div><div class="sl">Issues in hand</div></div>
   </div>`;
 
-  if(report.ghosts.length){
-    html+=`<div style="font-size:12px;font-weight:600;color:var(--rose);margin-bottom:6px">🔴 Not found (${report.ghosts.length}):</div>`;
-    for(const bc of report.ghosts){
-      const r=stockData.find(f=>f.barcode==bc);
-      html+=`<div class="mm-card ghost"><div class="mmt">System says in stock · Not scanned</div>
-        <div class="mmp">BC ${bc}${r?' · '+r.size:''}</div>
-        <div class="mma">Go look for it — check packing, other racks, returns pile.</div>
-      </div>`;
-    }
-  }
-  if(report.extras.length){
-    html+=`<div style="font-size:12px;font-weight:600;color:#8b6914;margin:8px 0 6px">🟡 System mismatch (${report.extras.length}):</div>`;
-    for(const bc of report.extras){
-      const r=stockData.find(f=>f.barcode==bc);
-      html+=`<div class="mm-card extra"><div class="mmt">Present physically · System says outward</div>
-        <div class="mmp">BC ${bc}${r?' · '+r.size:''}</div>
-        <div class="mma">Admin will update system.</div>
-      </div>`;
-    }
-  }
-  if(report.wrongProduct.length){
-    for(const entry of report.wrongProduct){
+  // ── SECTION 1: Issues with scanned pieces (things in their hands right now)
+  if(hasScannedIssues){
+    html+=`<div style="background:var(--rose);color:white;padding:8px 12px;border-radius:8px 8px 0 0;font-weight:700;font-size:13px;letter-spacing:.02em;margin-top:4px">
+      🔴 KEEP ASIDE — ${hasScannedIssues} piece${hasScannedIssues>1?'s':''} need attention
+    </div>
+    <div style="border:2px solid var(--rose);border-top:none;border-radius:0 0 8px 8px;padding:8px;margin-bottom:12px">`;
+
+    for(const entry of (report.wrongProduct||[])){
       const bc=entry.split('__')[0];
       const parts=entry.split('__WRONG:')[1]?.split('|||')||[];
-      html+=`<div class="mm-card ghost"><div class="mmt">⚠️ Wrong barcode label</div>
-        <div class="mmp">BC ${bc} → belongs to: ${parts[0]||''}</div>
+      const r=stockData.find(f=>f.barcode==bc);
+      html+=`<div style="padding:9px 10px;background:var(--rose-light);border-radius:6px;margin-bottom:6px;border-left:3px solid var(--rose)">
+        <div style="font-size:10px;font-weight:700;color:var(--rose);letter-spacing:.06em;text-transform:uppercase">⚠️ Wrong Product</div>
+        <div style="font-weight:600;font-size:14px;margin-top:2px">BC ${bc}${r?` · Size <strong>${r.size}</strong>`:''}</div>
+        <div style="font-size:12px;margin-top:3px">Expected: <strong>current style</strong><br>Found: <strong>${parts[0]||''}${parts[1]?' · '+parts[1]:''}</strong>${r?` · System: <span style="font-weight:700;color:${r.status==='inward'?'var(--sage)':'var(--rose)'}">${r.status.toUpperCase()}</span>`:''}</div>
+        <div style="font-size:11px;color:var(--steel);margin-top:4px;background:rgba(255,255,255,.6);padding:4px 7px;border-radius:4px">Put in correct location or flag for relabelling</div>
       </div>`;
     }
+
+    for(const bc of (report.extras||[])){
+      const r=stockData.find(f=>f.barcode==bc);
+      html+=`<div style="padding:9px 10px;background:var(--rose-light);border-radius:6px;margin-bottom:6px;border-left:3px solid var(--rose)">
+        <div style="font-size:10px;font-weight:700;color:var(--rose);letter-spacing:.06em;text-transform:uppercase">⚠️ System says OUTWARD</div>
+        <div style="font-weight:600;font-size:14px;margin-top:2px">BC ${bc}${r?` · Size <strong>${r.size}</strong>`:''}</div>
+        <div style="font-size:12px;margin-top:3px">Physically present but system marked <span style="font-weight:700;color:var(--rose)">OUTWARD</span>${r?' via '+r.purpose:''}</div>
+        <div style="font-size:11px;color:var(--steel);margin-top:4px;background:rgba(255,255,255,.6);padding:4px 7px;border-radius:4px">Admin will update system to mark as inward</div>
+      </div>`;
+    }
+
+    for(const entry of (report.unknown||[])){
+      const bc=entry.split('__')[0];
+      html+=`<div style="padding:9px 10px;background:var(--rose-light);border-radius:6px;margin-bottom:6px;border-left:3px solid var(--rose)">
+        <div style="font-size:10px;font-weight:700;color:var(--rose);letter-spacing:.06em;text-transform:uppercase">❓ Not in system</div>
+        <div style="font-weight:600;font-size:14px;margin-top:2px">BC ${bc}</div>
+        <div style="font-size:12px;margin-top:3px">Barcode not found in stock data at all</div>
+        <div style="font-size:11px;color:var(--steel);margin-top:4px;background:rgba(255,255,255,.6);padding:4px 7px;border-radius:4px">May be new stock not yet in CSV, or scanning error</div>
+      </div>`;
+    }
+
+    html+=`</div>`;
   }
+
+  // ── SECTION 2: Not found (should be here but weren't scanned)
+  if(hasGhosts){
+    html+=`<div style="background:var(--ink);color:var(--paper);padding:8px 12px;border-radius:8px 8px 0 0;font-weight:700;font-size:13px;letter-spacing:.02em">
+      🔍 Not Found — ${hasGhosts} piece${hasGhosts>1?'s':''} missing from physical count
+    </div>
+    <div style="border:2px solid var(--ink);border-top:none;border-radius:0 0 8px 8px;padding:8px;margin-bottom:12px">
+    <div style="font-size:11px;color:var(--steel);padding:4px 6px;margin-bottom:6px">System says these should be in stock — go look for them</div>`;
+
+    for(const bc of report.ghosts){
+      const r=stockData.find(f=>f.barcode==bc);
+      html+=`<div style="display:flex;align-items:center;justify-content:space-between;gap:9px;padding:9px 10px;background:var(--cream);border-radius:6px;margin-bottom:5px;border-left:3px solid var(--steel)">
+        <div style="flex:1">
+          <div style="font-weight:600;font-size:13px">BC ${bc}${r?` · <strong>Size ${r.size}</strong>`:''}</div>
+          ${r?`<div style="font-size:11px;color:var(--steel);margin-top:1px">${r.sku||''}</div>`:''}
+        </div>
+        <button onclick="quickFoundIt('${bc}',${auditId})" style="background:var(--sage);color:white;border:none;padding:8px 14px;border-radius:7px;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap;flex-shrink:0">✓ Found It!</button>
+      </div>`;
+    }
+    html+=`</div>`;
+  }
+
   el.innerHTML=html;
 }
 
@@ -1459,6 +1533,36 @@ function saveUpdate(){
 // ══════════════════
 // USER HISTORY
 // ══════════════════
+function quickFoundIt(bc, auditId){
+  const audit=audits.find(a=>a.id===auditId);
+  if(!audit) return;
+  const f=stockData.find(r=>r.barcode==bc);
+  const sizeInfo=f?(' Size '+f.size):'';
+  if(!confirm('Mark BC '+bc+sizeInfo+' as FOUND?\nThis will record that you physically found this piece.')) return;
+  
+  if(!audit.followUps) audit.followUps=[];
+  audit.followUps.push({
+    at:new Date().toISOString(),
+    foundBarcodes:[bc],
+    note:'Found via quick button',
+    by:audit.auditor
+  });
+  audit.report.ghosts=(audit.report.ghosts||[]).filter(b=>b!==bc);
+  audit.report.matched=(audit.report.matched||0)+1;
+  if(audit.report.scannedIssues!==undefined) {} // scannedIssues unchanged - this was a ghost
+  audit.status='updated';
+  audit.lastUpdated=new Date().toISOString();
+  
+  try{localStorage.setItem('jaey_audits',JSON.stringify(audits));}catch(err){}
+  saveAuditRemote(audit);
+  
+  toast('✓ BC '+bc+' marked as found');
+  // Re-render the report with updated data
+  renderReportContent(audit.report, auditId);
+  renderUserTasks();
+  renderAdminIfActive();
+}
+
 function renderUserHistory(){
   const name=localStorage.getItem('jaey_user_name')||'';
   const q=(document.getElementById('u-hist-search')?.value||'').toLowerCase();
