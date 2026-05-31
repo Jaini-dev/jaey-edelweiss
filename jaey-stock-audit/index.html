@@ -2222,13 +2222,17 @@ async function uploadStockToSupabase(rows, fname){
   try{
     statusEl.innerHTML=statusEl.innerHTML+' <span style="color:var(--sky)">☁️ Uploading to Supabase...</span>';
     
-    // Step 1: Clear old stock data
-    const delRes=await fetch(sbCfg.url+'/rest/v1/stock_data?id=gt.0',{
+    // Step 1: Clear old stock data (Supabase requires a filter for DELETE)
+    const delRes=await fetch(sbCfg.url+'/rest/v1/stock_data?barcode=neq.NONE_MATCH_ALL',{
       method:'DELETE',
-      headers:{'apikey':sbCfg.key,'Authorization':'Bearer '+sbCfg.key}
+      headers:{'apikey':sbCfg.key,'Authorization':'Bearer '+sbCfg.key,'Prefer':'return=minimal'}
     });
+    if(!delRes.ok && delRes.status!==404){
+      const delErr=await delRes.text();
+      console.warn('Delete warning (non-fatal):', delRes.status, delErr);
+    }
     
-    // Step 2: Upload in batches of 500 (Supabase row limit per request)
+    // Step 2: Upload in batches of 500
     const BATCH=500;
     let uploaded=0;
     for(let i=0;i<rows.length;i+=BATCH){
@@ -2241,12 +2245,17 @@ async function uploadStockToSupabase(rows, fname){
         sku:r.sku||'',
         purpose:r.purpose||''
       }));
+      if(i===0) console.log('First batch sample (3 rows):', JSON.stringify(batch.slice(0,3)));
       const res=await fetch(sbCfg.url+'/rest/v1/stock_data',{
         method:'POST',
         headers:{'Content-Type':'application/json','apikey':sbCfg.key,'Authorization':'Bearer '+sbCfg.key,'Prefer':'return=minimal'},
         body:JSON.stringify(batch)
       });
-      if(!res.ok) throw new Error('Batch upload failed: HTTP '+res.status);
+      if(!res.ok){
+        const errBody=await res.text().catch(()=>'(no body)');
+        console.error('Supabase batch error full response:', errBody);
+        throw new Error('Batch '+Math.floor(i/BATCH+1)+' failed: HTTP '+res.status+' — '+errBody.slice(0,200));
+      }
       uploaded+=batch.length;
       // Update progress
       statusEl.innerHTML=`✓ <strong>${rows.length.toLocaleString()} barcodes</strong> · ${fname} <span style="color:var(--sky)">☁️ ${Math.round(uploaded/rows.length*100)}%</span>`;
