@@ -692,6 +692,7 @@ select:focus,input:focus,textarea:focus{border-color:var(--gold);background:var(
     <div class="card">
       <div class="ct">📂 Stock Data</div>
       <div id="data-status" class="ds none">No data loaded</div>
+    <button class="btn bo" onclick="fetchStockFromSupabase()" style="font-size:12px;padding:6px 11px;margin-bottom:10px;width:100%" id="fetch-stock-btn">☁️ Fetch latest from Supabase</button>
       <div class="uz" onclick="document.getElementById('csv-f').click()">
         <div style="font-size:26px;margin-bottom:5px">📁</div>
         <strong>Upload barcode CSV</strong>
@@ -817,8 +818,23 @@ document.addEventListener('DOMContentLoaded',()=>{
   updateOnline();
   window.addEventListener('online',updateOnline);
   window.addEventListener('offline',updateOnline);
-  // Always start on login screen
-  showLogin();
+  // Restore session if still valid (24 hour expiry)
+  const savedSession=JSON.parse(localStorage.getItem('jaey_session')||'null');
+  const SESSION_EXPIRY=24*60*60*1000; // 24 hours
+  if(savedSession && (Date.now()-savedSession.at) < SESSION_EXPIRY){
+    if(savedSession.type==='user'){
+      document.getElementById('shell-login').classList.remove('active');
+      document.getElementById('shell-user').classList.add('active');
+      initUserShell();
+    } else if(savedSession.type==='admin'){
+      document.getElementById('shell-login').classList.remove('active');
+      document.getElementById('shell-admin').classList.add('active');
+      enterAdminShell();
+    }
+  } else {
+    localStorage.removeItem('jaey_session');
+    showLogin();
+  }
 });
 
 function updateOnline(){
@@ -946,6 +962,7 @@ function verifyUserPin(){
   }
   // Login success
   localStorage.setItem('jaey_user_name', user.name);
+  localStorage.setItem('jaey_session', JSON.stringify({type:'user', name:user.name, at:Date.now()}));
   document.getElementById('login-u-pin-err').textContent='';
   document.getElementById('shell-login').classList.remove('active');
   document.getElementById('shell-user').classList.add('active');
@@ -969,6 +986,7 @@ function verifyAdminPin(){
     adminName=matched.name;
   }
   localStorage.setItem('jaey_admin_name', adminName);
+  localStorage.setItem('jaey_session', JSON.stringify({type:'admin', name:adminName, at:Date.now()}));
   document.getElementById('login-a-err').textContent='';
   document.getElementById('shell-login').classList.remove('active');
   document.getElementById('shell-admin').classList.add('active');
@@ -986,12 +1004,13 @@ function shakeDots(elId){
 // ══════════════════
 function initUserShell(){
   const name=localStorage.getItem('jaey_user_name')||'';
-  // Hide the inline name card (no longer needed, login handles it)
   const nc=document.getElementById('u-name-card');
   if(nc) nc.style.display='none';
   showUserWelcome(name);
   renderUserTasks();
   renderUserHistory();
+  // Auto-fetch stock from Supabase if not cached
+  ensureStockLoaded();
 }
 
 function showUserWelcome(name){
@@ -1603,6 +1622,7 @@ function renderUserHistory(){
 // ══════════════════
 function enterAdminShell(){
   const adminName=localStorage.getItem('jaey_admin_name')||'Admin';
+  ensureStockLoaded();
   const hdrEl=document.getElementById('admin-name-hdr');
   if(hdrEl) hdrEl.textContent=adminName;
   renderAdminReview();
@@ -1618,6 +1638,7 @@ function enterAdminShell(){
 
 function adminLogout(){
   localStorage.removeItem('jaey_admin_name');
+  localStorage.removeItem('jaey_session');
   document.getElementById('shell-admin').classList.remove('active');
   showLogin();
 }
@@ -2190,7 +2211,110 @@ function parseCSV(text,fname){
     populatePlanDropdowns();
     renderUserTasks();
     toast('✓ '+rows.length.toLocaleString()+' barcodes loaded');
+    // Upload to Supabase so all devices get it
+    if(sbCfg.url&&sbCfg.key) uploadStockToSupabase(rows, fname);
   }catch(e){toast('❌ '+e.message);}
+}
+
+// ── SUPABASE STOCK UPLOAD ──
+async function uploadStockToSupabase(rows, fname){
+  const statusEl=document.getElementById('data-status');
+  try{
+    statusEl.innerHTML=statusEl.innerHTML+' <span style="color:var(--sky)">☁️ Uploading to Supabase...</span>';
+    
+    // Step 1: Clear old stock data
+    const delRes=await fetch(sbCfg.url+'/rest/v1/stock_data?id=gt.0',{
+      method:'DELETE',
+      headers:{'apikey':sbCfg.key,'Authorization':'Bearer '+sbCfg.key}
+    });
+    
+    // Step 2: Upload in batches of 500 (Supabase row limit per request)
+    const BATCH=500;
+    let uploaded=0;
+    for(let i=0;i<rows.length;i+=BATCH){
+      const batch=rows.slice(i,i+BATCH).map(r=>({
+        barcode:r.barcode,
+        product_name:r.product,
+        color:r.color,
+        size:r.size,
+        status:r.status,
+        sku:r.sku||'',
+        purpose:r.purpose||''
+      }));
+      const res=await fetch(sbCfg.url+'/rest/v1/stock_data',{
+        method:'POST',
+        headers:{'Content-Type':'application/json','apikey':sbCfg.key,'Authorization':'Bearer '+sbCfg.key,'Prefer':'return=minimal'},
+        body:JSON.stringify(batch)
+      });
+      if(!res.ok) throw new Error('Batch upload failed: HTTP '+res.status);
+      uploaded+=batch.length;
+      // Update progress
+      statusEl.innerHTML=`✓ <strong>${rows.length.toLocaleString()} barcodes</strong> · ${fname} <span style="color:var(--sky)">☁️ ${Math.round(uploaded/rows.length*100)}%</span>`;
+    }
+    
+    // Save upload timestamp
+    localStorage.setItem('jaey_stock_uploaded', JSON.stringify({at:new Date().toISOString(),fname,count:rows.length}));
+    statusEl.innerHTML=`✓ <strong>${rows.length.toLocaleString()} barcodes</strong> · ${fname} <span style="color:var(--sage)">☁️ Synced to Supabase</span>`;
+    toast('☁️ Stock data saved to Supabase — all devices will auto-load it');
+  }catch(err){
+    console.error('Stock upload failed:',err);
+    statusEl.innerHTML=statusEl.innerHTML.replace(/<span[^>]*>☁️[^<]*<\/span>/,'<span style="color:var(--rose)">☁️ Sync failed</span>');
+    toast('⚠️ Supabase sync failed — data saved locally only');
+  }
+}
+
+// ── FETCH STOCK FROM SUPABASE (called on load if no local data) ──
+async function fetchStockFromSupabase(){
+  if(!sbCfg.url||!sbCfg.key) return false;
+  const statusEl=document.getElementById('data-status');
+  try{
+    statusEl.className='ds';
+    statusEl.innerHTML='☁️ Loading stock data from Supabase...';
+    
+    // Fetch in pages (Supabase default limit is 1000)
+    let allRows=[], from=0, pageSize=1000;
+    while(true){
+      const res=await fetch(
+        sbCfg.url+'/rest/v1/stock_data?select=barcode,product_name,color,size,status,sku,purpose&order=id&offset='+from+'&limit='+pageSize,
+        {headers:{'apikey':sbCfg.key,'Authorization':'Bearer '+sbCfg.key,'Range-Unit':'items','Range':from+'-'+(from+pageSize-1),'Prefer':'count=none'}}
+      );
+      if(!res.ok) throw new Error('HTTP '+res.status);
+      const page=await res.json();
+      if(!page.length) break;
+      allRows=allRows.concat(page);
+      from+=pageSize;
+      if(page.length<pageSize) break;
+      statusEl.innerHTML='☁️ Loading... '+allRows.length.toLocaleString()+' rows';
+    }
+    
+    if(!allRows.length) return false;
+    
+    // Map to internal format
+    stockData=allRows.map(r=>({
+      barcode:r.barcode,
+      product:r.product_name,
+      color:r.color,
+      size:r.size,
+      status:r.status,
+      sku:r.sku||'',
+      purpose:r.purpose||''
+    }));
+    buildMap();
+    try{localStorage.setItem('jaey_stock',JSON.stringify(stockData));}catch(e){}
+    
+    const uploadMeta=JSON.parse(localStorage.getItem('jaey_stock_uploaded')||'null');
+    const uploadInfo=uploadMeta?' · Uploaded '+new Date(uploadMeta.at).toLocaleDateString('en-IN',{day:'numeric',month:'short'}):'';
+    statusEl.className='ds';
+    statusEl.innerHTML=`✓ <strong>${stockData.length.toLocaleString()} barcodes</strong> (from Supabase${uploadInfo})`;
+    populatePlanDropdowns();
+    renderUserTasks();
+    return true;
+  }catch(err){
+    console.error('Fetch stock failed:',err);
+    statusEl.className='ds none';
+    statusEl.innerHTML='⚠️ Could not load from Supabase. Upload CSV manually.';
+    return false;
+  }
 }
 function parseCSVLine(line){const r=[];let c='',q=false;for(let i=0;i<line.length;i++){const ch=line[i];if(ch==='"')q=!q;else if(ch===','&&!q){r.push(c);c='';}else c+=ch;}r.push(c);return r;}
 function buildMap(){productMap={};for(const r of stockData){if(!productMap[r.product])productMap[r.product]={};if(!productMap[r.product][r.color])productMap[r.product][r.color]=[];productMap[r.product][r.color].push(r);}}
@@ -2254,6 +2378,7 @@ function exportHistory(){
 function savePlans(){try{localStorage.setItem('jaey_plans',JSON.stringify(plans));}catch(e){}}
 function userLogout(){
   localStorage.removeItem('jaey_user_name');
+  localStorage.removeItem('jaey_session');
   document.getElementById('shell-user').classList.remove('active');
   showLogin();
 }
@@ -2373,6 +2498,14 @@ function loadStorage(){
     document.getElementById('data-status').innerHTML='✓ <strong>'+stockData.length.toLocaleString()+' barcodes</strong> (cached)';}
   const sb=localStorage.getItem('jaey_supabase');if(sb){sbCfg=JSON.parse(sb);document.getElementById('sb-url').value=sbCfg.url;document.getElementById('sb-key').value=sbCfg.key;}
   // Always start on login screen — no auto-login
+}
+
+// Called after login when we know who's logged in — try to fetch stock if not cached
+async function ensureStockLoaded(){
+  if(stockData.length>0) return; // already have it
+  if(!navigator.onLine) return;  // offline — can't fetch
+  if(!sbCfg.url||!sbCfg.key) return; // no supabase config
+  await fetchStockFromSupabase();
 }
 function todayStr(){const d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');}
 function formatDate(ds){const d=new Date(ds+'T00:00:00');return d.toLocaleDateString('en-IN',{weekday:'short',day:'numeric',month:'short'});}
