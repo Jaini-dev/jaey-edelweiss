@@ -2220,55 +2220,57 @@ function parseCSV(text,fname){
 async function uploadStockToSupabase(rows, fname){
   const statusEl=document.getElementById('data-status');
   try{
-    statusEl.innerHTML=statusEl.innerHTML+' <span style="color:var(--sky)">☁️ Uploading to Supabase...</span>';
-    
-    // Step 1: Clear old stock data — wrapped so it never blocks upload
+    statusEl.innerHTML=`✓ <strong>${rows.length.toLocaleString()} barcodes</strong> · ${fname} <span style="color:var(--sky)">☁️ Uploading 0%...</span>`;
+
+    // No DELETE — use upsert. Add a row_num so each row is uniquely identifiable.
+    // First truncate via RPC, fallback to just inserting (duplicates OK since we query fresh each time)
+    // Strategy: DELETE all where uploaded_at < now, then INSERT fresh rows
+    // Simplest: just truncate the table first via a custom RPC-less approach:
+    // We'll use the filter ?uploaded_at=lt.{future_date} to delete all existing rows
     try{
-      const delRes=await fetch(sbCfg.url+'/rest/v1/stock_data?id=gte.0',{
+      const cutoff=new Date(Date.now()+86400000).toISOString(); // tomorrow
+      const del=await fetch(sbCfg.url+'/rest/v1/stock_data?uploaded_at=lt.'+encodeURIComponent(cutoff),{
         method:'DELETE',
         headers:{'apikey':sbCfg.key,'Authorization':'Bearer '+sbCfg.key,'Prefer':'return=minimal'}
       });
-      const delBody=await delRes.text().catch(()=>'');
-      console.log('Delete result:', delRes.status, delBody);
-    }catch(delErr){ console.warn('Delete skipped (non-fatal):', delErr); }
-    
-    // Step 2: Upload in batches of 500
+      console.log('Delete:', del.status);
+    }catch(e){ console.warn('Delete skipped:', e); }
+
     const BATCH=500;
     let uploaded=0;
+    const ts=new Date().toISOString();
     for(let i=0;i<rows.length;i+=BATCH){
       const batch=rows.slice(i,i+BATCH).map(r=>({
-        barcode:r.barcode,
-        product_name:r.product,
-        color:r.color,
-        size:r.size,
-        status:r.status,
-        sku:r.sku||'',
-        purpose:r.purpose||''
+        barcode:String(r.barcode||''),
+        product_name:String(r.product||''),
+        color:String(r.color||''),
+        size:String(r.size||''),
+        status:String(r.status||''),
+        sku:String(r.sku||''),
+        purpose:String(r.purpose||''),
+        uploaded_at:String(ts)
       }));
-      if(i===0) console.log('First batch sample (3 rows):', JSON.stringify(batch.slice(0,3)));
       const res=await fetch(sbCfg.url+'/rest/v1/stock_data',{
         method:'POST',
         headers:{'Content-Type':'application/json','apikey':sbCfg.key,'Authorization':'Bearer '+sbCfg.key,'Prefer':'return=minimal'},
         body:JSON.stringify(batch)
       });
       if(!res.ok){
-        const errBody=await res.text().catch(()=>'(no body)');
-        console.error('Supabase batch error full response:', errBody);
-        throw new Error('Batch '+Math.floor(i/BATCH+1)+' failed: HTTP '+res.status+' — '+errBody.slice(0,200));
+        const errBody=await res.text().catch(()=>'');
+        console.error('Upload error:', res.status, errBody);
+        throw new Error('HTTP '+res.status+': '+errBody.slice(0,150));
       }
       uploaded+=batch.length;
-      // Update progress
-      statusEl.innerHTML=`✓ <strong>${rows.length.toLocaleString()} barcodes</strong> · ${fname} <span style="color:var(--sky)">☁️ ${Math.round(uploaded/rows.length*100)}%</span>`;
+      statusEl.innerHTML=`✓ <strong>${rows.length.toLocaleString()} barcodes</strong> · ${fname} <span style="color:var(--sky)">☁️ ${Math.round(uploaded/rows.length*100)}%...</span>`;
     }
-    
-    // Save upload timestamp
-    localStorage.setItem('jaey_stock_uploaded', JSON.stringify({at:new Date().toISOString(),fname,count:rows.length}));
-    statusEl.innerHTML=`✓ <strong>${rows.length.toLocaleString()} barcodes</strong> · ${fname} <span style="color:var(--sage)">☁️ Synced to Supabase</span>`;
-    toast('☁️ Stock data saved to Supabase — all devices will auto-load it');
+
+    localStorage.setItem('jaey_stock_uploaded',JSON.stringify({at:ts,fname,count:rows.length}));
+    statusEl.innerHTML=`✓ <strong>${rows.length.toLocaleString()} barcodes</strong> · ${fname} <span style="color:var(--sage)">☁️ Synced ✓</span>`;
+    toast('☁️ Synced to Supabase — all devices will auto-load');
   }catch(err){
     console.error('Stock upload failed:',err);
-    statusEl.innerHTML=statusEl.innerHTML.replace(/<span[^>]*>☁️[^<]*<\/span>/,'<span style="color:var(--rose)">☁️ Sync failed</span>');
-    toast('⚠️ Supabase sync failed — data saved locally only');
+    toast('❌ Supabase upload failed: '+err.message);
+    statusEl.innerHTML=`✓ <strong>${rows.length.toLocaleString()} barcodes</strong> · ${fname} <span style="color:var(--rose)">☁️ Sync failed — check console</span>`;
   }
 }
 
