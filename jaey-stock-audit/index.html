@@ -2222,15 +2222,15 @@ async function uploadStockToSupabase(rows, fname){
   try{
     statusEl.innerHTML=statusEl.innerHTML+' <span style="color:var(--sky)">☁️ Uploading to Supabase...</span>';
     
-    // Step 1: Clear old stock data (Supabase requires a filter for DELETE)
-    const delRes=await fetch(sbCfg.url+'/rest/v1/stock_data?barcode=neq.NONE_MATCH_ALL',{
-      method:'DELETE',
-      headers:{'apikey':sbCfg.key,'Authorization':'Bearer '+sbCfg.key,'Prefer':'return=minimal'}
-    });
-    if(!delRes.ok && delRes.status!==404){
-      const delErr=await delRes.text();
-      console.warn('Delete warning (non-fatal):', delRes.status, delErr);
-    }
+    // Step 1: Clear old stock data — wrapped so it never blocks upload
+    try{
+      const delRes=await fetch(sbCfg.url+'/rest/v1/stock_data?id=gte.0',{
+        method:'DELETE',
+        headers:{'apikey':sbCfg.key,'Authorization':'Bearer '+sbCfg.key,'Prefer':'return=minimal'}
+      });
+      const delBody=await delRes.text().catch(()=>'');
+      console.log('Delete result:', delRes.status, delBody);
+    }catch(delErr){ console.warn('Delete skipped (non-fatal):', delErr); }
     
     // Step 2: Upload in batches of 500
     const BATCH=500;
