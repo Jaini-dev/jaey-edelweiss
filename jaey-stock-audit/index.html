@@ -504,7 +504,6 @@ select:focus,input:focus,textarea:focus{border-color:var(--gold);background:var(
       <strong id="ss-prod2"></strong>
       <div class="meta" id="ss-meta"></div>
     </div>
-    <div id="ss-size-display" style="display:none;font-family:'DM Serif Display',serif;font-size:32px;font-weight:700;color:var(--ink);line-height:1;flex-shrink:0;min-width:60px;text-align:right"></div>
   </div>
   <div id="no-csv-warning" style="display:none;background:var(--rose);color:white;padding:9px 14px;font-size:12px;font-weight:600;text-align:center">
     ⚠️ Stock data not loaded — barcodes will show as unknown. Ask admin to upload the CSV.
@@ -1169,8 +1168,6 @@ function openScan(product,color){
 
   document.getElementById('bc-in').value='';
   document.getElementById('bc-fb').className='scan-fb';
-  const szDispReset=document.getElementById('ss-size-display');
-  if(szDispReset){ szDispReset.style.display='none'; szDispReset.textContent=''; }
   renderScanList();
 
   // Show warning if stock CSV not loaded
@@ -1188,8 +1185,6 @@ function closeScanScreen(){
     }
   }
   document.getElementById('scan-screen').classList.remove('active');
-  const szDisp=document.getElementById('ss-size-display');
-  if(szDisp){ szDisp.style.display='none'; szDisp.textContent=''; }
   currentScan=null;
 }
 
@@ -1254,12 +1249,6 @@ function showFB(type,title,body,size,status){
       </div>
       ${size ? `<div style="font-family:'DM Serif Display',serif;font-size:42px;font-weight:700;line-height:1;flex-shrink:0;text-align:right;color:${keepAside?'var(--rose)':'var(--sage)'}">${size}</div>` : ''}
     </div>`;
-  // Big size in context bar
-  const szDisp=document.getElementById('ss-size-display');
-  if(szDisp){
-    if(size){ szDisp.textContent=size; szDisp.style.display='block'; szDisp.style.color=keepAside?'var(--rose)':'var(--sage)'; }
-    else szDisp.style.display='none';
-  }
 }
 
 function renderScanList(){
