@@ -1949,15 +1949,63 @@ function updateAddPlanBtn(){
 
 function renderAssigneeRows(){
   const el=document.getElementById('assignee-rows'); if(!el) return;
+  const users=getUsers();
+  if(!users.length){
+    el.innerHTML='<div style="font-size:12px;color:var(--steel);padding:6px 2px;line-height:1.5">No team members saved yet. Add them in the <strong>Team</strong> tab, then assign here.</div>';
+    return;
+  }
   let html='';
   for(let i=0;i<assigneeRows.length;i++){
-    html+=`<div style="display:flex;gap:7px;margin-bottom:7px;align-items:center">
-      <input type="text" placeholder="Team member name" value="${assigneeRows[i].name}"
-        oninput="assigneeRows[${i}].name=this.value" style="flex:1;font-size:13px;padding:8px 11px">
+    const disp=(assigneeRows[i].name||'').replace(/"/g,'&quot;');
+    html+=`<div style="display:flex;gap:7px;margin-bottom:7px;align-items:flex-start">
+      <div style="flex:1;position:relative">
+        <input type="text" id="assignee-search-${i}" autocomplete="off" placeholder="Search & select member…" value="${disp}"
+          onfocus="openAssigneeMenu(${i})" oninput="openAssigneeMenu(${i})" onblur="closeAssigneeMenu(${i})"
+          style="width:100%;font-size:13px;padding:8px 11px">
+        <div id="assignee-menu-${i}" style="display:none;position:absolute;left:0;right:0;top:calc(100% + 3px);z-index:60;background:var(--white);border:1.5px solid var(--border);border-radius:var(--rs);box-shadow:var(--shadow-lg);max-height:200px;overflow-y:auto"></div>
+      </div>
       ${i>0?`<button class="btn bo" style="padding:8px 11px;font-size:13px" onclick="assigneeRows.splice(${i},1);renderAssigneeRows()">✕</button>`:''}
     </div>`;
   }
   el.innerHTML=html;
+}
+
+// Type only filters the saved-member list — a free name can never be committed.
+function openAssigneeMenu(i){
+  const menu=document.getElementById('assignee-menu-'+i);
+  const input=document.getElementById('assignee-search-'+i);
+  if(!menu||!input) return;
+  const q=input.value.trim().toLowerCase();
+  const matches=getUsers().map((u,ui)=>({u,ui})).filter(o=>!q||o.u.name.toLowerCase().includes(q));
+  if(!matches.length){
+    menu.innerHTML='<div style="padding:9px 12px;font-size:12px;color:var(--steel)">No matching member</div>';
+  } else {
+    menu.innerHTML=matches.map(o=>`<div onmousedown="event.preventDefault();pickAssignee(${i},${o.ui})" style="padding:9px 12px;font-size:13px;cursor:pointer;border-bottom:1px solid var(--border)">${o.u.name}${o.u.role==='admin'?' <span style="background:var(--gold);color:var(--white);font-size:9px;font-weight:700;padding:1px 6px;border-radius:10px">ADMIN</span>':''}</div>`).join('');
+  }
+  menu.style.display='block';
+}
+
+function pickAssignee(i,ui){
+  const u=getUsers()[ui]; if(!u) return;
+  assigneeRows[i].name=u.name;
+  const input=document.getElementById('assignee-search-'+i);
+  if(input) input.value=u.name;
+  const menu=document.getElementById('assignee-menu-'+i);
+  if(menu) menu.style.display='none';
+}
+
+function closeAssigneeMenu(i){
+  // Delay so an option's mousedown commits before we validate.
+  setTimeout(()=>{
+    const menu=document.getElementById('assignee-menu-'+i);
+    const input=document.getElementById('assignee-search-'+i);
+    if(menu) menu.style.display='none';
+    if(!input) return;
+    const match=getUsers().find(u=>u.name.toLowerCase()===input.value.trim().toLowerCase());
+    // Only an exact saved-member name survives; anything else is cleared.
+    assigneeRows[i].name=match?match.name:'';
+    input.value=match?match.name:'';
+  },150);
 }
 
 function addAssigneeRow(){ assigneeRows.push({name:''}); renderAssigneeRows(); }
