@@ -1172,7 +1172,7 @@ function closeScanScreen(){
 function addBC(){
   const input=document.getElementById('bc-in');
   const raw=input.value.trim(); if(!raw) return;
-  const bc=raw.toString();
+  const bc=String(parseInt(raw,10)||0)!=='0'?String(parseInt(raw,10)):raw.toString();
   if(currentScan.scanned.some(e=>(e.split('__')[0])===bc)){
     showFB('warn','Already scanned','','');
     input.value=''; return;
@@ -2075,7 +2075,7 @@ function parseCSV(text,fname){
     for(let i=1;i<lines.length;i++){
       const line=lines[i].trim();if(!line)continue;
       const cols=parseCSVLine(line);
-      const row={barcode:cols[idx['Barcode']]?.trim(),product:cols[idx['Product Name']]?.trim(),color:cols[idx['Color']]?.trim(),size:cols[idx['Size']]?.trim(),status:cols[idx['Status']]?.trim().toLowerCase(),sku:cols[idx['Item SKU']]?.trim()||''};
+      const row={barcode:String(parseInt(cols[idx['Barcode']]?.trim()||'0',10)),product:cols[idx['Product Name']]?.trim(),color:cols[idx['Color']]?.trim(),size:cols[idx['Size']]?.trim(),status:cols[idx['Status']]?.trim().toLowerCase(),sku:cols[idx['Item SKU']]?.trim()||''};
       if(row.barcode&&row.product)rows.push(row);
     }
     if(!rows.length)throw new Error('No valid rows found');
