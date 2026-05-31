@@ -1240,16 +1240,20 @@ function showFB(type,title,body,size,status){
     ? `<span style="background:${status==='inward'?'var(--sage)':'var(--rose)'};color:white;font-size:11px;font-weight:700;padding:2px 7px;border-radius:10px;margin-left:5px">System: ${status==='inward'?'INWARD':'OUTWARD'}</span>`
     : '';
   el.innerHTML=`
-    ${keepAside
-      ? `<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
-           <span style="font-size:16px;font-weight:800;color:var(--rose);letter-spacing:.02em">🔴 KEEP ASIDE</span>
-           ${statusBadge}
-         </div>`
-      : `<div style="margin-bottom:4px">${statusBadge}</div>`
-    }
-    <div class="fb-name" style="font-size:14px">${title}</div>
-    ${body ? `<div style="margin-top:4px;font-size:13px;line-height:1.4">${body}</div>` : ''}
-    ${size ? `<span class="sz-pill" style="margin-top:5px;display:inline-block">Size: ${size}</span>` : ''}`;
+    <div style="display:flex;align-items:center;gap:10px">
+      <div style="flex:1;min-width:0">
+        ${keepAside
+          ? `<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+               <span style="font-size:16px;font-weight:800;color:var(--rose);letter-spacing:.02em">🔴 KEEP ASIDE</span>
+               ${statusBadge}
+             </div>`
+          : `<div style="margin-bottom:4px">${statusBadge}</div>`
+        }
+        <div class="fb-name" style="font-size:14px">${title}</div>
+        ${body ? `<div style="margin-top:4px;font-size:13px;line-height:1.4">${body}</div>` : ''}
+      </div>
+      ${size ? `<div style="font-family:'DM Serif Display',serif;font-size:42px;font-weight:700;line-height:1;flex-shrink:0;text-align:right;color:${keepAside?'var(--rose)':'var(--sage)'}">${size}</div>` : ''}
+    </div>`;
   // Big size in context bar
   const szDisp=document.getElementById('ss-size-display');
   if(szDisp){
