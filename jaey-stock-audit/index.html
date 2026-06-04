@@ -796,7 +796,9 @@ const CATALOGUE_IMAGES={"Color Block Straight Dress|||Green": "https://jaey.blr1
 // ══════════════════
 // STATE
 // ══════════════════
-let stockData=[], productMap={}, audits=[], plans={}, sbCfg={url:'',key:''};
+// Shared backend baked in so every device connects automatically (anon key is public, protected by RLS).
+const SB_DEFAULT={url:'https://djyzaoisfslgkkfmgzuy.supabase.co',key:'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRqeXphb2lzZnNsZ2trZm1nenV5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ4NjI0NjgsImV4cCI6MjA5MDQzODQ2OH0.YC5FQjZGn1a8wMaE8ykMlOHBURNACrZRiBDtXd-TLjw'};
+let stockData=[], productMap={}, audits=[], plans={}, sbCfg={url:SB_DEFAULT.url,key:SB_DEFAULT.key};
 let currentScan=null; // active scan session
 let foundBuffer=[], activeScanId=null;
 let selectedStyles=new Set(), assigneeRows=[{name:''}], planFilter='all', reviewFilter='review';
@@ -814,6 +816,7 @@ function setUserName(){ proceedToUserPin(); }
 if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./sw.js').catch(()=>{});
 document.addEventListener('DOMContentLoaded',()=>{
   loadStorage();
+  fetchUsersFromSupabase(); // refresh roster cache so any device sees the latest team
   updateOnline();
   window.addEventListener('online',updateOnline);
   window.addEventListener('offline',updateOnline);
@@ -844,14 +847,15 @@ function updateOnline(){
   });
   const banner=document.getElementById('offline-banner');
   if(banner) banner.style.display=on?'none':'block';
-  if(on) trySyncPending();
+  if(on){ trySyncPending(); trySyncPendingUsers(); }
   updatePendingDot();
 }
 
 function updatePendingDot(){
   const p=JSON.parse(localStorage.getItem('jaey_pending_sync')||'[]');
+  const pu=JSON.parse(localStorage.getItem('jaey_pending_users')||'[]');
   const el=document.getElementById('u-pending');
-  if(el) el.style.display=p.length?'inline':'none';
+  if(el) el.style.display=(p.length||pu.length)?'inline':'none';
 }
 
 // ══════════════════
@@ -864,6 +868,7 @@ function showLogin(){
   document.getElementById('shell-login').classList.add('active');
   document.getElementById('shell-user').classList.remove('active');
   document.getElementById('shell-admin').classList.remove('active');
+  fetchUsersFromSupabase(); // make sure the roster is current before anyone logs in
   // Reset login form
   loginPinBuf={u:'',a:''};
   pendingLoginName='';
@@ -890,11 +895,10 @@ function proceedToUserPin(){
   // Name + PIN are now on one screen - this just pre-validates the name
   const name=document.getElementById('login-name-input').value.trim();
   if(!name){ document.getElementById('login-name-err').textContent='Enter your name first'; return; }
-  const user=getUsers().find(u=>u.name.toLowerCase()===name.toLowerCase());
-  if(!user){ document.getElementById('login-name-err').textContent='Name not found. Ask your admin to add you.'; return; }
-  pendingLoginName=user.name;
+  // Existence is confirmed against the live cloud roster at PIN time, not the local cache.
+  pendingLoginName=name;
   document.getElementById('login-name-err').textContent='';
-  const s=document.getElementById('login-u-sub'); if(s) s.textContent='Hi '+user.name+'! Now enter your PIN';
+  const s=document.getElementById('login-u-sub'); if(s) s.textContent='Now enter your PIN';
 }
 
 function backToName(){
@@ -920,14 +924,9 @@ function loginPinKey(type, d){
       document.getElementById('login-name-err').textContent='Enter your name first';
       return;
     }
-    const user=getUsers().find(u=>u.name.toLowerCase()===nameVal.toLowerCase());
-    if(!user){
-      document.getElementById('login-name-err').textContent='Name not found. Ask your admin to add you.';
-      return;
-    }
-    pendingLoginName=user.name;
+    // Defer the existence check to verifyUserPin (which refreshes from the cloud first).
+    pendingLoginName=nameVal;
     document.getElementById('login-name-err').textContent='';
-    document.getElementById('login-u-sub').textContent='Hi '+user.name+'! Now enter your PIN';
   }
   loginPinBuf[type]+=d;
   updateLoginDots(type);
@@ -950,10 +949,18 @@ function updateLoginDots(type){
   for(let i=0;i<4;i++) document.getElementById(prefix+i).className='login-pin-dot'+(i<buf.length?' on':'');
 }
 
-function verifyUserPin(){
+async function verifyUserPin(){
+  // Pull the latest roster from the cloud so newly-added members work on any device.
+  if(navigator.onLine) await fetchUsersFromSupabase();
   const users=getUsers();
   const user=users.find(u=>u.name.toLowerCase()===pendingLoginName.toLowerCase());
-  if(!user||loginPinBuf.u!==user.pin){
+  if(!user){
+    document.getElementById('login-u-pin-err').textContent='Name not found. Ask your admin to add you.';
+    loginPinBuf.u=''; updateLoginDots('u');
+    shakeDots('login-u-dots');
+    return;
+  }
+  if(loginPinBuf.u!==user.pin){
     document.getElementById('login-u-pin-err').textContent='Wrong PIN. Try again.';
     loginPinBuf.u=''; updateLoginDots('u');
     shakeDots('login-u-dots');
@@ -968,7 +975,8 @@ function verifyUserPin(){
   initUserShell();
 }
 
-function verifyAdminPin(){
+async function verifyAdminPin(){
+  if(navigator.onLine) await fetchUsersFromSupabase();
   const admins=getUsers().filter(u=>u.role==='admin');
   // Try matching against admin users first
   let matched=admins.find(u=>loginPinBuf.a===u.pin);
@@ -1626,7 +1634,13 @@ function enterAdminShell(){
   populatePlanDropdowns();
   renderAssigneeRows();
   renderUserMgmt();
+  refreshRosterUI(); // pull the live roster and re-render team list + assign dropdown
   // PIN is now per-user, managed in Team tab
+}
+
+// Pull the roster from the cloud, then refresh any roster-driven UI.
+function refreshRosterUI(){
+  fetchUsersFromSupabase().then(()=>{ renderUserMgmt(); renderAssigneeRows(); }).catch(()=>{});
 }
 
 function adminLogout(){
@@ -1643,8 +1657,8 @@ function showAdminTab(name,tab){
   if(tab) tab.classList.add('active');
   if(name==='review') renderAdminReview();
   if(name==='a-history') renderAdminHistory();
-  if(name==='plan'){ populatePlanDropdowns(); renderPlanList(); }
-  if(name==='users') renderUserMgmt();
+  if(name==='plan'){ populatePlanDropdowns(); renderPlanList(); refreshRosterUI(); }
+  if(name==='users'){ renderUserMgmt(); refreshRosterUI(); }
 }
 
 // Admin access is via the login screen (Admin tab)
@@ -2438,8 +2452,81 @@ function userLogout(){
 // ══════════════════
 // USER MANAGEMENT
 // ══════════════════
+// localStorage is only an offline cache — Supabase (team_members) is the source of truth.
 function getUsers(){ return JSON.parse(localStorage.getItem('jaey_users')||'[]'); }
 function saveUsers(users){ localStorage.setItem('jaey_users',JSON.stringify(users)); }
+
+// ── ROSTER CLOUD SYNC ──
+function sbHeaders(extra){ return Object.assign({'apikey':sbCfg.key,'Authorization':'Bearer '+sbCfg.key}, extra||{}); }
+
+// Pull the roster from Supabase into the local cache. Returns the roster.
+async function fetchUsersFromSupabase(){
+  if(!sbCfg.url||!sbCfg.key||!navigator.onLine) return getUsers();
+  try{
+    const res=await fetch(sbCfg.url+'/rest/v1/team_members?select=name,pin,role,added_at&order=added_at',
+      {headers:sbHeaders()});
+    if(!res.ok) throw new Error('HTTP '+res.status);
+    const rows=await res.json();
+    let users=rows.map(r=>({name:r.name,pin:String(r.pin),role:r.role||'team',addedAt:r.added_at||new Date().toISOString()}));
+    // Root admin must always exist — seed her to the cloud if missing.
+    if(!users.find(u=>u.name==='Jaini')){
+      const jaini={name:'Jaini',pin:'6558',role:'admin',addedAt:new Date().toISOString()};
+      users.unshift(jaini);
+      pushUserToSupabase(jaini);
+    }
+    saveUsers(users);
+    return users;
+  }catch(e){ console.warn('fetchUsers:',e); return getUsers(); }
+}
+
+// Upsert one member to Supabase. Returns true on success.
+async function pushUserToSupabase(u){
+  if(!sbCfg.url||!sbCfg.key) return false;
+  const row={name:u.name,pin:String(u.pin),role:u.role||'team',added_at:u.addedAt||new Date().toISOString(),updated_at:new Date().toISOString()};
+  try{
+    const res=await fetch(sbCfg.url+'/rest/v1/team_members?on_conflict=name',{
+      method:'POST',
+      headers:sbHeaders({'Content-Type':'application/json','Prefer':'resolution=merge-duplicates,return=minimal'}),
+      body:JSON.stringify(row)
+    });
+    return res.ok;
+  }catch(e){ console.warn('pushUser:',e); return false; }
+}
+
+// Returns true on success.
+async function deleteUserFromSupabase(name){
+  if(!sbCfg.url||!sbCfg.key) return false;
+  try{
+    const res=await fetch(sbCfg.url+'/rest/v1/team_members?name=eq.'+encodeURIComponent(name),
+      {method:'DELETE',headers:sbHeaders({'Prefer':'return=minimal'})});
+    return res.ok;
+  }catch(e){ console.warn('deleteUser:',e); return false; }
+}
+
+// Apply a roster change locally, push to cloud, and queue it if the push fails (offline).
+async function syncUserChange(op){
+  const ok = op.op==='delete' ? await deleteUserFromSupabase(op.name) : await pushUserToSupabase(op.user);
+  if(!ok) queueUserOp(op);
+  return ok;
+}
+
+// Offline queue for roster edits — replayed when back online.
+function queueUserOp(op){
+  const q=JSON.parse(localStorage.getItem('jaey_pending_users')||'[]');
+  q.push(op); localStorage.setItem('jaey_pending_users',JSON.stringify(q));
+  updatePendingDot();
+}
+async function trySyncPendingUsers(){
+  const q=JSON.parse(localStorage.getItem('jaey_pending_users')||'[]');
+  if(!q.length||!sbCfg.url||!navigator.onLine) return;
+  const remaining=[];
+  for(const op of q){
+    const ok = op.op==='delete' ? await deleteUserFromSupabase(op.name) : await pushUserToSupabase(op.user);
+    if(!ok) remaining.push(op);
+  }
+  localStorage.setItem('jaey_pending_users',JSON.stringify(remaining));
+  updatePendingDot();
+}
 
 function renderUserMgmt(){
   const el=document.getElementById('user-list'); if(!el) return;
@@ -2480,6 +2567,7 @@ function toggleAdminRole(name){
   u.role=u.role==='admin'?'team':'admin';
   saveUsers(users);
   renderUserMgmt();
+  syncUserChange({op:'upsert',user:u});
   toast((u.role==='admin'?'✓ '+name+' is now admin':'✓ '+name+' removed from admin'));
 }
 
@@ -2499,12 +2587,14 @@ function saveNewUser(){
   const users=getUsers();
   if(users.find(u=>u.name.toLowerCase()===name.toLowerCase())){ errEl.textContent='Name already exists'; return; }
   const role=document.getElementById('new-user-role')?.value||'team';
-  users.push({name, pin, role, addedAt:new Date().toISOString()});
+  const newUser={name, pin, role, addedAt:new Date().toISOString()};
+  users.push(newUser);
   saveUsers(users);
   document.getElementById('new-user-name').value='';
   document.getElementById('new-user-pin').value='';
   hideAddUserForm();
   renderUserMgmt();
+  syncUserChange({op:'upsert',user:newUser});
   toast('✓ '+name+' added');
 }
 
@@ -2514,13 +2604,14 @@ function resetUserPin(name){
   if(!/^\d{4}$/.test(newPin)){ toast('PIN must be 4 digits'); return; }
   const users=getUsers();
   const u=users.find(x=>x.name===name);
-  if(u){ u.pin=newPin; saveUsers(users); toast('✓ PIN updated for '+name); }
+  if(u){ u.pin=newPin; saveUsers(users); syncUserChange({op:'upsert',user:u}); toast('✓ PIN updated for '+name); }
 }
 
 function deleteUser(name){
   if(!confirm('Remove '+name+' from the team?')) return;
   saveUsers(getUsers().filter(u=>u.name!==name));
   renderUserMgmt();
+  syncUserChange({op:'delete',name});
   toast('Removed '+name);
 }
 
@@ -2548,7 +2639,12 @@ function loadStorage(){
   if(ss){stockData=JSON.parse(ss);buildMap();
     document.getElementById('data-status').className='ds';
     document.getElementById('data-status').innerHTML='✓ <strong>'+stockData.length.toLocaleString()+' barcodes</strong> (cached)';}
-  const sb=localStorage.getItem('jaey_supabase');if(sb){sbCfg=JSON.parse(sb);document.getElementById('sb-url').value=sbCfg.url;document.getElementById('sb-key').value=sbCfg.key;}
+  const sb=localStorage.getItem('jaey_supabase');
+  if(sb){const c=JSON.parse(sb); if(c&&c.url&&c.key) sbCfg=c;}
+  // Always fall back to the baked-in shared backend if nothing valid was stored.
+  if(!sbCfg.url||!sbCfg.key) sbCfg={url:SB_DEFAULT.url,key:SB_DEFAULT.key};
+  document.getElementById('sb-url').value=sbCfg.url;
+  document.getElementById('sb-key').value=sbCfg.key;
   // Always start on login screen — no auto-login
 }
 
