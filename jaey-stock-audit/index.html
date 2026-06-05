@@ -847,15 +847,16 @@ function updateOnline(){
   });
   const banner=document.getElementById('offline-banner');
   if(banner) banner.style.display=on?'none':'block';
-  if(on){ trySyncPending(); trySyncPendingUsers(); }
+  if(on){ trySyncPending(); trySyncPendingUsers(); trySyncPendingPlans(); }
   updatePendingDot();
 }
 
 function updatePendingDot(){
   const p=JSON.parse(localStorage.getItem('jaey_pending_sync')||'[]');
   const pu=JSON.parse(localStorage.getItem('jaey_pending_users')||'[]');
+  const pp=JSON.parse(localStorage.getItem('jaey_pending_plans')||'[]');
   const el=document.getElementById('u-pending');
-  if(el) el.style.display=(p.length||pu.length)?'inline':'none';
+  if(el) el.style.display=(p.length||pu.length||pp.length)?'inline':'none';
 }
 
 // ══════════════════
@@ -1016,6 +1017,8 @@ function initUserShell(){
   showUserWelcome(name);
   renderUserTasks();
   renderUserHistory();
+  refreshPlansUI();  // pull today's assignments from the cloud
+  refreshAuditsUI(); // pull this user's past scans from any device
   // Auto-fetch stock from Supabase if not cached
   ensureStockLoaded();
 }
@@ -1037,7 +1040,8 @@ function showUserTab(name,tab){
   document.querySelectorAll('.unt').forEach(t=>t.classList.remove('active'));
   document.getElementById('upg-'+name).classList.add('active');
   if(tab) tab.classList.add('active');
-  if(name==='my-history') renderUserHistory();
+  if(name==='my-history'){ renderUserHistory(); refreshAuditsUI(); }
+  if(name==='today') refreshPlansUI();
 }
 
 // ══════════════════
@@ -1142,7 +1146,7 @@ function openScan(product,color){
   // Record first-touch time on the plan item
   const todayItems=plans[todayStr()]||[];
   const planItem=todayItems.find(p=>p.product===product&&p.color===color&&(!p.assignee||p.assignee.toLowerCase()===name.toLowerCase()));
-  if(planItem&&!planItem.startedAt){ planItem.startedAt=new Date().toISOString(); savePlans(); }
+  if(planItem&&!planItem.startedAt){ planItem.startedAt=new Date().toISOString(); savePlans(); syncPlanChange({op:'upsert',item:planItem}); }
 
   currentScan={
     id:Date.now(), date:new Date().toISOString(), product, color,
@@ -1306,7 +1310,7 @@ function sendForReview(){
   // Record completedAt on the plan item
   const _planItems=plans[todayStr()]||[];
   const _planItem=_planItems.find(p=>p.product===currentScan.product&&p.color===currentScan.color&&(!p.assignee||p.assignee.toLowerCase()===currentScan.auditor.toLowerCase()));
-  if(_planItem&&!_planItem.completedAt){ _planItem.completedAt=new Date().toISOString(); savePlans(); }
+  if(_planItem&&!_planItem.completedAt){ _planItem.completedAt=new Date().toISOString(); savePlans(); syncPlanChange({op:'upsert',item:_planItem}); }
 
   audits.unshift(currentScan);
   try{localStorage.setItem('jaey_audits',JSON.stringify(audits));}catch(e){console.warn('Storage full, audit in memory only');}
@@ -1635,6 +1639,8 @@ function enterAdminShell(){
   renderAssigneeRows();
   renderUserMgmt();
   refreshRosterUI(); // pull the live roster and re-render team list + assign dropdown
+  refreshPlansUI();  // pull live plans/assignments
+  refreshAuditsUI(); // pull every device's audits into review
   // PIN is now per-user, managed in Team tab
 }
 
@@ -1655,9 +1661,9 @@ function showAdminTab(name,tab){
   document.querySelectorAll('.ant').forEach(t=>t.classList.remove('active'));
   document.getElementById('apg-'+name).classList.add('active');
   if(tab) tab.classList.add('active');
-  if(name==='review') renderAdminReview();
-  if(name==='a-history') renderAdminHistory();
-  if(name==='plan'){ populatePlanDropdowns(); renderPlanList(); refreshRosterUI(); }
+  if(name==='review'){ renderAdminReview(); refreshAuditsUI(); }
+  if(name==='a-history'){ renderAdminHistory(); refreshAuditsUI(); }
+  if(name==='plan'){ populatePlanDropdowns(); renderPlanList(); refreshRosterUI(); refreshPlansUI(); }
   if(name==='users'){ renderUserMgmt(); refreshRosterUI(); }
 }
 
@@ -1819,6 +1825,7 @@ function reopenAudit(id){
   if(!audit.trail) audit.trail=[];
   audit.trail.push({at:new Date().toISOString(),by:localStorage.getItem('jaey_user_name')||'Admin',action:'reopened'});
   try{localStorage.setItem('jaey_audits',JSON.stringify(audits));}catch(e){console.warn('Storage full, audit in memory only');}
+  saveAuditRemote(audit);
   toast('Audit reopened');
   renderAdminReview();
 }
@@ -2021,15 +2028,17 @@ function addToPlan(){
   const date=document.getElementById('plan-date').value||todayStr();
   if(!plans[date]) plans[date]=[];
   const names=assigneeRows.map(r=>r.name.trim()).filter(Boolean);
-  let added=0;
+  let added=0; const newItems=[];
   Array.from(selectedStyles).forEach((key,i)=>{
     const [product,color]=key.split('|||');
     if(plans[date].find(p=>p.product===product&&p.color===color)) return;
-    plans[date].push({id:Date.now()+i,product,color,assignee:names.length?names[i%names.length]:'',addedAt:new Date().toISOString(),plannedDate:date,startedAt:null,completedAt:null});
+    const item={id:Date.now()+i,product,color,assignee:names.length?names[i%names.length]:'',addedAt:new Date().toISOString(),plannedDate:date,startedAt:null,completedAt:null};
+    plans[date].push(item); newItems.push(item);
     added++;
   });
   selectedStyles.clear();
   savePlans();
+  newItems.forEach(item=>syncPlanChange({op:'upsert',item})); // push each new assignment to the cloud
   renderPlanSuggestions();
   renderPlanList();
   updateAddPlanBtn();
@@ -2091,6 +2100,7 @@ function removePlanItem(date,id){
   if(!plans[date]) return;
   plans[date]=plans[date].filter(p=>p.id!==id);
   savePlans(); renderPlanList(); renderUserTasks();
+  syncPlanChange({op:'delete',id}); // remove from the cloud too
 }
 
 // ══════════════════
@@ -2407,6 +2417,38 @@ async function trySyncPending(){
   if(synced.length){localStorage.setItem('jaey_pending_sync',JSON.stringify(pending.filter(a=>!synced.includes(a.id))));toast('☁️ Synced '+synced.length);updatePendingDot();}
 }
 
+// Pull every device's audits from the cloud so the admin reviews all scans, not just local ones.
+async function fetchAuditsFromSupabase(){
+  if(!sbCfg.url||!sbCfg.key||!navigator.onLine) return audits;
+  try{
+    let all=[], from=0, page=1000;
+    while(true){
+      const res=await fetch(sbCfg.url+'/rest/v1/stock_audits?select=raw_data&order=synced_at.desc&offset='+from+'&limit='+page,{headers:sbHeaders()});
+      if(!res.ok) throw new Error('HTTP '+res.status);
+      const rows=await res.json();
+      if(!rows.length) break;
+      all=all.concat(rows);
+      from+=page; if(rows.length<page) break;
+    }
+    // Reconstruct audit objects from raw_data. Keep local-only audits; cloud is source of truth otherwise.
+    const byId={};
+    for(const a of audits) if(a&&a.id!=null) byId[a.id]=a;
+    for(const r of all){ try{ const o=JSON.parse(r.raw_data); if(o&&o.id!=null) byId[o.id]=o; }catch(e){} }
+    audits=Object.values(byId).sort((a,b)=>new Date(b.date||0)-new Date(a.date||0));
+    try{localStorage.setItem('jaey_audits',JSON.stringify(audits));}catch(e){}
+    return audits;
+  }catch(e){ console.warn('fetchAudits:',e); return audits; }
+}
+
+// Push local-only audits, pull the merged set, then re-render audit views.
+function refreshAuditsUI(){
+  trySyncPending().then(()=>fetchAuditsFromSupabase()).then(()=>{
+    if(typeof renderAdminReview==='function') renderAdminReview();
+    if(typeof renderAdminHistory==='function') renderAdminHistory();
+    if(typeof renderUserHistory==='function') renderUserHistory();
+  }).catch(()=>{});
+}
+
 // ══════════════════
 // EXPORT
 // ══════════════════
@@ -2442,6 +2484,78 @@ function exportHistory(){
 // STORAGE & HELPERS
 // ══════════════════
 function savePlans(){try{localStorage.setItem('jaey_plans',JSON.stringify(plans));}catch(e){}}
+
+// ── PLAN / ASSIGNMENT CLOUD SYNC (Supabase audit_plans) ──
+// Pull all plans from the cloud and rebuild the local cache keyed by date.
+async function fetchPlansFromSupabase(){
+  if(!sbCfg.url||!sbCfg.key||!navigator.onLine) return plans;
+  try{
+    const res=await fetch(sbCfg.url+'/rest/v1/audit_plans?select=id,plan_date,product,color,assignee,added_at,started_at,completed_at&order=added_at',{headers:sbHeaders()});
+    if(!res.ok) throw new Error('HTTP '+res.status);
+    const rows=await res.json();
+    const np={};
+    for(const r of rows){
+      const d=(r.plan_date||'').slice(0,10); if(!d) continue;
+      (np[d]=np[d]||[]).push({id:r.id,product:r.product,color:r.color,assignee:r.assignee||'',addedAt:r.added_at,plannedDate:d,startedAt:r.started_at,completedAt:r.completed_at});
+    }
+    plans=np; savePlans();
+    return plans;
+  }catch(e){ console.warn('fetchPlans:',e); return plans; }
+}
+
+async function pushPlanToSupabase(item){
+  if(!sbCfg.url||!sbCfg.key) return false;
+  const row={id:item.id,plan_date:item.plannedDate,product:item.product,color:item.color,assignee:item.assignee||'',added_at:item.addedAt||new Date().toISOString(),started_at:item.startedAt||null,completed_at:item.completedAt||null,updated_at:new Date().toISOString()};
+  try{
+    const res=await fetch(sbCfg.url+'/rest/v1/audit_plans?on_conflict=id',{
+      method:'POST',
+      headers:sbHeaders({'Content-Type':'application/json','Prefer':'resolution=merge-duplicates,return=minimal'}),
+      body:JSON.stringify(row)
+    });
+    return res.ok;
+  }catch(e){ console.warn('pushPlan:',e); return false; }
+}
+
+async function deletePlanFromSupabase(id){
+  if(!sbCfg.url||!sbCfg.key) return false;
+  try{
+    const res=await fetch(sbCfg.url+'/rest/v1/audit_plans?id=eq.'+encodeURIComponent(id),
+      {method:'DELETE',headers:sbHeaders({'Prefer':'return=minimal'})});
+    return res.ok;
+  }catch(e){ console.warn('deletePlan:',e); return false; }
+}
+
+// Apply a plan change to the cloud; queue it if offline/failed.
+async function syncPlanChange(op){
+  const ok = op.op==='delete' ? await deletePlanFromSupabase(op.id) : await pushPlanToSupabase(op.item);
+  if(!ok) queuePlanOp(op);
+  return ok;
+}
+function queuePlanOp(op){
+  const q=JSON.parse(localStorage.getItem('jaey_pending_plans')||'[]');
+  q.push(op); localStorage.setItem('jaey_pending_plans',JSON.stringify(q));
+  updatePendingDot();
+}
+async function trySyncPendingPlans(){
+  const q=JSON.parse(localStorage.getItem('jaey_pending_plans')||'[]');
+  if(!q.length||!sbCfg.url||!navigator.onLine) return;
+  const remaining=[];
+  for(const op of q){
+    const ok = op.op==='delete' ? await deletePlanFromSupabase(op.id) : await pushPlanToSupabase(op.item);
+    if(!ok) remaining.push(op);
+  }
+  localStorage.setItem('jaey_pending_plans',JSON.stringify(remaining));
+  updatePendingDot();
+}
+
+// Refresh plans from the cloud, then re-render plan-driven UI (admin + user views).
+function refreshPlansUI(){
+  trySyncPendingPlans().then(()=>fetchPlansFromSupabase()).then(()=>{
+    if(typeof renderPlanList==='function') renderPlanList();
+    if(typeof renderPlanSuggestions==='function') renderPlanSuggestions();
+    if(typeof renderUserTasks==='function') renderUserTasks();
+  }).catch(()=>{});
+}
 function userLogout(){
   localStorage.removeItem('jaey_user_name');
   localStorage.removeItem('jaey_session');
