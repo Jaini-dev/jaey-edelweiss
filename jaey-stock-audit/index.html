@@ -1823,6 +1823,7 @@ function enterAdminShell(){
   refreshRosterUI(); // pull the live roster and re-render team list + assign dropdown
   refreshPlansUI();  // pull live plans/assignments
   refreshAuditsUI(); // pull every device's audits into review
+  recomputeTiersFromCloud().then(ok=>{ if(ok){ renderPlanSuggestions(); renderUserTasks(); } }); // auto A/B/C from cloud journal (last 60d)
   // PIN is now per-user, managed in Team tab
 }
 
@@ -1925,6 +1926,7 @@ function renderAdminReview(){
           <div class="ai-text">
             <strong>${ai.label}</strong>
             <div class="ai-sub">${ai.detail}</div>
+            ${ai.bc?`<a onclick="showBarcodeJourney('${ai.bc}')" style="font-size:11px;color:var(--sky);cursor:pointer;text-decoration:underline">📜 View movement history</a>`:''}
           </div>
         </div>`;
       }
@@ -1959,17 +1961,17 @@ function buildActionItems(audit){
   const items=[], r=audit.report||{};
   for(const bc of (r.ghosts||[]).slice(0,6)){
     const row=stockData.find(f=>f.barcode==bc);
-    items.push({id:'g-'+bc, label:'Mark BC '+bc+' as outward', detail:(row?row.sku+' · Size '+row.size+' — ':'')+'In system but not physically found'});
+    items.push({id:'g-'+bc, bc, label:'Mark BC '+bc+' as outward', detail:(row?row.sku+' · Size '+row.size+' — ':'')+'In system but not physically found'});
   }
   if((r.ghosts||[]).length>6) items.push({id:'g-more',label:'+'+(r.ghosts.length-6)+' more missing barcodes',detail:'See full detail'});
   for(const bc of (r.extras||[])){
     const row=stockData.find(f=>f.barcode==bc);
-    items.push({id:'x-'+bc, label:'Mark BC '+bc+' as inward', detail:(row?'Size '+row.size+' — ':'')+'Present physically but system says outward'});
+    items.push({id:'x-'+bc, bc, label:'Mark BC '+bc+' as inward', detail:(row?'Size '+row.size+' — ':'')+'Present physically but system says outward'});
   }
   for(const entry of (r.wrongProduct||[])){
     const bc=entry.split('__')[0];
     const parts=entry.split('__WRONG:')[1]?.split('|||')||[];
-    items.push({id:'w-'+bc, label:'Fix label on BC '+bc, detail:'Found in '+audit.product+' but belongs to: '+parts[0]});
+    items.push({id:'w-'+bc, bc, label:'Fix label on BC '+bc, detail:'Found in '+audit.product+' but belongs to: '+parts[0]});
   }
   return items;
 }
@@ -2099,6 +2101,7 @@ function renderResolve(){
       </div>
       <div style="display:flex;gap:6px;margin-top:8px">
         <button class="btn bs" style="font-size:11px;padding:6px 10px" onclick="resolveFound('${m.bc}',${m.auditId})">✓ Found</button>
+        ${journeyBtn(m.bc)}
         <button class="btn bo" style="font-size:11px;padding:6px 10px;color:var(--rose);border-color:var(--rose)" onclick="applyCorrection('${m.bc}',${m.auditId},'outward')">Mark OUTWARD in system</button>
       </div>
     </div>`;
@@ -2121,7 +2124,10 @@ function renderResolve(){
   if(exEl) exEl.innerHTML=exList.map(m=>`<div style="border:1px solid var(--border);border-left:3px solid var(--gold);border-radius:8px;padding:10px;margin-bottom:8px">
       <div style="font-weight:600;font-size:13px">BC ${m.bc}${m.size?' · Size '+m.size:''}</div>
       <div style="font-size:12px;color:var(--steel)">${m.product} · ${m.color} · flagged by ${m.auditor}</div>
-      <button class="btn bs" style="font-size:11px;padding:6px 10px;margin-top:8px" onclick="applyCorrection('${m.bc}',${m.auditId},'inward')">Mark INWARD in system</button>
+      <div style="display:flex;gap:6px;margin-top:8px">
+        <button class="btn bs" style="font-size:11px;padding:6px 10px" onclick="applyCorrection('${m.bc}',${m.auditId},'inward')">Mark INWARD in system</button>
+        ${journeyBtn(m.bc)}
+      </div>
     </div>`).join('');
 }
 
@@ -2516,103 +2522,182 @@ function recalcTiers(text, fname){
     const idx={};headers.forEach((h,i)=>idx[h]=i);
     const req=['Barcode','Product Name','Color','Status','Purpose','Scan Time'];
     for(const r of req) if(idx[r]===undefined) throw new Error('Missing column: '+r);
-
-    const SALE=['Website','Myntra','Nykaa','Zilo','Zilo Malad','Zilo Ghatkopar','Zilo Parel','Akshaya','ZIFOR','Zifor','AKSHAYA CTS'];
-    const INWARD_P=['Inhouse','Post-Exhibition Inward','Return - Website','Return- Myntra','Return - Nykaa','Return','No Error','Unknown','By System','Exhibition Stock Return'];
-
-    const parseTs=(timeStr)=>{
-      if(!timeStr) return NaN;
-      const dmy=timeStr.match(/^(\d{2})-(\d{2})-(\d{4})/);
-      const ymd=timeStr.match(/^(\d{4})-(\d{2})-(\d{2})/);
-      if(dmy) return new Date(dmy[3]+'-'+dmy[2]+'-'+dmy[1]).getTime();
-      if(ymd) return new Date(timeStr).getTime();
-      return NaN;
-    };
-
-    // Pass 1: find the uploaded data's full date span.
-    let minDate=Infinity, maxDate=-Infinity;
-    for(let i=1;i<recs.length;i++){
-      const cols=recs[i]; if(cols.length===1&&cols[0].trim()==='') continue;
-      const ts=parseTs(cols[idx['Scan Time']]?.trim());
-      if(isNaN(ts)) continue;
-      if(ts<minDate) minDate=ts;
-      if(ts>maxDate) maxDate=ts;
-    }
-    if(maxDate===-Infinity) throw new Error('No valid Scan Time dates found');
-
-    // A/B/C tiers are always computed on only the LAST 60 DAYS of the data,
-    // however long a period the CSV covers.
-    const WINDOW_DAYS=60;
-    const windowCutoff=maxDate-WINDOW_DAYS*86400000;
-    const windowStart=Math.max(minDate,windowCutoff);
-    const rangeDays=Math.max(1,(maxDate-windowStart)/86400000); // ≤ 60
-
-    const sales={}, lastInward={}, recentInward={};
-    const recentCutoff=Date.now()-7*86400000;
-
-    // Pass 2: sales velocity counts ONLY the last-60-days window; restock recency stays full-history.
-    for(let i=1;i<recs.length;i++){
-      const cols=recs[i]; if(cols.length===1&&cols[0].trim()==='') continue;
-      const product=cols[idx['Product Name']]?.trim();
-      const color=cols[idx['Color']]?.trim();
-      const status=cols[idx['Status']]?.trim().toLowerCase();
-      const purpose=cols[idx['Purpose']]?.trim()||'';
-      const ts=parseTs(cols[idx['Scan Time']]?.trim());
-      if(!product||!color||isNaN(ts)) continue;
-
-      const key=product+'|||'+color;
-      if(status==='outward'&&SALE.includes(purpose)){
-        if(ts>=windowCutoff) sales[key]=(sales[key]||0)+1;
-      }
-      if(status==='inward'&&INWARD_P.includes(purpose)){
-        if(!lastInward[key]||ts>lastInward[key]) lastInward[key]=ts;
-        if(ts>=recentCutoff) recentInward[key]=(recentInward[key]||0)+1;
-      }
-    }
-    let aCount=0,bCount=0,cCount=0,dCount=0,updated=0;
-
-    // Recalculate tiers for all STYLES_DATA entries
-    for(const s of STYLES_DATA){
-      const key=s.product+'|||'+s.color;
-      const sold=sales[key]||0;
-      const vpw=parseFloat((sold/rangeDays*7).toFixed(1));
-      const recentRestock=recentInward[key]||0;
-      const daysSinceRestock=lastInward[key]?Math.floor((Date.now()-lastInward[key])/86400000):999;
-
-      let tier,days;
-      if(vpw>=8){tier='A';days=7;}
-      else if(vpw>=3){tier='B';days=14;}
-      else if(sold>0){tier='C';days=30;}
-      else{tier='D';days=30;}
-
-      if(s.tier!==tier||s.vpw!==vpw) updated++;
-      s.tier=tier; s.vpw=vpw; s.auditEveryDays=days;
-      s.unitsSold=sold; s.restockNote=recentRestock>=5&&daysSinceRestock<=7?'Restocked '+daysSinceRestock+'d ago':'';
-      if(tier==='A') aCount++;
-      else if(tier==='B') bCount++;
-      else if(tier==='C') cCount++;
-      else dCount++;
-    }
-
-    // Save recalc metadata. dateFrom/dateTo = the last-60-day velocity window actually used.
-    const fullFrom=new Date(minDate).toLocaleDateString('en-IN');
-    const meta={fname,loadedAt:new Date().toISOString(),rangeDays:Math.round(rangeDays),windowDays:WINDOW_DAYS,
-      dateFrom:new Date(windowStart).toLocaleDateString('en-IN'),dateTo:new Date(maxDate).toLocaleDateString('en-IN'),
-      fullFrom,a:aCount,b:bCount,c:cCount,d:dCount,updated};
-    localStorage.setItem('jaey_scan_meta',JSON.stringify(meta));
-    updateScanDataStatus();
-    renderPlanSuggestions();
-    toast('✓ Tiers recalculated (last '+Math.round(rangeDays)+'d): '+aCount+' A, '+bCount+' B, '+cCount+' C, '+dCount+' D');
-
-    const capped=(maxDate-minDate)/86400000>WINDOW_DAYS;
-    document.getElementById('tier-recalc-status').style.display='block';
-    document.getElementById('tier-recalc-status').innerHTML=
-      '✓ Updated '+updated+' styles. Tiers from the <strong>last '+Math.round(rangeDays)+' days</strong> ('+meta.dateFrom+' → '+meta.dateTo+')'+
-      (capped?' <span style="color:var(--steel)">· uploaded '+fullFrom+'→'+meta.dateTo+', older data ignored for velocity</span>':'')+
-      '. A:'+aCount+' B:'+bCount+' C:'+cCount+' D:'+dCount;
-
+    const events=extractEvents(recs, idx);
+    if(!events.length) throw new Error('No valid movement rows found');
+    persistScanEvents(events, fname);      // additive cloud journal (deduped)
+    applyTiersFromEvents(events, fname);   // recompute tiers from this upload
   }catch(e){ toast('❌ '+e.message); console.error(e); }
 }
+
+// Build movement-event objects from parsed CSV records (works for stock + movement exports).
+function extractEvents(recs, idx){
+  const events=[];
+  for(let i=1;i<recs.length;i++){
+    const cols=recs[i]; if(cols.length===1&&cols[0].trim()==='') continue;
+    const rawTime=cols[idx['Scan Time']]?.trim()||'';
+    const product=cols[idx['Product Name']]?.trim()||'';
+    const color=cols[idx['Color']]?.trim()||'';
+    if(!product||!color||!rawTime) continue;
+    events.push({
+      barcode:String(parseInt(cols[idx['Barcode']]?.trim()||'0',10)),
+      sku:cols[idx['Item SKU']]?.trim()||'',
+      product, color,
+      size:cols[idx['Size']]?.trim()||'',
+      status:(cols[idx['Status']]?.trim()||'').toLowerCase(),
+      purpose:cols[idx['Purpose']]?.trim()||'',
+      rawTime,
+      scannedBy:cols[idx['Scanned By']]?.trim()||''
+    });
+  }
+  return events;
+}
+
+const SALE_PURPOSES=['Website','Myntra','Nykaa','Zilo','Zilo Malad','Zilo Ghatkopar','Zilo Parel','Akshaya','ZIFOR','Zifor','AKSHAYA CTS'];
+const INWARD_PURPOSES=['Inhouse','Post-Exhibition Inward','Return - Website','Return- Myntra','Return - Nykaa','Return','No Error','Unknown','By System','Exhibition Stock Return'];
+function eventTs(e){
+  const t=e.rawTime||'';
+  const m=t.match(/^(\d{2})-(\d{2})-(\d{4})/), y=t.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if(m) return new Date(m[3]+'-'+m[2]+'-'+m[1]).getTime();
+  if(y) return new Date(t.slice(0,10)).getTime();
+  return NaN;
+}
+// Convert "dd-mm-yyyy hh:mm:ss" (or ISO) to a Postgres-parseable timestamp string.
+function scanTimeISO(t){
+  if(!t) return null;
+  const m=t.match(/^(\d{2})-(\d{2})-(\d{4})(?:[ T](\d{2}):(\d{2})(?::(\d{2}))?)?/);
+  if(m) return m[4]?`${m[3]}-${m[2]}-${m[1]}T${m[4]}:${m[5]}:${m[6]||'00'}`:`${m[3]}-${m[2]}-${m[1]}`;
+  const y=t.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if(y) return t.replace(' ','T');
+  return null;
+}
+
+// Compute & apply A/B/C/D tiers from movement events — sales velocity uses only the last 60 days.
+function applyTiersFromEvents(events, fname){
+  let minDate=Infinity, maxDate=-Infinity; const evts=[];
+  for(const e of events){ const ts=eventTs(e); if(isNaN(ts)) continue; evts.push({e,ts}); if(ts<minDate)minDate=ts; if(ts>maxDate)maxDate=ts; }
+  if(!evts.length){ toast('No dated movement events'); return; }
+  const WINDOW_DAYS=60;
+  const windowCutoff=maxDate-WINDOW_DAYS*86400000;
+  const windowStart=Math.max(minDate,windowCutoff);
+  const rangeDays=Math.max(1,(maxDate-windowStart)/86400000);
+  const sales={}, lastInward={}, recentInward={};
+  const recentCutoff=Date.now()-7*86400000;
+  for(const {e,ts} of evts){
+    const key=e.product+'|||'+e.color;
+    if(e.status==='outward'&&SALE_PURPOSES.includes(e.purpose)){ if(ts>=windowCutoff) sales[key]=(sales[key]||0)+1; }
+    if(e.status==='inward'&&INWARD_PURPOSES.includes(e.purpose)){ if(!lastInward[key]||ts>lastInward[key]) lastInward[key]=ts; if(ts>=recentCutoff) recentInward[key]=(recentInward[key]||0)+1; }
+  }
+  let aCount=0,bCount=0,cCount=0,dCount=0,updated=0; const tierMap={};
+  for(const s of STYLES_DATA){
+    const key=s.product+'|||'+s.color;
+    const sold=sales[key]||0;
+    const vpw=parseFloat((sold/rangeDays*7).toFixed(1));
+    const recentRestock=recentInward[key]||0;
+    const daysSinceRestock=lastInward[key]?Math.floor((Date.now()-lastInward[key])/86400000):999;
+    let tier,days;
+    if(vpw>=8){tier='A';days=7;}else if(vpw>=3){tier='B';days=14;}else if(sold>0){tier='C';days=30;}else{tier='D';days=30;}
+    if(s.tier!==tier||s.vpw!==vpw) updated++;
+    s.tier=tier;s.vpw=vpw;s.auditEveryDays=days;s.unitsSold=sold;
+    s.restockNote=recentRestock>=5&&daysSinceRestock<=7?'Restocked '+daysSinceRestock+'d ago':'';
+    tierMap[key]={tier,vpw,auditEveryDays:days,unitsSold:sold,restockNote:s.restockNote};
+    if(tier==='A')aCount++;else if(tier==='B')bCount++;else if(tier==='C')cCount++;else dCount++;
+  }
+  try{localStorage.setItem('jaey_tiers',JSON.stringify(tierMap));}catch(e){}
+  const fullFrom=new Date(minDate).toLocaleDateString('en-IN');
+  const meta={fname:fname||'cloud journal',loadedAt:new Date().toISOString(),rangeDays:Math.round(rangeDays),windowDays:WINDOW_DAYS,
+    dateFrom:new Date(windowStart).toLocaleDateString('en-IN'),dateTo:new Date(maxDate).toLocaleDateString('en-IN'),fullFrom,a:aCount,b:bCount,c:cCount,d:dCount,updated};
+  localStorage.setItem('jaey_scan_meta',JSON.stringify(meta));
+  updateScanDataStatus();
+  if(typeof renderPlanSuggestions==='function') renderPlanSuggestions();
+  toast('✓ Tiers (last '+Math.round(rangeDays)+'d): '+aCount+' A '+bCount+' B '+cCount+' C '+dCount+' D');
+  const el=document.getElementById('tier-recalc-status');
+  if(el){ const capped=(maxDate-minDate)/86400000>WINDOW_DAYS; el.style.display='block';
+    el.innerHTML='✓ Updated '+updated+' styles. Tiers from the <strong>last '+Math.round(rangeDays)+' days</strong> ('+meta.dateFrom+' → '+meta.dateTo+')'+
+      (capped?' <span style="color:var(--steel)">· older data ignored for velocity</span>':'')+'. A:'+aCount+' B:'+bCount+' C:'+cCount+' D:'+dCount; }
+}
+
+// Apply tiers cached in localStorage to STYLES_DATA so rankings survive reloads.
+function applySavedTiers(){
+  try{
+    const t=JSON.parse(localStorage.getItem('jaey_tiers')||'null'); if(!t) return;
+    for(const s of STYLES_DATA){ const v=t[s.product+'|||'+s.color]; if(v){ s.tier=v.tier; s.vpw=v.vpw; s.auditEveryDays=v.auditEveryDays; s.unitsSold=v.unitsSold; s.restockNote=v.restockNote||''; } }
+  }catch(e){}
+}
+
+// Push movement events to the additive cloud journal (scan_events), deduped by dedup_key.
+async function persistScanEvents(events, fname){
+  if(!sbCfg.url||!sbCfg.key||!navigator.onLine||!events.length) return;
+  const statusEl=document.getElementById('tier-recalc-status');
+  const seen={}, rows=[];
+  for(const e of events){
+    const key=e.barcode+'|'+e.rawTime+'|'+e.status+'|'+e.purpose;
+    if(seen[key]) continue; seen[key]=1;
+    rows.push({barcode:e.barcode,sku:e.sku||'',product:e.product,color:e.color,size:e.size||'',status:e.status,purpose:e.purpose||'',scan_time:scanTimeISO(e.rawTime),scanned_by:e.scannedBy||'',dedup_key:key});
+  }
+  const BATCH=500; let done=0;
+  for(let i=0;i<rows.length;i+=BATCH){
+    const batch=rows.slice(i,i+BATCH);
+    try{
+      const res=await fetch(sbCfg.url+'/rest/v1/scan_events?on_conflict=dedup_key',{method:'POST',
+        headers:sbHeaders({'Content-Type':'application/json','Prefer':'resolution=merge-duplicates,return=minimal'}),
+        body:JSON.stringify(batch)});
+      if(!res.ok){ if(statusEl){statusEl.style.display='block';statusEl.innerHTML='⚠️ Movement journal not saved (HTTP '+res.status+'). Create the <code>scan_events</code> table — see setup.';} return; }
+    }catch(e){ console.warn('persistScanEvents',e); return; }
+    done+=batch.length;
+    if(statusEl){statusEl.style.display='block';statusEl.innerHTML='💾 Saving movement journal… '+Math.round(done/rows.length*100)+'%';}
+  }
+  if(statusEl) statusEl.innerHTML='✓ Movement journal updated — '+rows.length.toLocaleString()+' events this upload (older dates kept).';
+}
+
+// Auto-recompute tiers from the cloud journal (last 60 days) so you only ever upload new dates.
+async function recomputeTiersFromCloud(){
+  if(!sbCfg.url||!sbCfg.key||!navigator.onLine) return false;
+  try{
+    const cutoff=new Date(Date.now()-90*86400000).toISOString();
+    let all=[], from=0, page=1000;
+    while(true){
+      const res=await fetch(sbCfg.url+'/rest/v1/scan_events?select=product,color,status,purpose,scan_time&scan_time=gte.'+encodeURIComponent(cutoff)+'&order=scan_time&offset='+from+'&limit='+page,{headers:sbHeaders()});
+      if(!res.ok) return false;
+      const pg=await res.json(); if(!pg.length) break;
+      all=all.concat(pg); from+=page; if(pg.length<page) break;
+    }
+    if(!all.length) return false;
+    applyTiersFromEvents(all.map(r=>({product:r.product,color:r.color,status:(r.status||'').toLowerCase(),purpose:r.purpose||'',rawTime:(r.scan_time||'').slice(0,10)})),'cloud journal');
+    return true;
+  }catch(e){ console.warn('recomputeTiersFromCloud',e); return false; }
+}
+
+// ── BARCODE JOURNEY (movement history from the cloud journal) ──
+async function showBarcodeJourney(bc){
+  bc=String(bc);
+  document.getElementById('modal-title').textContent='📜 Journey · BC '+bc;
+  document.getElementById('modal-body').innerHTML='<div style="padding:16px;text-align:center;color:var(--steel);font-size:13px">Loading history…</div>';
+  document.getElementById('modal-ov').classList.add('show');
+  let events=[];
+  try{
+    const res=await fetch(sbCfg.url+'/rest/v1/scan_events?select=status,purpose,scan_time,scanned_by,product,color,size&barcode=eq.'+encodeURIComponent(bc)+'&order=scan_time.desc&limit=500',{headers:sbHeaders()});
+    if(res.ok) events=await res.json();
+  }catch(e){}
+  const body=document.getElementById('modal-body');
+  if(!events.length){ body.innerHTML='<div style="padding:16px;color:var(--steel);font-size:13px">No movement history in the journal yet for BC '+bc+'.<br><br>Upload your scan/movement CSV in the Data tab to build it.</div>'; return; }
+  const top=events[0];
+  const lastMoved=events.find(e=>e.scan_time);
+  const daysSince=lastMoved?Math.floor((Date.now()-new Date(lastMoved.scan_time))/86400000):null;
+  let html=`<div style="font-size:13px;margin-bottom:10px"><strong>${top.product||''} · ${top.color||''}</strong>${top.size?' · Size '+top.size:''}<div style="font-size:12px;color:var(--steel)">${events.length} event${events.length>1?'s':''}${daysSince!=null?' · last moved '+(daysSince<=0?'today':daysSince+'d ago'):''}</div></div>`;
+  for(const e of events){
+    const inn=e.status==='inward';
+    html+=`<div style="display:flex;gap:9px;padding:8px 0;border-bottom:1px solid var(--border)">
+      <div style="width:8px;border-radius:4px;flex-shrink:0;background:${inn?'var(--sage)':'var(--rose)'}"></div>
+      <div style="flex:1">
+        <div style="font-size:13px;font-weight:600;color:${inn?'var(--sage)':'var(--rose)'}">${inn?'⬇ INWARD':'⬆ OUTWARD'}${e.purpose?' · '+e.purpose:''}</div>
+        <div style="font-size:11px;color:var(--steel)">${e.scan_time?formatDateTime(e.scan_time):''}${e.scanned_by?' · by '+e.scanned_by:''}</div>
+      </div>
+    </div>`;
+  }
+  body.innerHTML=html;
+}
+function journeyBtn(bc){ return `<button class="btn bo" style="font-size:11px;padding:6px 10px" onclick="showBarcodeJourney('${String(bc).replace(/'/g,"")}')">📜 History</button>`; }
+
 
 // Show whether the loaded barcode CSV has inward + outward rows (or only one), plus last upload date.
 function updateStockComposition(){
@@ -2709,8 +2794,8 @@ function parseCSV(text,fname){
     renderUserTasks();
     updateStockComposition();
     toast('✓ '+rows.length.toLocaleString()+' barcodes loaded');
-    // Upload to Supabase so all devices get it
-    if(sbCfg.url&&sbCfg.key) uploadStockToSupabase(rows, fname);
+    // Upload to Supabase so all devices get it, and feed the movement journal.
+    if(sbCfg.url&&sbCfg.key){ uploadStockToSupabase(rows, fname); persistScanEvents(extractEvents(recs, idx), fname); }
   }catch(e){toast('❌ '+e.message);}
 }
 
@@ -3280,6 +3365,7 @@ function dismissScanAlert(){
 }
 
 function loadStorage(){
+  applySavedTiers(); // restore A/B/C tiers cached from the last recompute
   // Ensure Jaini is always present as admin (upsert - safe to run every load)
   try {
     const _users = JSON.parse(localStorage.getItem('jaey_users')||'[]');
