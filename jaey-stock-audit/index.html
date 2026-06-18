@@ -650,6 +650,7 @@ details.review-card[open]>.rc-summary{border-bottom:1px solid var(--border)}
   <!-- REVIEW -->
   <div id="apg-review" class="pg active">
     <div id="review-daily"></div>
+    <div id="review-newarrivals"></div>
     <input type="text" id="review-search" placeholder="🔍 Search style or colour…" autocomplete="off" oninput="renderAdminReview()" style="width:100%;font-size:13px;padding:8px 11px;margin-bottom:9px">
     <div style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap">
       <button class="btn bo" id="rf-review" onclick="setReviewFilter('review')" style="font-size:11px;padding:5px 10px;border-color:var(--gold)">⏳ Needs Review</button>
@@ -2098,6 +2099,20 @@ function renderAdminReview(){
       <span><strong style="font-size:17px;font-family:'DM Serif Display',serif">${_pcs.toLocaleString()}</strong> pcs found</span>
     </div>`:'';
   }
+  // New-arrivals heads-up — audited styles that gained pieces since (one-tap Add pieces each).
+  const _naEl=document.getElementById('review-newarrivals');
+  if(_naEl){
+    const na=newArrivalsByStyle();
+    const total=na.reduce((n,s)=>n+s.count,0);
+    _naEl.innerHTML=na.length?`<div style="background:var(--sky-light);border:1px solid var(--sky);border-radius:10px;padding:10px 12px;margin-bottom:10px;font-size:12px">
+      <div style="font-weight:700;color:var(--sky);margin-bottom:6px">🆕 ${total} new piece${total>1?'s':''} arrived since you audited ${na.length} style${na.length>1?'s':''} — add them in:</div>
+      ${na.slice(0,8).map(s=>`<div style="display:flex;align-items:center;gap:8px;padding:3px 0">
+        <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${s.product} · ${s.color} — <strong>${s.count} new</strong></span>
+        <button class="btn bo" style="font-size:11px;padding:4px 9px" onclick="continueAudit(${s.auditId})">➕ Add pieces</button>
+      </div>`).join('')}
+      ${na.length>8?`<div style="color:var(--steel);margin-top:4px">+${na.length-8} more style${na.length-8>1?'s':''}</div>`:''}
+    </div>`:'';
+  }
   const q=(document.getElementById('review-search')?.value||'').trim().toLowerCase();
   const matchQ=(p,c)=>!q||((p||'').toLowerCase().includes(q))||((c||'').toLowerCase().includes(q));
 
@@ -2370,6 +2385,33 @@ function collectMissing(){
     }
   }
   return Object.values(seen);
+}
+
+// Already-audited styles that have gained pieces since: a barcode currently inward, inwarded AFTER the
+// style's latest audit and not yet scanned in it. Drives the "new arrivals" heads-up.
+function newArrivalsByStyle(){
+  const latest={};
+  for(const a of audits){
+    const k=a.product+'|||'+a.color;
+    if(!latest[k] || new Date(a.savedAt||a.date||0)>new Date(latest[k].savedAt||latest[k].date||0)) latest[k]=a;
+  }
+  const out=[];
+  for(const k in latest){
+    const a=latest[k];
+    const rows=productMap[a.product]?.[a.color]||[];
+    const auditTs=Date.parse(a.date||a.savedAt||'');
+    if(isNaN(auditTs)) continue;
+    const scanned=new Set((a.scanned||[]).map(e=>String(e).split('__')[0]));
+    let n=0;
+    for(const r of rows){
+      if(r.status!=='inward' || scanned.has(String(r.barcode))) continue;
+      const ts=r.scanTime?Date.parse(scanTimeISO(r.scanTime)||''):NaN;
+      if(!isNaN(ts) && ts>auditTs) n++;
+    }
+    if(n>0) out.push({product:a.product, color:a.color, auditId:a.id, count:n});
+  }
+  out.sort((x,y)=>y.count-x.count);
+  return out;
 }
 
 function renderResolve(){
@@ -3451,6 +3493,7 @@ function parseCSV(text,fname){
     if(!rows.length)throw new Error('No valid rows found');
     stockData=rows;buildMap();
     recoveryCheck(rows);   // flag any previously-Lost barcode that is now inward again
+    try{ const _na=newArrivalsByStyle(); const _tot=_na.reduce((n,s)=>n+s.count,0); if(_tot) setTimeout(()=>toast('🆕 '+_tot+' new piece'+(_tot>1?'s':'')+' arrived for '+_na.length+' audited style'+(_na.length>1?'s':'')+' — see Review'),900); }catch(e){}
     try{localStorage.setItem('jaey_stock',JSON.stringify(stockData));}catch(e){}
     document.getElementById('data-status').className='ds';
     document.getElementById('data-status').innerHTML=`✓ <strong>${rows.length.toLocaleString()} barcodes</strong> · ${fname}`;
