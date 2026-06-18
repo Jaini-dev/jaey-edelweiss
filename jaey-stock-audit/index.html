@@ -614,6 +614,11 @@ select:focus,input:focus,textarea:focus{border-color:var(--gold);background:var(
       <div style="font-size:12px;color:var(--steel)">See who's auditing what in real time. Each device appears while scanning and drops off ~40s after they stop.</div>
     </div>
     <div id="live-feed"></div>
+    <div class="card" style="margin:14px 0 8px">
+      <div class="ct" style="margin-bottom:2px">📋 Today's activity</div>
+      <div style="font-size:12px;color:var(--steel)">Every style scanned today, by whom — newest first.</div>
+    </div>
+    <div id="live-today"></div>
   </div>
 
   <!-- RESOLVE: summary + missing-pieces worklist + corrections -->
@@ -2868,9 +2873,47 @@ function liveStop(){
   fetch(sbCfg.url+'/rest/v1/live_scans?device_id=eq.'+deviceId(),{method:'DELETE',headers:sbHeaders()}).catch(()=>{});
 }
 
-let _liveTimer=null;
-function startLivePolling(){ stopLivePolling(); renderLiveFeed(); _liveTimer=setInterval(renderLiveFeed,3000); }
+let _liveTimer=null,_liveTick=0;
+function startLivePolling(){ stopLivePolling(); _liveTick=0; renderLiveFeed(); renderTodayActivity(); refreshTodayActivity();
+  _liveTimer=setInterval(()=>{ renderLiveFeed(); if(++_liveTick%5===0) refreshTodayActivity(); },3000); }
 function stopLivePolling(){ if(_liveTimer){ clearInterval(_liveTimer); _liveTimer=null; } }
+// Pull the latest audits from the cloud, then redraw today's log.
+function refreshTodayActivity(){ if(typeof fetchAuditsFromSupabase==='function') fetchAuditsFromSupabase().then(()=>renderTodayActivity()).catch(()=>{}); }
+
+// Today's scanning log: one row per audit session (who scanned what, when, how many).
+function renderTodayActivity(){
+  const el=document.getElementById('live-today'); if(!el) return;
+  const todayDS=new Date().toDateString();
+  const tms=a=>new Date(a.lastUpdated||a.updatedAt||a.savedAt||a.date||0).getTime();
+  const today=(audits||[]).filter(a=>{ const t=a.savedAt||a.date; return t && new Date(t).toDateString()===todayDS; })
+    .sort((a,b)=>tms(b)-tms(a));
+  if(!today.length){ el.innerHTML='<div class="card" style="text-align:center;color:var(--steel);font-size:13px;padding:18px">No audits recorded today yet.</div>'; return; }
+  const people=new Set(today.map(a=>a.auditor||'?'));
+  const pieces=today.reduce((n,a)=>n+(a.report?.totalScanned||0),0);
+  let html='<div style="font-size:12px;color:var(--steel);margin-bottom:8px">'+today.length+' session'+(today.length>1?'s':'')+' · '+people.size+' '+(people.size>1?'people':'person')+' · '+pieces+' pieces scanned today</div>';
+  const stCol={review:['#c47f17','📤 In review'],updated:['var(--sky)','🔄 Updated'],complete:['var(--sage)','✓ Complete']};
+  for(const a of today){
+    const t=a.savedAt||a.date;
+    const time=new Date(t).toLocaleTimeString('en-IN',{hour:'numeric',minute:'2-digit'});
+    const r=a.report||{}; const ghosts=r.ghosts?.length||0; const issues=(r.extras?.length||0)+(r.wrongProduct?.length||0)+(r.unknown?.length||0);
+    const st=stCol[a.status]||['var(--steel)',a.status||''];
+    html+=`<div class="card" style="margin-bottom:8px;padding:11px 13px">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+        <div style="font-weight:700;font-size:14px">🧑 ${a.auditor||'Unknown'}</div>
+        <div style="font-size:11px;color:var(--steel)">${time}</div>
+      </div>
+      <div style="font-size:13px;margin-top:2px">${a.product||''} · ${a.color||''}</div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:7px;font-size:11px">
+        <span style="background:var(--ink);color:#fff;font-weight:700;padding:2px 8px;border-radius:9px">${r.totalScanned||0} scanned</span>
+        ${r.matched?`<span style="color:var(--sage)">✓ ${r.matched} matched</span>`:''}
+        ${ghosts?`<span style="color:var(--steel)">🔍 ${ghosts} missing</span>`:''}
+        ${issues?`<span style="color:var(--rose)">⚠️ ${issues} to fix</span>`:''}
+        <span style="margin-left:auto;color:${st[0]};font-weight:600">${st[1]}</span>
+      </div>
+    </div>`;
+  }
+  el.innerHTML=html;
+}
 async function renderLiveFeed(){
   const el=document.getElementById('live-feed'); if(!el) return;
   if(!sbCfg.url||!sbCfg.key){ el.innerHTML='<div class="card" style="color:var(--steel);font-size:13px">Connect Supabase (Data tab) to see live scanning.</div>'; return; }
