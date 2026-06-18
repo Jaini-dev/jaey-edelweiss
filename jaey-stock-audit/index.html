@@ -81,7 +81,7 @@ select:focus,input:focus,textarea:focus{border-color:var(--gold);background:var(
 .sp-pending{background:#fff4e0;color:#a06800;border:1px solid #e6c060}
 .sp-review{background:var(--sky-light);color:var(--sky);border:1px solid #9aaae8}
 .sp-updated{background:#ede0ff;color:#6a3db0;border:1px solid #c8aae8}
-.sp-scanning{background:#ffe6e6;color:#c0392b;border:1px solid #e6a0a0}
+.sp-scanning{background:#e6f0ff;color:#2b6cb0;border:1px solid #a8c4ec}
 .sp-complete{background:var(--sage-light);color:var(--sage);border:1px solid #90b890}
 
 /* ── USER: TODAY CARDS ── */
@@ -1589,6 +1589,8 @@ function removeBC(entry){
   currentScan.scanned=currentScan.scanned.filter(e=>e!==entry);
   renderScanList();
   document.getElementById('bc-fb').className='scan-fb';
+  saveDraft();        // keep the on-device draft in sync
+  liveSyncAudit();    // push the corrected (lower) count to admin
 }
 
 // ══════════════════
@@ -2098,7 +2100,7 @@ function renderAdminReview(){
     const actionItems=buildActionItems(audit);
     const checked=audit.checkedActions||[];
     const live=status==='scanning';
-    const statusLbl=status==='complete'?'✅ Complete':status==='updated'?'🔄 Updated':live?'🔴 Scanning…':'📤 For Review';
+    const statusLbl=status==='complete'?'✅ Complete':status==='updated'?'🔄 Updated':live?'🔵 Scanning…':'📤 For Review';
 
     // Accordion: collapsed by default; expanded state preserved across live re-renders.
     html+=`<details class="review-card" data-aid="${audit.id}"${openIds.has(String(audit.id))?' open':''}>
@@ -2122,7 +2124,7 @@ function renderAdminReview(){
           ${!mm?'<span class="badge b-sage">✅ No mismatches</span>':''}
         </div>
         <div class="rc-meta" style="font-size:11px;color:var(--steel);margin-bottom:6px">${ds} · <strong>${audit.auditor}</strong></div>
-        ${live?`<div style="padding:2px 0 6px;font-size:12px;color:var(--rose);font-weight:600">🔴 Scanning live — count updating in real time</div>`:''}
+        ${live?`<div style="padding:2px 0 6px;font-size:12px;color:var(--sky);font-weight:600">🔵 Scanning live — count updating in real time</div>`:''}
         ${followUps.length?`<div style="padding:2px 0 6px;font-size:12px;color:var(--sky)">🔄 ${followUps.length} update(s) from team: ${followUps.map(f=>f.foundBarcodes.length+' found').join(', ')}</div>`:''}`;
 
     if(status!=='complete'&&actionItems.length){
