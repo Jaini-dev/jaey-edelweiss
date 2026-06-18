@@ -751,6 +751,15 @@ select:focus,input:focus,textarea:focus{border-color:var(--gold);background:var(
         To promote an existing member: <strong>Team tab → Make admin</strong>.
       </div>
     </div>
+
+    <div class="card" id="start-fresh-card" style="border:1.5px solid var(--rose);display:none">
+      <div class="ct" style="color:var(--rose)">🧹 Start Fresh</div>
+      <div style="font-size:12px;color:var(--steel);line-height:1.6;margin-bottom:10px">
+        Permanently deletes <strong>all audits, all assignments, and all team members</strong> — from the cloud and every device. Stock barcode data is kept (a new upload replaces it). Your <strong>Jaini</strong> admin login (PIN 6558) is preserved.<br>
+        A full backup is downloaded to your phone first. <span style="color:var(--rose)">This cannot be undone.</span>
+      </div>
+      <button class="btn br bb" onclick="startFresh()">🧹 Back up & delete all data</button>
+    </div>
   </div>
 </div>
 
@@ -1774,6 +1783,9 @@ function enterAdminShell(){
   ensureStockLoaded();
   const hdrEl=document.getElementById('admin-name-hdr');
   if(hdrEl) hdrEl.textContent=adminName;
+  // Start Fresh is restricted to the Jaini admin login only.
+  const sfCard=document.getElementById('start-fresh-card');
+  if(sfCard) sfCard.style.display=(adminName==='Jaini')?'block':'none';
   renderAdminReview();
   updateScanDataStatus();
   const pd=document.getElementById('plan-date');
@@ -2642,6 +2654,79 @@ function refreshAuditsUI(){
     if(typeof renderAdminHistory==='function') renderAdminHistory();
     if(typeof renderUserHistory==='function') renderUserHistory();
   }).catch(()=>{});
+}
+
+// ── START FRESH (wipe audits + plans + team from cloud and this device) ──
+// Deletes every row in a table, then verifies it is empty. Returns a status string.
+async function sbWipeTable(table, idCol, label){
+  if(!sbCfg.url||!sbCfg.key||!navigator.onLine) return '⚠️ '+label+': offline — cloud NOT cleared';
+  try{
+    const del=await fetch(sbCfg.url+'/rest/v1/'+table+'?'+idCol+'=not.is.null',
+      {method:'DELETE',headers:sbHeaders({'Prefer':'return=minimal'})});
+    if(!del.ok) return '❌ '+label+': delete failed (HTTP '+del.status+')';
+    const chk=await fetch(sbCfg.url+'/rest/v1/'+table+'?select='+idCol+'&limit=1',{headers:sbHeaders()});
+    const rows=chk.ok?await chk.json():[];
+    return rows.length ? '⚠️ '+label+': some rows remain — DB needs a DELETE policy' : '✓ '+label+' cleared';
+  }catch(e){ return '❌ '+label+': '+e.message; }
+}
+
+// Gather everything, save a backup file to the admin's device (and a copy in localStorage).
+function downloadJSON(filename,obj){
+  const blob=new Blob([JSON.stringify(obj,null,2)],{type:'application/json'});
+  const u=URL.createObjectURL(blob); const a=document.createElement('a');
+  a.href=u; a.download=filename; a.click(); URL.revokeObjectURL(u);
+}
+function backupAllData(){
+  // Backs up the current in-memory state (the admin shell already refreshed it from the cloud on entry).
+  const meta={exportedAt:new Date().toISOString(),app:'jaey-stock-audit'};
+  const fileBackup={...meta, users:getUsers(), audits, plans, stockData};
+  const lsBackup={...meta, users:getUsers(), audits, plans, stockCount:stockData.length}; // omit stockData to avoid localStorage quota
+  try{ localStorage.setItem('jaey_last_backup', JSON.stringify(lsBackup)); }catch(e){}
+  const ts=new Date().toISOString().replace(/[:.]/g,'-').slice(0,19);
+  downloadJSON('jaey_backup_'+ts+'.json', fileBackup);
+  return fileBackup;
+}
+
+async function startFresh(){
+  // Restricted to the Jaini admin login.
+  if((localStorage.getItem('jaey_admin_name')||'')!=='Jaini'){ toast('Only the Jaini admin can start fresh'); return; }
+  if(!confirm('⚠️ START FRESH\n\nThis permanently deletes ALL audits, ALL assignments, and ALL team members — from the cloud and every device.\n\nStock barcode data is kept (a new upload replaces it).\nYour Jaini admin login (PIN 6558) is preserved.\n\nA full backup will download to your phone first.\nThis CANNOT be undone. Continue?')) return;
+  if(!confirm('Last check — really wipe everything and start today fresh?')) return;
+
+  toast('💾 Saving backup…');
+  let bk;
+  try{ bk=await backupAllData(); }
+  catch(e){ if(!confirm('Backup failed: '+e.message+'\n\nProceed WITHOUT a backup?')) return; }
+  if(bk && !confirm('Backup downloaded ('+(bk.audits?.length||0)+' audits, '+(bk.users?.length||0)+' members). Now permanently delete everything?')) return;
+
+  toast('🧹 Clearing all data…');
+
+  const report=[];
+  report.push(await sbWipeTable('stock_audits','id','Audits'));
+  report.push(await sbWipeTable('audit_plans','id','Assignments'));
+  report.push(await sbWipeTable('team_members','name','Team members'));
+
+  // Clear local caches on this device.
+  audits=[]; plans={};
+  ['jaey_audits','jaey_plans','jaey_pending_sync','jaey_pending_plans','jaey_pending_users','jaey_users']
+    .forEach(k=>localStorage.removeItem(k));
+
+  // Re-seed the root admin so login still works, both locally and in the cloud.
+  const jaini={name:'Jaini',pin:'6558',role:'admin',addedAt:new Date().toISOString()};
+  saveUsers([jaini]);
+  if(navigator.onLine) await pushUserToSupabase(jaini);
+
+  // Refresh every view.
+  updatePendingDot();
+  if(typeof renderUserMgmt==='function') renderUserMgmt();
+  if(typeof renderAssigneeRows==='function') renderAssigneeRows();
+  if(typeof renderAdminReview==='function') renderAdminReview();
+  if(typeof renderAdminHistory==='function') renderAdminHistory();
+  if(typeof renderPlanList==='function') renderPlanList();
+  if(typeof renderUserTasks==='function') renderUserTasks();
+
+  toast('✓ Fresh start ready');
+  alert('Start Fresh result:\n\n'+report.join('\n')+'\n\n• Jaini admin (PIN 6558) kept — re-add your team in the Team tab.\n• Upload your new stock CSV in the Data tab.\n\nAsk each team member to reload the app on their phone.');
 }
 
 // ══════════════════
