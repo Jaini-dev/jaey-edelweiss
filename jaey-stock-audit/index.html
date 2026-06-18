@@ -702,6 +702,7 @@ select:focus,input:focus,textarea:focus{border-color:var(--gold);background:var(
     <div class="card">
       <div class="ct">📂 Stock Data</div>
       <div id="data-status" class="ds none">No data loaded</div>
+      <div id="stock-composition" style="display:none;font-size:12px;line-height:1.6;background:var(--cream);border-radius:8px;padding:9px 11px;margin-bottom:10px"></div>
     <button class="btn bo" onclick="fetchStockFromSupabase()" style="font-size:12px;padding:6px 11px;margin-bottom:10px;width:100%" id="fetch-stock-btn">☁️ Fetch latest from Supabase</button>
       <div class="uz" onclick="document.getElementById('csv-f').click()">
         <div style="font-size:26px;margin-bottom:5px">📁</div>
@@ -1788,6 +1789,7 @@ function enterAdminShell(){
   if(sfCard) sfCard.style.display=(adminName==='Jaini')?'block':'none';
   renderAdminReview();
   updateScanDataStatus();
+  updateStockComposition();
   const pd=document.getElementById('plan-date');
   if(!pd.value) pd.value=todayStr();
   renderPlanList();
@@ -1964,7 +1966,7 @@ function completeAudit(id){
   audit.adminNote=noteEl?.value.trim()||audit.adminNote||'';
   audit.status='complete';
   audit.completedAt=new Date().toISOString();
-  audit.completedBy=localStorage.getItem('jaey_user_name')||'Admin';
+  audit.completedBy=localStorage.getItem('jaey_admin_name')||localStorage.getItem('jaey_user_name')||'Admin';
   // Add to trail
   if(!audit.trail) audit.trail=[];
   audit.trail.push({at:audit.completedAt,by:audit.completedBy,action:'completed',note:audit.adminNote});
@@ -1979,7 +1981,7 @@ function reopenAudit(id){
   const audit=audits.find(a=>a.id===id); if(!audit) return;
   audit.status='review'; delete audit.completedAt; delete audit.completedBy;
   if(!audit.trail) audit.trail=[];
-  audit.trail.push({at:new Date().toISOString(),by:localStorage.getItem('jaey_user_name')||'Admin',action:'reopened'});
+  audit.trail.push({at:new Date().toISOString(),by:localStorage.getItem('jaey_admin_name')||localStorage.getItem('jaey_user_name')||'Admin',action:'reopened'});
   try{localStorage.setItem('jaey_audits',JSON.stringify(audits));}catch(e){console.warn('Storage full, audit in memory only');}
   saveAuditRemote(audit);
   toast('Audit reopened');
@@ -2417,6 +2419,29 @@ function recalcTiers(text, fname){
   }catch(e){ toast('❌ '+e.message); console.error(e); }
 }
 
+// Show whether the loaded barcode CSV has inward + outward rows (or only one), plus last upload date.
+function updateStockComposition(){
+  const el=document.getElementById('stock-composition'); if(!el) return;
+  if(!stockData.length){ el.style.display='none'; return; }
+  const inward=stockData.filter(r=>r.status==='inward').length;
+  const outward=stockData.filter(r=>r.status==='outward').length;
+  const other=stockData.length-inward-outward;
+  const up=JSON.parse(localStorage.getItem('jaey_stock_uploaded')||'null');
+  const when=up?.at?formatDateTime(up.at):'—';
+  let kind, color;
+  if(inward&&outward){ kind='✓ In-out CSV — both inward & outward rows'; color='var(--sage)'; }
+  else if(inward){ kind='⚠️ Only inward rows (outward mismatches won\'t be detected)'; color='var(--gold)'; }
+  else if(outward){ kind='⚠️ Only outward rows (no expected stock to audit against)'; color='var(--rose)'; }
+  else { kind='⚠️ No inward/outward status on rows'; color='var(--rose)'; }
+  el.style.display='block';
+  el.innerHTML=`<div style="font-weight:700;color:${color};margin-bottom:3px">${kind}</div>`+
+    `<div style="color:var(--steel)">${stockData.length.toLocaleString()} barcodes · `+
+    `<span style="color:var(--sage);font-weight:600">${inward.toLocaleString()} inward</span> · `+
+    `<span style="color:var(--rose);font-weight:600">${outward.toLocaleString()} outward</span>`+
+    (other?` · ${other} other`:'')+`</div>`+
+    `<div style="color:var(--steel);margin-top:2px">Last uploaded: <strong>${when}</strong></div>`;
+}
+
 function updateScanDataStatus(){
   const meta=JSON.parse(localStorage.getItem('jaey_scan_meta')||'null');
   const statusEl=document.getElementById('scan-data-status');
@@ -2465,6 +2490,7 @@ function parseCSV(text,fname){
     document.getElementById('data-status').innerHTML=`✓ <strong>${rows.length.toLocaleString()} barcodes</strong> · ${fname}`;
     populatePlanDropdowns();
     renderUserTasks();
+    updateStockComposition();
     toast('✓ '+rows.length.toLocaleString()+' barcodes loaded');
     // Upload to Supabase so all devices get it
     if(sbCfg.url&&sbCfg.key) uploadStockToSupabase(rows, fname);
@@ -2574,6 +2600,7 @@ async function fetchStockFromSupabase(){
     statusEl.innerHTML=`✓ <strong>${stockData.length.toLocaleString()} barcodes</strong> (from Supabase${uploadInfo})`;
     populatePlanDropdowns();
     renderUserTasks();
+    updateStockComposition();
     return true;
   }catch(err){
     console.error('Fetch stock failed:',err);
@@ -2616,12 +2643,17 @@ async function saveAuditRemote(audit){
   if(ok) toast('☁️ Synced'); else queueAudit(audit);
   return ok;
 }
+let _syncingAudits=false;
 async function trySyncPending(){
+  if(_syncingAudits) return;
   const pending=JSON.parse(localStorage.getItem('jaey_pending_sync')||'[]');
   if(!pending.length||!sbCfg.url||!navigator.onLine)return;
-  const synced=[];
-  for(const a of pending){ if(await pushAuditToCloud(a)) synced.push(a.id); }
-  if(synced.length){localStorage.setItem('jaey_pending_sync',JSON.stringify(pending.filter(a=>!synced.includes(a.id))));toast('☁️ Synced '+synced.length);updatePendingDot();}
+  _syncingAudits=true;
+  try{
+    const synced=[];
+    for(const a of pending){ if(await pushAuditToCloud(a)) synced.push(a.id); }
+    if(synced.length){localStorage.setItem('jaey_pending_sync',JSON.stringify(pending.filter(a=>!synced.includes(a.id))));toast('☁️ Synced '+synced.length);updatePendingDot();}
+  }finally{ _syncingAudits=false; }
 }
 
 // Pull every device's audits from the cloud so the admin reviews all scans, not just local ones.
@@ -2816,9 +2848,13 @@ function queuePlanOp(op){
   q.push(op); localStorage.setItem('jaey_pending_plans',JSON.stringify(q));
   updatePendingDot();
 }
+let _syncingPlans=false;
 async function trySyncPendingPlans(){
+  if(_syncingPlans) return;
   const q=JSON.parse(localStorage.getItem('jaey_pending_plans')||'[]');
   if(!q.length||!sbCfg.url||!navigator.onLine) return;
+  _syncingPlans=true;
+  try{
   const remaining=[];
   for(const op of q){
     const ok = op.op==='delete' ? await deletePlanFromSupabase(op.id) : await pushPlanToSupabase(op.item);
@@ -2826,6 +2862,7 @@ async function trySyncPendingPlans(){
   }
   localStorage.setItem('jaey_pending_plans',JSON.stringify(remaining));
   updatePendingDot();
+  }finally{ _syncingPlans=false; }
 }
 
 // Refresh plans from the cloud, then re-render plan-driven UI (admin + user views).
@@ -2910,9 +2947,13 @@ function queueUserOp(op){
   q.push(op); localStorage.setItem('jaey_pending_users',JSON.stringify(q));
   updatePendingDot();
 }
+let _syncingUsers=false;
 async function trySyncPendingUsers(){
+  if(_syncingUsers) return; // prevent overlapping runs racing the queue
   const q=JSON.parse(localStorage.getItem('jaey_pending_users')||'[]');
   if(!q.length||!sbCfg.url||!navigator.onLine) return;
+  _syncingUsers=true;
+  try{
   const remaining=[];
   for(const op of q){
     const ok = op.op==='delete' ? await deleteUserFromSupabase(op.name) : await pushUserToSupabase(op.user);
@@ -2920,6 +2961,7 @@ async function trySyncPendingUsers(){
   }
   localStorage.setItem('jaey_pending_users',JSON.stringify(remaining));
   updatePendingDot();
+  }finally{ _syncingUsers=false; }
 }
 
 function renderUserMgmt(){
@@ -2936,7 +2978,7 @@ function renderUserMgmt(){
   for(const u of sorted){
     const isAdmin=u.role==='admin';
     const auditCount=audits.filter(a=>a.auditor===u.name).length;
-    const safeName=u.name.replace(/'/g,"\'");
+    const safeName=esc(u.name);
     html+=`<div class="user-mgmt-item" style="${isAdmin?'border-left:3px solid var(--gold);':''}">
       <div class="umi-info">
         <div class="umi-name">${u.name} ${isAdmin?'<span style="background:var(--gold);color:var(--white);font-size:10px;font-weight:700;padding:1px 7px;border-radius:10px;letter-spacing:.04em">ADMIN</span>':''}</div>
@@ -2980,6 +3022,7 @@ function saveNewUser(){
   if(!/^\d{4}$/.test(pin)){ errEl.textContent='PIN must be exactly 4 digits'; return; }
   const users=getUsers();
   if(users.find(u=>u.name.toLowerCase()===name.toLowerCase())){ errEl.textContent='Name already exists'; return; }
+  if(users.find(u=>u.pin===pin)){ errEl.textContent='That PIN is already used by '+users.find(u=>u.pin===pin).name+'. Pick a different PIN.'; return; }
   const role=document.getElementById('new-user-role')?.value||'team';
   const newUser={name, pin, role, addedAt:new Date().toISOString()};
   users.push(newUser);
@@ -2997,6 +3040,8 @@ function resetUserPin(name){
   if(!newPin) return;
   if(!/^\d{4}$/.test(newPin)){ toast('PIN must be 4 digits'); return; }
   const users=getUsers();
+  const clash=users.find(u=>u.pin===newPin&&u.name!==name);
+  if(clash){ toast('That PIN is already used by '+clash.name); return; }
   const u=users.find(x=>x.name===name);
   if(u){ u.pin=newPin; saveUsers(users); syncUserChange({op:'upsert',user:u}); toast('✓ PIN updated for '+name); }
 }
@@ -3032,7 +3077,8 @@ function loadStorage(){
   const ss=localStorage.getItem('jaey_stock');
   if(ss){stockData=JSON.parse(ss);buildMap();
     document.getElementById('data-status').className='ds';
-    document.getElementById('data-status').innerHTML='✓ <strong>'+stockData.length.toLocaleString()+' barcodes</strong> (cached)';}
+    document.getElementById('data-status').innerHTML='✓ <strong>'+stockData.length.toLocaleString()+' barcodes</strong> (cached)';
+    updateStockComposition();}
   const sb=localStorage.getItem('jaey_supabase');
   if(sb){const c=JSON.parse(sb); if(c&&c.url&&c.key) sbCfg=c;}
   // Always fall back to the baked-in shared backend if nothing valid was stored.
