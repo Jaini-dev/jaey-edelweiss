@@ -629,6 +629,7 @@ details.review-card[open]>.rc-summary{border-bottom:1px solid var(--border)}
     <div class="card" style="margin-top:11px">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
         <div class="ct" style="margin-bottom:0">🔍 Missing pieces</div>
+        <button class="btn bo" id="export-lost-btn" onclick="exportLostCSV()" style="display:none;font-size:11px;padding:5px 10px;color:var(--rose);border-color:var(--rose);margin-left:auto;margin-right:6px">⬇️ Lost CSV</button>
         <select id="resolve-sort" onchange="renderResolve()" style="width:auto;font-size:12px;padding:5px 8px">
           <option value="age">Oldest first</option>
           <option value="style">By style</option>
@@ -2302,7 +2303,7 @@ function collectMissing(){
       // Last physical scan of this bc in any OTHER audit = its likely current location.
       const scans=(idx[bc]||[]).filter(s=>s.auditId!==a.id).sort((x,y)=>new Date(y.at)-new Date(x.at));
       seen[bc]={bc, auditId:a.id, product:a.product, color:a.color, auditor:a.auditor, at,
-        size:row?.size||'', sku:row?.sku||'', foundIn:scans[0]||null};
+        size:row?.size||'', sku:row?.sku||'', itemId:row?.itemId||'', sizeId:row?.sizeId||'', foundIn:scans[0]||null};
     }
   }
   return Object.values(seen);
@@ -2359,11 +2360,16 @@ function renderResolve(){
       <div style="display:flex;gap:6px;margin-top:8px">
         <button class="btn bs" style="font-size:11px;padding:6px 10px" onclick="resolveFound('${m.bc}',${m.auditId})">✓ Found</button>
         ${journeyBtn(m.bc)}
-        <button class="btn bo" style="font-size:11px;padding:6px 10px;color:var(--rose);border-color:var(--rose)" onclick="applyCorrection('${m.bc}',${m.auditId},'outward')">Mark OUTWARD in system</button>
+        <button class="btn bo" style="font-size:11px;padding:6px 10px;color:var(--rose);border-color:var(--rose)" onclick="markLost('${m.bc}',${m.auditId},${m.foundIn?1:0})">Mark LOST</button>
       </div>
     </div>`;
   }
   lEl.innerHTML=html;
+
+  // Show "Lost CSV" export when anything was written off as Lost today.
+  const _lostToday=getLostLog().filter(l=>(l.at||'').startsWith(todayStr()));
+  const _lostBtn=document.getElementById('export-lost-btn');
+  if(_lostBtn){ _lostBtn.style.display=_lostToday.length?'inline-flex':'none'; _lostBtn.textContent='⬇️ Lost CSV ('+_lostToday.length+')'; }
 
   // Extras: physically present but system says outward → offer "Mark INWARD".
   const exCard=document.getElementById('resolve-extras-card'); const exEl=document.getElementById('resolve-extras');
@@ -2424,6 +2430,75 @@ async function applyCorrection(bc, auditId, newStatus){
   if(audit){ (audit.systemUpdated=audit.systemUpdated||[]).push(bc); audit.updatedAt=new Date().toISOString(); try{localStorage.setItem('jaey_audits',JSON.stringify(audits));}catch(e){} saveAuditRemote(audit); }
   toast('✓ System updated — BC '+bc+' set '+newStatus);
   renderResolve(); renderAdminReview(); updateStockComposition();
+}
+
+// ── LOST WRITE-OFF: log + export in the inventory upload format, with recovery-watch ──
+// Lost pieces stay reversible: the log remembers each write-off so a later inward scan
+// (even months on) can flag it "recovered", giving net shrinkage = Lost − Recovered.
+function getLostLog(){ try{ return JSON.parse(localStorage.getItem('jaey_lost_log')||'[]'); }catch(e){ return []; } }
+function saveLostLog(log){ try{ localStorage.setItem('jaey_lost_log',JSON.stringify(log)); }catch(e){} }
+
+// Write off a missing piece as Lost: record it for the CSV upload, drop it from the
+// missing list, and best-effort flip the app's own stock to outward/Lost.
+function markLost(bc, auditId, hasFoundIn){
+  bc=String(bc);
+  const row=stockData.find(r=>r.barcode==bc)||{};
+  // Guard: a piece seen physically in another audit is misplaced/mislabelled, not lost.
+  if(hasFoundIn && !confirm('BC '+bc+' was physically scanned inside another style\'s count — it\'s most likely MISPLACED or mislabelled, not lost.\n\nMark it LOST anyway?')) return;
+  if(!confirm('Write off BC '+bc+' as LOST?\n\nIt will be added to today\'s Lost CSV (upload that to your inventory system) and removed from the missing list.')) return;
+  if(!row.itemId||!row.sizeId){
+    if(!confirm('⚠️ BC '+bc+' has no Item ID / Size ID loaded, so its Lost CSV row will be incomplete.\n\nTip: load today\'s stock CSV in the Data tab first. Continue anyway?')) return;
+  }
+  const log=getLostLog();
+  if(!log.find(l=>l.barcode===bc && !l.recovered)){
+    log.push({barcode:bc, itemId:row.itemId||'', sizeId:row.sizeId||'',
+      product:row.product||'', color:row.color||'', size:row.size||'', sku:row.sku||'',
+      at:new Date().toISOString(), by:localStorage.getItem('jaey_admin_name')||localStorage.getItem('jaey_user_name')||'Admin',
+      auditId, exported:false, recovered:false});
+    saveLostLog(log);
+  }
+  // Drop from the missing worklist locally (best-effort cloud write-off as outward/Lost).
+  const audit=audits.find(a=>a.id===auditId);
+  if(audit){ (audit.systemUpdated=audit.systemUpdated||[]).push(bc); audit.updatedAt=new Date().toISOString(); try{localStorage.setItem('jaey_audits',JSON.stringify(audits));}catch(e){} saveAuditRemote(audit); }
+  for(const r of stockData){ if(r.barcode==bc){ r.status='outward'; r.purpose='Lost'; } }
+  buildMap(); try{localStorage.setItem('jaey_stock',JSON.stringify(stockData));}catch(e){}
+  if(navigator.onLine && sbCfg.url && sbCfg.key){
+    fetch(sbCfg.url+'/rest/v1/stock_data?barcode=eq.'+encodeURIComponent(bc),{
+      method:'PATCH', headers:sbHeaders({'Content-Type':'application/json','Prefer':'return=minimal'}),
+      body:JSON.stringify({status:'outward', purpose:'Lost'})
+    }).catch(()=>{});
+  }
+  toast('🔴 BC '+bc+' marked Lost');
+  renderResolve(); renderAdminReview(); updateStockComposition();
+}
+
+// Download today's Lost write-offs in the inventory upload format:
+//   barcode,item_id,size_id,note,status,purpose  → note blank, status outward, purpose Lost.
+function exportLostCSV(){
+  const todays=getLostLog().filter(l=>(l.at||'').startsWith(todayStr()) && !l.recovered);
+  if(!todays.length){ toast('No pieces marked Lost today'); return; }
+  const missingIds=todays.filter(l=>!l.itemId||!l.sizeId);
+  if(missingIds.length && !confirm('⚠️ '+missingIds.length+' of '+todays.length+' Lost rows are missing Item ID / Size ID (stock CSV not loaded when marked).\n\nLoad today\'s stock CSV and re-mark for complete rows, or export now with blanks?\n\nExport now?')) return;
+  const rows=[['barcode','item_id','size_id','note','status','purpose']];
+  for(const l of todays) rows.push([l.barcode, l.itemId||'', l.sizeId||'', '', 'outward', 'Lost']);
+  const csv=rows.map(r=>r.join(',')).join('\n');
+  const b=new Blob([csv],{type:'text/csv'}); const u=URL.createObjectURL(b);
+  const a=document.createElement('a'); a.href=u; a.download='jaey_lost_'+todayStr()+'.csv'; a.click(); URL.revokeObjectURL(u);
+  // Mark exported (keeps them in the log for recovery-watch).
+  const log=getLostLog(); const set=new Set(todays.map(l=>l.barcode));
+  for(const l of log){ if(set.has(l.barcode)) l.exported=true; }
+  saveLostLog(log);
+  toast('⬇️ Exported '+todays.length+' Lost piece'+(todays.length>1?'s':''));
+}
+
+// After a fresh stock CSV loads, flag any previously-Lost barcode that is now inward again
+// → "recovered" (reverse the loss). Drives net shrinkage over time.
+function recoveryCheck(rows){
+  const log=getLostLog(); if(!log.length) return;
+  const inward=new Set(rows.filter(r=>r.status==='inward').map(r=>String(r.barcode)));
+  let n=0;
+  for(const l of log){ if(!l.recovered && inward.has(l.barcode)){ l.recovered=true; l.recoveredAt=new Date().toISOString(); n++; } }
+  if(n){ saveLostLog(log); toast('♻️ '+n+' Lost piece'+(n>1?'s':'')+' recovered (now inward)'); }
 }
 
 // Collapse the many per-piece follow-ups into a single "found N pcs" trail entry.
@@ -2854,6 +2929,8 @@ function extractEvents(recs, idx){
       sku:cols[idx['Item SKU']]?.trim()||'',
       product, color,
       size:cols[idx['Size']]?.trim()||'',
+      itemId:(idx['Item ID']!==undefined?cols[idx['Item ID']]?.trim():'')||'',
+      sizeId:(idx['Size ID']!==undefined?cols[idx['Size ID']]?.trim():'')||'',
       status:(cols[idx['Status']]?.trim()||'').toLowerCase(),
       purpose:cols[idx['Purpose']]?.trim()||'',
       rawTime,
@@ -2990,7 +3067,26 @@ async function showBarcodeJourney(bc){
     if(res.ok) events=await res.json();
   }catch(e){}
   const body=document.getElementById('modal-body');
-  if(!events.length){ body.innerHTML='<div style="padding:16px;color:var(--steel);font-size:13px">No movement history in the journal yet for BC '+bc+'.<br><br>Upload your scan/movement CSV in the Data tab to build it.</div>'; return; }
+  // Fallback: no cloud journal yet → show what the current in/out stock file knows about this barcode.
+  if(!events.length){
+    const row=stockData.find(r=>r.barcode==bc);
+    if(row){
+      const inn=row.status==='inward';
+      const iso=row.scanTime?scanTimeISO(row.scanTime):null;
+      body.innerHTML=`<div style="font-size:13px;margin-bottom:10px"><strong>${row.product||''} · ${row.color||''}</strong>${row.size?' · Size '+row.size:''}
+        <div style="font-size:12px;color:var(--steel)">From the current in/out file (no movement journal yet)</div></div>
+        <div style="display:flex;gap:9px;padding:8px 0;border-bottom:1px solid var(--border)">
+          <div style="width:8px;border-radius:4px;flex-shrink:0;background:${inn?'var(--sage)':'var(--rose)'}"></div>
+          <div style="flex:1">
+            <div style="font-size:13px;font-weight:600;color:${inn?'var(--sage)':'var(--rose)'}">${inn?'⬇ INWARD':'⬆ OUTWARD'}${row.purpose?' · '+row.purpose:''}</div>
+            <div style="font-size:11px;color:var(--steel)">${iso?formatDateTime(iso):(row.scanTime||'')}${row.scannedBy?' · by '+row.scannedBy:''}</div>
+          </div>
+        </div>
+        <div style="font-size:11px;color:var(--steel);margin-top:10px">Upload the scan/movement CSV in the Data tab to build full history.</div>`;
+      return;
+    }
+    body.innerHTML='<div style="padding:16px;color:var(--steel);font-size:13px">No movement history in the journal yet for BC '+bc+'.<br><br>Upload your scan/movement CSV in the Data tab to build it.</div>'; return;
+  }
   const top=events[0];
   const lastMoved=events.find(e=>e.scan_time);
   const daysSince=lastMoved?Math.floor((Date.now()-new Date(lastMoved.scan_time))/86400000):null;
@@ -3190,11 +3286,16 @@ function parseCSV(text,fname){
     for(let i=1;i<recs.length;i++){
       const cols=recs[i];
       if(cols.length===1&&cols[0].trim()==='')continue; // skip blank lines
-      const row={barcode:String(parseInt(cols[idx['Barcode']]?.trim()||'0',10)),product:cols[idx['Product Name']]?.trim(),color:cols[idx['Color']]?.trim(),size:cols[idx['Size']]?.trim(),status:(cols[idx['Status']]?.trim()||'').toLowerCase(),sku:cols[idx['Item SKU']]?.trim()||''};
+      const row={barcode:String(parseInt(cols[idx['Barcode']]?.trim()||'0',10)),product:cols[idx['Product Name']]?.trim(),color:cols[idx['Color']]?.trim(),size:cols[idx['Size']]?.trim(),status:(cols[idx['Status']]?.trim()||'').toLowerCase(),sku:cols[idx['Item SKU']]?.trim()||'',
+        // Numeric IDs needed for the Lost write-off upload — keep as strings so leading zeros (e.g. 009801) survive.
+        itemId:(idx['Item ID']!==undefined?cols[idx['Item ID']]?.trim():'')||'',sizeId:(idx['Size ID']!==undefined?cols[idx['Size ID']]?.trim():'')||'',
+        // Last-known movement from the in/out file — fallback for the Journey when the cloud journal is empty.
+        purpose:(idx['Purpose']!==undefined?cols[idx['Purpose']]?.trim():'')||'',scanTime:(idx['Scan Time']!==undefined?cols[idx['Scan Time']]?.trim():'')||'',scannedBy:(idx['Scanned By']!==undefined?cols[idx['Scanned By']]?.trim():'')||''};
       if(row.barcode&&row.product)rows.push(row);
     }
     if(!rows.length)throw new Error('No valid rows found');
     stockData=rows;buildMap();
+    recoveryCheck(rows);   // flag any previously-Lost barcode that is now inward again
     try{localStorage.setItem('jaey_stock',JSON.stringify(stockData));}catch(e){}
     document.getElementById('data-status').className='ds';
     document.getElementById('data-status').innerHTML=`✓ <strong>${rows.length.toLocaleString()} barcodes</strong> · ${fname}`;
