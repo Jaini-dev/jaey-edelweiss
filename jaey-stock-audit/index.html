@@ -2359,9 +2359,14 @@ function collectMissing(){
       const row=stockData.find(r=>r.barcode==bc);
       // Last physical scan of this bc in any OTHER audit = its likely current location.
       const scans=(idx[bc]||[]).filter(s=>s.auditId!==a.id).sort((x,y)=>new Date(y.at)-new Date(x.at));
+      // Inward date from the CSV (last movement). If it's after this audit first ran, it's a NEW arrival,
+      // not a loss — so we can show "🆕 new" instead of "missing".
+      const inwTs=row?.scanTime?Date.parse(scanTimeISO(row.scanTime)||''):NaN;
+      const auditTs=Date.parse(a.date||a.savedAt||'');
+      const isNew=!isNaN(inwTs)&&!isNaN(auditTs)&&inwTs>auditTs;
       seen[bc]={bc, auditId:a.id, product:a.product, color:a.color, auditor:a.auditor, at,
         size:row?.size||'', sku:row?.sku||'', itemId:row?.itemId||'', sizeId:row?.sizeId||'', sample:isSample(row),
-        tags:row?.tags||'', note:row?.note||'', foundIn:scans[0]||null};
+        tags:row?.tags||'', note:row?.note||'', inwardDate:row?.scanTime||'', isNew, foundIn:scans[0]||null};
     }
   }
   return Object.values(seen);
@@ -2420,7 +2425,7 @@ function renderResolve(){
   }
 
   // Bulk-select state for the missing list (survives re-render; pruned to what's currently shown).
-  _resolveVisible=missing.map(m=>({bc:String(m.bc), auditId:m.auditId, sample:!!m.sample, foundIn:!!m.foundIn}));
+  _resolveVisible=missing.map(m=>({bc:String(m.bc), auditId:m.auditId, sample:!!m.sample, foundIn:!!m.foundIn, isNew:!!m.isNew}));
   resolveSel=new Set([...resolveSel].filter(bc=>_resolveVisible.some(v=>v.bc===bc)));
   const bulkBar=missing.length?`<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;padding:6px 2px;font-size:12px;border-bottom:1px solid var(--border)">
       <label style="display:flex;align-items:center;gap:5px;cursor:pointer;margin:0;font-size:12px;text-transform:none;letter-spacing:0;font-weight:500;color:var(--ink)"><input type="checkbox" id="resolve-selall" onchange="toggleResolveAll(this.checked)" style="width:15px;height:15px"> Select all</label>
@@ -2435,13 +2440,15 @@ function renderResolve(){
   for(const m of missing){
     const days=Math.floor((Date.now()-new Date(m.at))/86400000);
     const ageTxt=days<=0?'today':days+'d ago';
-    html+=`<div style="border:1px solid var(--border);border-left:3px solid var(--rose);border-radius:8px;padding:10px;margin-bottom:8px">
+    const inwTxt=m.inwardDate?(scanTimeISO(m.inwardDate)?formatDateTime(scanTimeISO(m.inwardDate)):m.inwardDate):'';
+    html+=`<div style="border:1px solid var(--border);border-left:3px solid ${m.isNew?'var(--sky)':'var(--rose)'};border-radius:8px;padding:10px;margin-bottom:8px">
       <div style="display:flex;gap:8px;align-items:flex-start">
         <input type="checkbox" class="rsl-cb" ${resolveSel.has(String(m.bc))?'checked':''} onchange="toggleResolveSel('${m.bc}',this.checked)" style="margin-top:2px;flex-shrink:0;width:15px;height:15px">
         <div style="flex:1;min-width:0">
-          <div style="font-weight:600;font-size:13px">BC ${m.bc}${m.size?' · Size '+m.size:''}${m.sample?' <span style="background:#6b3fa0;color:#fff;font-size:9px;font-weight:700;padding:1px 6px;border-radius:20px;vertical-align:middle">🧷 SAMPLE</span>':''}</div>
+          <div style="font-weight:600;font-size:13px">BC ${m.bc}${m.size?' · Size '+m.size:''}${m.isNew?' <span style="background:var(--sky);color:#fff;font-size:9px;font-weight:700;padding:1px 6px;border-radius:20px;vertical-align:middle">🆕 NEW</span>':''}${m.sample?' <span style="background:#6b3fa0;color:#fff;font-size:9px;font-weight:700;padding:1px 6px;border-radius:20px;vertical-align:middle">🧷 SAMPLE</span>':''}</div>
           <div style="font-size:12px;color:var(--steel)">${m.product} · ${m.color}${m.sku?' · '+m.sku:''}</div>
           <div style="font-size:11px;color:var(--steel);margin-top:2px">Flagged by ${m.auditor} · ${ageTxt}</div>
+          ${inwTxt?`<div style="font-size:11px;margin-top:2px;color:${m.isNew?'var(--sky)':'var(--steel)'}">📥 Inwarded ${inwTxt}${m.isNew?' · arrived after this audit — scan via ➕ Add pieces, not a loss':' · still in system'}</div>`:''}
           ${(m.tags||m.note)?`<div style="margin-top:4px;font-size:11px;color:var(--steel)">${m.tags?'🏷️ <strong>'+m.tags+'</strong>':''}${m.tags&&m.note?' · ':''}${m.note?'📝 '+m.note:''}</div>`:''}
           ${m.sample?`<div style="margin-top:4px;font-size:11px;color:#6b3fa0;background:#f1ebf8;padding:4px 8px;border-radius:7px">🧷 Sample — check the sample rack before writing off</div>`:''}
           ${m.foundIn?`<div style="margin-top:5px;font-size:11px;color:var(--sky);background:var(--sky-light);padding:4px 8px;border-radius:7px">📍 Last scanned in <strong>${m.foundIn.product} · ${m.foundIn.color}</strong> by ${m.foundIn.auditor} · ${formatDateTime(m.foundIn.at)}${m.foundIn.kind==='misplaced'?' (misplaced)':''}</div>`:''}
@@ -2592,8 +2599,9 @@ function updateBulkBar(){
 function _selectedVisible(){ return _resolveVisible.filter(v=>resolveSel.has(v.bc)); }
 function bulkMarkUnknown(){
   const sel=_selectedVisible(); if(!sel.length) return;
-  const samples=sel.filter(v=>v.sample).length, seen=sel.filter(v=>v.foundIn).length;
+  const samples=sel.filter(v=>v.sample).length, seen=sel.filter(v=>v.foundIn).length, news=sel.filter(v=>v.isNew).length;
   let warn='';
+  if(news) warn+='\n• '+news+' are NEW arrivals (inwarded after the audit — not losses)';
   if(samples) warn+='\n• '+samples+' are SAMPLES (usually in the sample rack)';
   if(seen) warn+='\n• '+seen+' were seen in another count (likely misplaced)';
   if(!confirm('Write off '+sel.length+' piece'+(sel.length>1?'s':'')+' as UNKNOWN?'+(warn?'\n'+warn+'\n':'')+'\nThey\'ll be added to today\'s Unknown CSV and removed from the list.')) return;
