@@ -2089,19 +2089,20 @@ function renderAdminReview(){
 
   // Preserve which cards are expanded across live re-renders.
   const openIds=new Set([...el.querySelectorAll('details[open]')].map(d=>d.getAttribute('data-aid')));
+  const scanIdx=buildScanIndex();   // for auto-clearing wrong-labels accounted in their true style
   let html='';
   for(const audit of filtered){
     const d=new Date(audit.savedAt||audit.date);
     const ds=d.toLocaleDateString('en-IN',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});
     const r=audit.report||{};
-    const ghosts=r.ghosts?.length||0, extras=r.extras?.length||0, wrong=r.wrongProduct?.length||0;
+    const ghosts=r.ghosts?.length||0, extras=r.extras?.length||0, wrong=openWrongProduct(audit,scanIdx).length;
     const mm=ghosts+extras+wrong;
     const status=audit.status||'review';
     const sys=sysTotal(audit), accounted=accountedBarcodes(audit).length;
     const img=getImg(audit.product,audit.color);
     const followUps=audit.followUps||[];
     const totalFound=followUps.reduce((n,f)=>n+(f.foundBarcodes?.length||0),0);
-    const actionItems=buildActionItems(audit);
+    const actionItems=buildActionItems(audit,scanIdx);
     const checked=audit.checkedActions||[];
     // "Live" = actively being worked on right now (scanning or updating) — updated within 45s.
     const recentlyActive=(Date.now()-new Date(audit.updatedAt||audit.savedAt||audit.date||0).getTime())<45000;
@@ -2211,7 +2212,21 @@ function renderAdminIfActive(){
   if(document.getElementById('shell-admin').classList.contains('active')) renderAdminReview();
 }
 
-function buildActionItems(audit){
+// A wrong-product piece is "home" (accounted) once it's been scanned correctly in its true
+// style's audit — so its wrong-label flag should auto-clear. Computed live from the scan index.
+function wrongAccounted(entry, idx){
+  const bc=String(entry).split('__')[0];
+  const parts=String(entry).split('__WRONG:')[1]?.split('|||')||[];
+  const P=parts[0], C=parts[1];
+  return (idx[bc]||[]).some(s=>s.kind==='scanned' && s.product===P && s.color===C);
+}
+// Wrong-product entries still open (not yet accounted in their true style).
+function openWrongProduct(audit, idx){
+  idx=idx||buildScanIndex();
+  return (audit.report?.wrongProduct||[]).filter(e=>!wrongAccounted(e, idx));
+}
+
+function buildActionItems(audit, idx){
   const items=[], r=audit.report||{};
   for(const bc of (r.ghosts||[]).slice(0,6)){
     const row=stockData.find(f=>f.barcode==bc);
@@ -2224,7 +2239,7 @@ function buildActionItems(audit){
     const row=stockData.find(f=>f.barcode==bc);
     items.push({id:'x-'+bc, bc, label:'Mark BC '+bc+' as inward', detail:(row?'Size '+row.size+' — ':'')+'Present physically but system says outward'});
   }
-  for(const entry of (r.wrongProduct||[])){
+  for(const entry of openWrongProduct(audit, idx)){  // accounted-elsewhere wrong-labels auto-clear
     const bc=entry.split('__')[0];
     const parts=entry.split('__WRONG:')[1]?.split('|||')||[];
     items.push({id:'w-'+bc, bc, label:'Fix label on BC '+bc, detail:'Found in '+audit.product+' but belongs to: '+parts[0]});
@@ -2243,7 +2258,7 @@ function toggleAction(auditId,itemId,checked){
 function completeAudit(id){
   const audit=audits.find(a=>a.id===id); if(!audit) return;
   const r=audit.report||{};
-  const open=(r.ghosts?.length||0)+(r.extras?.length||0)+(r.wrongProduct?.length||0);
+  const open=(r.ghosts?.length||0)+(r.extras?.length||0)+openWrongProduct(audit).length;
   if(open>0&&!confirm(`${open} unresolved item(s) still open (resolve them in the worklist at the top). Complete anyway?`)) return;
   const noteEl=document.getElementById('admin-note-'+id);
   audit.adminNote=noteEl?.value.trim()||audit.adminNote||'';
