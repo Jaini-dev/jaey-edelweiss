@@ -1456,6 +1456,23 @@ function _renderScanScreen(){
   setTimeout(()=>document.getElementById('bc-in').focus(),400);
 }
 
+// Re-open an EXISTING audit to add more pieces (rolling, multi-day stock-take). Keeps the same audit
+// and its scanned list; refreshes the system-inward set to the latest CSV so pieces inwarded since the
+// audit started are now counted (and pieces that left drop out). No new audit is created.
+function continueAudit(auditId){
+  const audit=audits.find(a=>a.id===auditId); if(!audit) return;
+  if(stockData.length===0){ toast('⚠️ Load the latest stock CSV first (Data tab)'); return; }
+  const rows=productMap[audit.product]?.[audit.color]||[];
+  audit.systemBarcodes=rows;
+  audit.systemInward=rows.filter(r=>r.status==='inward').map(r=>r.barcode);  // reconcile against the latest CSV
+  audit.status='scanning';
+  if(!audit.scanned) audit.scanned=[];
+  currentScan=audit;
+  clearDraft();              // this audit is the active session now
+  _renderScanScreen();
+  toast('➕ Adding to '+audit.product+' · '+audit.color+' — scan new pieces');
+}
+
 function closeScanScreen(){
   if(currentScan&&currentScan.status==='scanning'&&currentScan.scanned.length>0){
     saveDraft(); // keep it safe — they can resume from the home screen
@@ -2172,13 +2189,15 @@ function renderAdminReview(){
     html+=`<div class="rc-footer">`;
     if(status==='complete'){
       html+=`<div style="font-size:12px;color:var(--sage)">✅ Completed by <strong>${audit.completedBy||'Admin'}</strong> · ${audit.completedAt?new Date(audit.completedAt).toLocaleDateString('en-IN',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}):''}</div>`;
-      html+=`<button class="btn bo" style="font-size:11px;padding:5px 9px;margin-left:auto;color:var(--rose);border-color:var(--rose)" onclick="reopenAudit(${audit.id})">Reopen</button>`;
+      html+=`<button class="btn bo" style="font-size:11px;padding:5px 9px;margin-left:auto" onclick="continueAudit(${audit.id})">➕ Add pieces</button>`;
+      html+=`<button class="btn bo" style="font-size:11px;padding:5px 9px;color:var(--rose);border-color:var(--rose)" onclick="reopenAudit(${audit.id})">Reopen</button>`;
     } else if(live){
       html+=`<button class="btn bo" style="font-size:12px;padding:7px 11px" onclick="showFullDetail(${audit.id})">View detail</button>`;
       html+=`<div style="font-size:12px;color:var(--steel);margin-left:auto">⏳ Waiting for ${audit.auditor} to finish…</div>`;
     } else {
       html+=`<button class="btn bo" style="font-size:12px;padding:7px 11px" onclick="showFullDetail(${audit.id})">View detail</button>`;
-      html+=`<button class="btn bs bl" style="flex:1;margin-left:auto;max-width:160px" onclick="completeAudit(${audit.id})">✅ Complete</button>`;
+      html+=`<button class="btn bo" style="font-size:12px;padding:7px 11px" onclick="continueAudit(${audit.id})">➕ Add pieces</button>`;
+      html+=`<button class="btn bs bl" style="flex:1;margin-left:auto;max-width:140px" onclick="completeAudit(${audit.id})">✅ Complete</button>`;
     }
     html+=`</div></div></details>`;
   }
