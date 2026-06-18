@@ -602,6 +602,7 @@ details.review-card[open]>.rc-summary{border-bottom:1px solid var(--border)}
   <div class="admin-nav">
     <div class="ant active" onclick="showAdminTab('review',this)">📥 Review</div>
     <div class="ant" onclick="showAdminTab('live',this)">🟢 Live</div>
+    <div class="ant" onclick="showAdminTab('resolve',this)">🔧 Resolve</div>
     <div class="ant" onclick="showAdminTab('plan',this)">📅 Plan</div>
     <div class="ant" onclick="showAdminTab('a-history',this)">🕒 History</div>
     <div class="ant" onclick="showAdminTab('users',this)">👥 Team</div>
@@ -622,14 +623,12 @@ details.review-card[open]>.rc-summary{border-bottom:1px solid var(--border)}
     <div id="live-today"></div>
   </div>
 
-  <!-- REVIEW (Resolve worklist merged in at top) -->
-  <div id="apg-review" class="pg active">
-
-    <!-- Combined missing worklist across every style (formerly the separate Resolve tab) -->
+  <!-- RESOLVE: summary + missing-pieces worklist + corrections -->
+  <div id="apg-resolve" class="pg">
     <div id="resolve-summary"></div>
-    <div class="card">
+    <div class="card" style="margin-top:11px">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-        <div class="ct" style="margin-bottom:0">🔧 Resolve — missing pieces</div>
+        <div class="ct" style="margin-bottom:0">🔍 Missing pieces</div>
         <button class="btn bo" id="export-lost-btn" onclick="exportLostCSV()" style="display:none;font-size:11px;padding:5px 10px;color:var(--rose);border-color:var(--rose);margin-left:auto;margin-right:6px">⬇️ Lost CSV</button>
         <select id="resolve-sort" onchange="renderResolve()" style="width:auto;font-size:12px;padding:5px 8px">
           <option value="age">Oldest first</option>
@@ -646,9 +645,10 @@ details.review-card[open]>.rc-summary{border-bottom:1px solid var(--border)}
       <div style="font-size:12px;color:var(--steel);margin-bottom:8px">Pieces physically present but the system marked OUTWARD. Set them back to INWARD so counts are correct.</div>
       <div id="resolve-extras"></div>
     </div>
+  </div>
 
-    <!-- Per-style audit cards -->
-    <div class="ct" style="margin-top:16px;margin-bottom:8px">📥 Audits by style</div>
+  <!-- REVIEW -->
+  <div id="apg-review" class="pg active">
     <input type="text" id="review-search" placeholder="🔍 Search style or colour…" autocomplete="off" oninput="renderAdminReview()" style="width:100%;font-size:13px;padding:8px 11px;margin-bottom:9px">
     <div style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap">
       <button class="btn bo" id="rf-review" onclick="setReviewFilter('review')" style="font-size:11px;padding:5px 10px;border-color:var(--gold)">⏳ Needs Review</button>
@@ -2045,7 +2045,8 @@ function showAdminTab(name,tab){
   if(tab) tab.classList.add('active');
   if(name==='live') startLivePolling(); else stopLivePolling();
   if(name==='review') startReviewPolling(); else stopReviewPolling();
-  if(name==='review'){ renderResolve(); renderAdminReview(); refreshAuditsUI(); }
+  if(name==='review'){ renderAdminReview(); refreshAuditsUI(); }
+  if(name==='resolve'){ renderResolve(); refreshAuditsUI(); }
   if(name==='a-history'){ renderAdminHistory(); refreshAuditsUI(); }
   if(name==='plan'){ populatePlanDropdowns(); renderPlanList(); refreshRosterUI(); refreshPlansUI(); }
   if(name==='users'){ renderUserMgmt(); refreshRosterUI(); }
@@ -2067,7 +2068,6 @@ function setReviewFilter(f){
 
 function renderAdminReview(){
   const el=document.getElementById('review-list'); if(!el) return;
-  if(document.getElementById('resolve-list')) renderResolve();  // keep the merged worklist live
   const q=(document.getElementById('review-search')?.value||'').trim().toLowerCase();
   const matchQ=(p,c)=>!q||((p||'').toLowerCase().includes(q))||((c||'').toLowerCase().includes(q));
 
@@ -2136,7 +2136,7 @@ function renderAdminReview(){
 
     if(status!=='complete'&&actionItems.length){
       html+=`<div class="rc-actions-section">
-        <div style="font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--steel);margin-bottom:7px">Open items — resolve in the worklist at the top ↑</div>`;
+        <div style="font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--steel);margin-bottom:7px">Open items — resolve in the 🔧 Resolve tab</div>`;
       for(const ai of actionItems){
         html+=`<div class="action-item" style="align-items:flex-start">
           <div class="ai-text">
@@ -2259,7 +2259,7 @@ function completeAudit(id){
   const audit=audits.find(a=>a.id===id); if(!audit) return;
   const r=audit.report||{};
   const open=(r.ghosts?.length||0)+(r.extras?.length||0)+openWrongProduct(audit).length;
-  if(open>0&&!confirm(`${open} unresolved item(s) still open (resolve them in the worklist at the top). Complete anyway?`)) return;
+  if(open>0&&!confirm(`${open} unresolved item(s) still open (resolve them in the 🔧 Resolve tab). Complete anyway?`)) return;
   const noteEl=document.getElementById('admin-note-'+id);
   audit.adminNote=noteEl?.value.trim()||audit.adminNote||'';
   audit.status='complete';
