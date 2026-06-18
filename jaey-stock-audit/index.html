@@ -629,6 +629,7 @@ details.review-card[open]>.rc-summary{border-bottom:1px solid var(--border)}
     <div class="card" style="margin-top:11px">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
         <div class="ct" style="margin-bottom:0">🔍 Missing pieces</div>
+        <button class="btn bo" id="export-lost-btn" onclick="exportLostCSV()" style="display:none;font-size:11px;padding:5px 10px;color:var(--rose);border-color:var(--rose);margin-left:auto;margin-right:6px">⬇️ Lost CSV</button>
         <select id="resolve-sort" onchange="renderResolve()" style="width:auto;font-size:12px;padding:5px 8px">
           <option value="age">Oldest first</option>
           <option value="style">By style</option>
@@ -636,7 +637,7 @@ details.review-card[open]>.rc-summary{border-bottom:1px solid var(--border)}
         </select>
       </div>
       <input type="text" id="resolve-search" placeholder="🔍 Search barcode, style or colour…" autocomplete="off" oninput="renderResolve()" style="width:100%;font-size:13px;padding:8px 11px;margin-bottom:8px">
-      <div style="font-size:12px;color:var(--steel);margin-bottom:8px">Every unresolved piece the system expects but nobody scanned. "Last scanned in" = it was scanned inside another style's audit (misplaced).</div>
+      <div style="font-size:12px;color:var(--steel);margin-bottom:8px">Every unresolved piece across all styles, deduped. "Last scanned in" = it was scanned inside another style's audit (misplaced) — don't write it off.</div>
       <div id="resolve-list"></div>
     </div>
     <div class="card" id="resolve-extras-card" style="margin-top:11px;display:none">
@@ -2088,19 +2089,20 @@ function renderAdminReview(){
 
   // Preserve which cards are expanded across live re-renders.
   const openIds=new Set([...el.querySelectorAll('details[open]')].map(d=>d.getAttribute('data-aid')));
+  const scanIdx=buildScanIndex();   // for auto-clearing wrong-labels accounted in their true style
   let html='';
   for(const audit of filtered){
     const d=new Date(audit.savedAt||audit.date);
     const ds=d.toLocaleDateString('en-IN',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});
     const r=audit.report||{};
-    const ghosts=r.ghosts?.length||0, extras=r.extras?.length||0, wrong=r.wrongProduct?.length||0;
+    const ghosts=r.ghosts?.length||0, extras=r.extras?.length||0, wrong=openWrongProduct(audit,scanIdx).length;
     const mm=ghosts+extras+wrong;
     const status=audit.status||'review';
     const sys=sysTotal(audit), accounted=accountedBarcodes(audit).length;
     const img=getImg(audit.product,audit.color);
     const followUps=audit.followUps||[];
     const totalFound=followUps.reduce((n,f)=>n+(f.foundBarcodes?.length||0),0);
-    const actionItems=buildActionItems(audit);
+    const actionItems=buildActionItems(audit,scanIdx);
     const checked=audit.checkedActions||[];
     // "Live" = actively being worked on right now (scanning or updating) — updated within 45s.
     const recentlyActive=(Date.now()-new Date(audit.updatedAt||audit.savedAt||audit.date||0).getTime())<45000;
@@ -2134,13 +2136,11 @@ function renderAdminReview(){
 
     if(status!=='complete'&&actionItems.length){
       html+=`<div class="rc-actions-section">
-        <div style="font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--steel);margin-bottom:7px">System actions to complete:</div>`;
+        <div style="font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--steel);margin-bottom:7px">Open items — resolve in the 🔧 Resolve tab</div>`;
       for(const ai of actionItems){
-        const ck=checked.includes(ai.id);
-        html+=`<div class="action-item">
-          <input class="ai-cb" type="checkbox" id="ai-${audit.id}-${ai.id}" ${ck?'checked':''} onchange="toggleAction(${audit.id},'${ai.id}',this.checked)">
+        html+=`<div class="action-item" style="align-items:flex-start">
           <div class="ai-text">
-            <strong>${ai.label}</strong>
+            <strong>${ai.label}</strong>${ai.sample?' <span style="background:#6b3fa0;color:#fff;font-size:9px;font-weight:700;padding:1px 6px;border-radius:20px;vertical-align:middle">🧷 SAMPLE</span>':''}
             <div class="ai-sub">${ai.detail}</div>
             ${ai.bc?`<a onclick="showBarcodeJourney('${ai.bc}')" style="font-size:11px;color:var(--sky);cursor:pointer;text-decoration:underline">📜 View movement history</a>`:''}
           </div>
@@ -2212,18 +2212,34 @@ function renderAdminIfActive(){
   if(document.getElementById('shell-admin').classList.contains('active')) renderAdminReview();
 }
 
-function buildActionItems(audit){
+// A wrong-product piece is "home" (accounted) once it's been scanned correctly in its true
+// style's audit — so its wrong-label flag should auto-clear. Computed live from the scan index.
+function wrongAccounted(entry, idx){
+  const bc=String(entry).split('__')[0];
+  const parts=String(entry).split('__WRONG:')[1]?.split('|||')||[];
+  const P=parts[0], C=parts[1];
+  return (idx[bc]||[]).some(s=>s.kind==='scanned' && s.product===P && s.color===C);
+}
+// Wrong-product entries still open (not yet accounted in their true style).
+function openWrongProduct(audit, idx){
+  idx=idx||buildScanIndex();
+  return (audit.report?.wrongProduct||[]).filter(e=>!wrongAccounted(e, idx));
+}
+
+function buildActionItems(audit, idx){
   const items=[], r=audit.report||{};
   for(const bc of (r.ghosts||[]).slice(0,6)){
     const row=stockData.find(f=>f.barcode==bc);
-    items.push({id:'g-'+bc, bc, label:'Mark BC '+bc+' as outward', detail:(row?row.sku+' · Size '+row.size+' — ':'')+'In system but not physically found'});
+    const samp=isSample(row);
+    const ctx=row?[row.tags?'🏷️ '+row.tags:'', row.note?'📝 '+row.note:''].filter(Boolean).join(' · '):'';
+    items.push({id:'g-'+bc, bc, sample:samp, label:'Mark BC '+bc+' as outward', detail:(row?row.sku+' · Size '+row.size+' — ':'')+'In system but not physically found'+(samp?' · likely in the sample rack':'')+(ctx?'<br>'+ctx:'')});
   }
   if((r.ghosts||[]).length>6) items.push({id:'g-more',label:'+'+(r.ghosts.length-6)+' more missing barcodes',detail:'See full detail'});
   for(const bc of (r.extras||[])){
     const row=stockData.find(f=>f.barcode==bc);
     items.push({id:'x-'+bc, bc, label:'Mark BC '+bc+' as inward', detail:(row?'Size '+row.size+' — ':'')+'Present physically but system says outward'});
   }
-  for(const entry of (r.wrongProduct||[])){
+  for(const entry of openWrongProduct(audit, idx)){  // accounted-elsewhere wrong-labels auto-clear
     const bc=entry.split('__')[0];
     const parts=entry.split('__WRONG:')[1]?.split('|||')||[];
     items.push({id:'w-'+bc, bc, label:'Fix label on BC '+bc, detail:'Found in '+audit.product+' but belongs to: '+parts[0]});
@@ -2241,9 +2257,9 @@ function toggleAction(auditId,itemId,checked){
 
 function completeAudit(id){
   const audit=audits.find(a=>a.id===id); if(!audit) return;
-  const total=buildActionItems(audit).length;
-  const done=(audit.checkedActions||[]).length;
-  if(total>0&&done<total&&!confirm(`${total-done} action(s) not checked yet. Complete anyway?`)) return;
+  const r=audit.report||{};
+  const open=(r.ghosts?.length||0)+(r.extras?.length||0)+openWrongProduct(audit).length;
+  if(open>0&&!confirm(`${open} unresolved item(s) still open (resolve them in the 🔧 Resolve tab). Complete anyway?`)) return;
   const noteEl=document.getElementById('admin-note-'+id);
   audit.adminNote=noteEl?.value.trim()||audit.adminNote||'';
   audit.status='complete';
@@ -2302,7 +2318,8 @@ function collectMissing(){
       // Last physical scan of this bc in any OTHER audit = its likely current location.
       const scans=(idx[bc]||[]).filter(s=>s.auditId!==a.id).sort((x,y)=>new Date(y.at)-new Date(x.at));
       seen[bc]={bc, auditId:a.id, product:a.product, color:a.color, auditor:a.auditor, at,
-        size:row?.size||'', sku:row?.sku||'', foundIn:scans[0]||null};
+        size:row?.size||'', sku:row?.sku||'', itemId:row?.itemId||'', sizeId:row?.sizeId||'', sample:isSample(row),
+        tags:row?.tags||'', note:row?.note||'', foundIn:scans[0]||null};
     }
   }
   return Object.values(seen);
@@ -2350,20 +2367,27 @@ function renderResolve(){
     html+=`<div style="border:1px solid var(--border);border-left:3px solid var(--rose);border-radius:8px;padding:10px;margin-bottom:8px">
       <div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start">
         <div style="flex:1;min-width:0">
-          <div style="font-weight:600;font-size:13px">BC ${m.bc}${m.size?' · Size '+m.size:''}</div>
+          <div style="font-weight:600;font-size:13px">BC ${m.bc}${m.size?' · Size '+m.size:''}${m.sample?' <span style="background:#6b3fa0;color:#fff;font-size:9px;font-weight:700;padding:1px 6px;border-radius:20px;vertical-align:middle">🧷 SAMPLE</span>':''}</div>
           <div style="font-size:12px;color:var(--steel)">${m.product} · ${m.color}${m.sku?' · '+m.sku:''}</div>
           <div style="font-size:11px;color:var(--steel);margin-top:2px">Flagged by ${m.auditor} · ${ageTxt}</div>
+          ${(m.tags||m.note)?`<div style="margin-top:4px;font-size:11px;color:var(--steel)">${m.tags?'🏷️ <strong>'+m.tags+'</strong>':''}${m.tags&&m.note?' · ':''}${m.note?'📝 '+m.note:''}</div>`:''}
+          ${m.sample?`<div style="margin-top:4px;font-size:11px;color:#6b3fa0;background:#f1ebf8;padding:4px 8px;border-radius:7px">🧷 Sample — check the sample rack before writing off</div>`:''}
           ${m.foundIn?`<div style="margin-top:5px;font-size:11px;color:var(--sky);background:var(--sky-light);padding:4px 8px;border-radius:7px">📍 Last scanned in <strong>${m.foundIn.product} · ${m.foundIn.color}</strong> by ${m.foundIn.auditor} · ${formatDateTime(m.foundIn.at)}${m.foundIn.kind==='misplaced'?' (misplaced)':''}</div>`:''}
         </div>
       </div>
       <div style="display:flex;gap:6px;margin-top:8px">
         <button class="btn bs" style="font-size:11px;padding:6px 10px" onclick="resolveFound('${m.bc}',${m.auditId})">✓ Found</button>
         ${journeyBtn(m.bc)}
-        <button class="btn bo" style="font-size:11px;padding:6px 10px;color:var(--rose);border-color:var(--rose)" onclick="applyCorrection('${m.bc}',${m.auditId},'outward')">Mark OUTWARD in system</button>
+        <button class="btn bo" style="font-size:11px;padding:6px 10px;color:var(--rose);border-color:var(--rose)" onclick="markLost('${m.bc}',${m.auditId},${m.foundIn?1:0})">Mark LOST</button>
       </div>
     </div>`;
   }
   lEl.innerHTML=html;
+
+  // Show "Lost CSV" export when anything was written off as Lost today.
+  const _lostToday=getLostLog().filter(l=>(l.at||'').startsWith(todayStr()));
+  const _lostBtn=document.getElementById('export-lost-btn');
+  if(_lostBtn){ _lostBtn.style.display=_lostToday.length?'inline-flex':'none'; _lostBtn.textContent='⬇️ Lost CSV ('+_lostToday.length+')'; }
 
   // Extras: physically present but system says outward → offer "Mark INWARD".
   const exCard=document.getElementById('resolve-extras-card'); const exEl=document.getElementById('resolve-extras');
@@ -2424,6 +2448,82 @@ async function applyCorrection(bc, auditId, newStatus){
   if(audit){ (audit.systemUpdated=audit.systemUpdated||[]).push(bc); audit.updatedAt=new Date().toISOString(); try{localStorage.setItem('jaey_audits',JSON.stringify(audits));}catch(e){} saveAuditRemote(audit); }
   toast('✓ System updated — BC '+bc+' set '+newStatus);
   renderResolve(); renderAdminReview(); updateStockComposition();
+}
+
+// ── LOST WRITE-OFF: log + export in the inventory upload format, with recovery-watch ──
+// Lost pieces stay reversible: the log remembers each write-off so a later inward scan
+// (even months on) can flag it "recovered", giving net shrinkage = Lost − Recovered.
+// A missing sample is usually just sitting in the sample rack, not lost. Only the deliberate
+// Tags="sample" marker counts — note "…as per sample" / "production sample" and Purpose=Sample
+// (production samples kept in stock) are NOT sample-rack pieces.
+function isSample(row){ if(!row) return false; return /\bsample\b/i.test(row.tags||''); }
+function getLostLog(){ try{ return JSON.parse(localStorage.getItem('jaey_lost_log')||'[]'); }catch(e){ return []; } }
+function saveLostLog(log){ try{ localStorage.setItem('jaey_lost_log',JSON.stringify(log)); }catch(e){} }
+
+// Write off a missing piece as Lost: record it for the CSV upload, drop it from the
+// missing list, and best-effort flip the app's own stock to outward/Lost.
+function markLost(bc, auditId, hasFoundIn){
+  bc=String(bc);
+  const row=stockData.find(r=>r.barcode==bc)||{};
+  // Guard: a sample is usually in the sample rack, not lost.
+  if(isSample(row) && !confirm('🧷 BC '+bc+' is a SAMPLE'+(row.tags?' ('+row.tags+')':'')+' — it\'s most likely sitting in the sample rack.\n\nMark it LOST anyway?')) return;
+  // Guard: a piece seen physically in another audit is misplaced/mislabelled, not lost.
+  if(hasFoundIn && !confirm('BC '+bc+' was physically scanned inside another style\'s count — it\'s most likely MISPLACED or mislabelled, not lost.\n\nMark it LOST anyway?')) return;
+  if(!confirm('Write off BC '+bc+' as LOST?\n\nIt will be added to today\'s Lost CSV (upload that to your inventory system) and removed from the missing list.')) return;
+  if(!row.itemId||!row.sizeId){
+    if(!confirm('⚠️ BC '+bc+' has no Item ID / Size ID loaded, so its Lost CSV row will be incomplete.\n\nTip: load today\'s stock CSV in the Data tab first. Continue anyway?')) return;
+  }
+  const log=getLostLog();
+  if(!log.find(l=>l.barcode===bc && !l.recovered)){
+    log.push({barcode:bc, itemId:row.itemId||'', sizeId:row.sizeId||'',
+      product:row.product||'', color:row.color||'', size:row.size||'', sku:row.sku||'',
+      sample:isSample(row), tags:row.tags||'',
+      at:new Date().toISOString(), by:localStorage.getItem('jaey_admin_name')||localStorage.getItem('jaey_user_name')||'Admin',
+      auditId, exported:false, recovered:false});
+    saveLostLog(log);
+  }
+  // Drop from the missing worklist locally (best-effort cloud write-off as outward/Lost).
+  const audit=audits.find(a=>a.id===auditId);
+  if(audit){ (audit.systemUpdated=audit.systemUpdated||[]).push(bc); audit.updatedAt=new Date().toISOString(); try{localStorage.setItem('jaey_audits',JSON.stringify(audits));}catch(e){} saveAuditRemote(audit); }
+  for(const r of stockData){ if(r.barcode==bc){ r.status='outward'; r.purpose='Unknown'; } }
+  buildMap(); try{localStorage.setItem('jaey_stock',JSON.stringify(stockData));}catch(e){}
+  if(navigator.onLine && sbCfg.url && sbCfg.key){
+    fetch(sbCfg.url+'/rest/v1/stock_data?barcode=eq.'+encodeURIComponent(bc),{
+      method:'PATCH', headers:sbHeaders({'Content-Type':'application/json','Prefer':'return=minimal'}),
+      body:JSON.stringify({status:'outward', purpose:'Unknown'})
+    }).catch(()=>{});
+  }
+  toast('🔴 BC '+bc+' marked Lost');
+  renderResolve(); renderAdminReview(); updateStockComposition();
+}
+
+// Download today's Lost write-offs in the inventory upload format:
+//   barcode,item_id,size_id,note,status,purpose  → note blank, status outward, purpose Unknown.
+function exportLostCSV(){
+  const todays=getLostLog().filter(l=>(l.at||'').startsWith(todayStr()) && !l.recovered);
+  if(!todays.length){ toast('No pieces marked Lost today'); return; }
+  const missingIds=todays.filter(l=>!l.itemId||!l.sizeId);
+  if(missingIds.length && !confirm('⚠️ '+missingIds.length+' of '+todays.length+' Lost rows are missing Item ID / Size ID (stock CSV not loaded when marked).\n\nLoad today\'s stock CSV and re-mark for complete rows, or export now with blanks?\n\nExport now?')) return;
+  const rows=[['barcode','item_id','size_id','note','status','purpose']];
+  for(const l of todays) rows.push([l.barcode, l.itemId||'', l.sizeId||'', '', 'outward', 'Unknown']);
+  const csv=rows.map(r=>r.join(',')).join('\n');
+  const b=new Blob([csv],{type:'text/csv'}); const u=URL.createObjectURL(b);
+  const a=document.createElement('a'); a.href=u; a.download='jaey_lost_'+todayStr()+'.csv'; a.click(); URL.revokeObjectURL(u);
+  // Mark exported (keeps them in the log for recovery-watch).
+  const log=getLostLog(); const set=new Set(todays.map(l=>l.barcode));
+  for(const l of log){ if(set.has(l.barcode)) l.exported=true; }
+  saveLostLog(log);
+  toast('⬇️ Exported '+todays.length+' Lost piece'+(todays.length>1?'s':''));
+}
+
+// After a fresh stock CSV loads, flag any previously-Lost barcode that is now inward again
+// → "recovered" (reverse the loss). Drives net shrinkage over time.
+function recoveryCheck(rows){
+  const log=getLostLog(); if(!log.length) return;
+  const inward=new Set(rows.filter(r=>r.status==='inward').map(r=>String(r.barcode)));
+  let n=0;
+  for(const l of log){ if(!l.recovered && inward.has(l.barcode)){ l.recovered=true; l.recoveredAt=new Date().toISOString(); n++; } }
+  if(n){ saveLostLog(log); toast('♻️ '+n+' Lost piece'+(n>1?'s':'')+' recovered (now inward)'); }
 }
 
 // Collapse the many per-piece follow-ups into a single "found N pcs" trail entry.
@@ -2854,6 +2954,8 @@ function extractEvents(recs, idx){
       sku:cols[idx['Item SKU']]?.trim()||'',
       product, color,
       size:cols[idx['Size']]?.trim()||'',
+      itemId:(idx['Item ID']!==undefined?cols[idx['Item ID']]?.trim():'')||'',
+      sizeId:(idx['Size ID']!==undefined?cols[idx['Size ID']]?.trim():'')||'',
       status:(cols[idx['Status']]?.trim()||'').toLowerCase(),
       purpose:cols[idx['Purpose']]?.trim()||'',
       rawTime,
@@ -2990,7 +3092,29 @@ async function showBarcodeJourney(bc){
     if(res.ok) events=await res.json();
   }catch(e){}
   const body=document.getElementById('modal-body');
-  if(!events.length){ body.innerHTML='<div style="padding:16px;color:var(--steel);font-size:13px">No movement history in the journal yet for BC '+bc+'.<br><br>Upload your scan/movement CSV in the Data tab to build it.</div>'; return; }
+  // Fallback: no cloud journal yet → show what the current in/out stock file knows about this barcode.
+  if(!events.length){
+    const row=stockData.find(r=>r.barcode==bc);
+    if(row){
+      const inn=row.status==='inward';
+      const iso=row.scanTime?scanTimeISO(row.scanTime):null;
+      body.innerHTML=`<div style="font-size:13px;margin-bottom:10px"><strong>${row.product||''} · ${row.color||''}</strong>${row.size?' · Size '+row.size:''}
+        ${isSample(row)?'<span style="display:inline-block;margin-left:6px;background:#6b3fa0;color:#fff;font-size:10px;font-weight:700;padding:2px 7px;border-radius:20px">🧷 SAMPLE</span>':''}
+        <div style="font-size:12px;color:var(--steel)">From the current in/out file (no movement journal yet)</div></div>
+        <div style="display:flex;gap:9px;padding:8px 0;border-bottom:1px solid var(--border)">
+          <div style="width:8px;border-radius:4px;flex-shrink:0;background:${inn?'var(--sage)':'var(--rose)'}"></div>
+          <div style="flex:1">
+            <div style="font-size:13px;font-weight:600;color:${inn?'var(--sage)':'var(--rose)'}">${inn?'⬇ INWARD':'⬆ OUTWARD'}${row.purpose?' · '+row.purpose:''}</div>
+            <div style="font-size:11px;color:var(--steel)">${iso?formatDateTime(iso):(row.scanTime||'')}${row.scannedBy?' · by '+row.scannedBy:''}</div>
+            ${row.tags?`<div style="font-size:11px;color:var(--steel);margin-top:3px">🏷️ Tags: <strong>${row.tags}</strong></div>`:''}
+            ${row.note?`<div style="font-size:11px;color:var(--steel);margin-top:2px">📝 Note: ${row.note}</div>`:''}
+          </div>
+        </div>
+        <div style="font-size:11px;color:var(--steel);margin-top:10px">Upload the scan/movement CSV in the Data tab to build full history.</div>`;
+      return;
+    }
+    body.innerHTML='<div style="padding:16px;color:var(--steel);font-size:13px">No movement history in the journal yet for BC '+bc+'.<br><br>Upload your scan/movement CSV in the Data tab to build it.</div>'; return;
+  }
   const top=events[0];
   const lastMoved=events.find(e=>e.scan_time);
   const daysSince=lastMoved?Math.floor((Date.now()-new Date(lastMoved.scan_time))/86400000):null;
@@ -3190,11 +3314,18 @@ function parseCSV(text,fname){
     for(let i=1;i<recs.length;i++){
       const cols=recs[i];
       if(cols.length===1&&cols[0].trim()==='')continue; // skip blank lines
-      const row={barcode:String(parseInt(cols[idx['Barcode']]?.trim()||'0',10)),product:cols[idx['Product Name']]?.trim(),color:cols[idx['Color']]?.trim(),size:cols[idx['Size']]?.trim(),status:(cols[idx['Status']]?.trim()||'').toLowerCase(),sku:cols[idx['Item SKU']]?.trim()||''};
+      const row={barcode:String(parseInt(cols[idx['Barcode']]?.trim()||'0',10)),product:cols[idx['Product Name']]?.trim(),color:cols[idx['Color']]?.trim(),size:cols[idx['Size']]?.trim(),status:(cols[idx['Status']]?.trim()||'').toLowerCase(),sku:cols[idx['Item SKU']]?.trim()||'',
+        // Numeric IDs needed for the Lost write-off upload — keep as strings so leading zeros (e.g. 009801) survive.
+        itemId:(idx['Item ID']!==undefined?cols[idx['Item ID']]?.trim():'')||'',sizeId:(idx['Size ID']!==undefined?cols[idx['Size ID']]?.trim():'')||'',
+        // Last-known movement from the in/out file — fallback for the Journey when the cloud journal is empty.
+        purpose:(idx['Purpose']!==undefined?cols[idx['Purpose']]?.trim():'')||'',scanTime:(idx['Scan Time']!==undefined?cols[idx['Scan Time']]?.trim():'')||'',scannedBy:(idx['Scanned By']!==undefined?cols[idx['Scanned By']]?.trim():'')||'',
+        // Note/Tags carry sample, damaged, alteration flags — used to spot samples that sit in the sample rack.
+        note:(idx['Note']!==undefined?cols[idx['Note']]?.trim():'')||'',tags:(idx['Tags']!==undefined?cols[idx['Tags']]?.trim():'')||''};
       if(row.barcode&&row.product)rows.push(row);
     }
     if(!rows.length)throw new Error('No valid rows found');
     stockData=rows;buildMap();
+    recoveryCheck(rows);   // flag any previously-Lost barcode that is now inward again
     try{localStorage.setItem('jaey_stock',JSON.stringify(stockData));}catch(e){}
     document.getElementById('data-status').className='ds';
     document.getElementById('data-status').innerHTML=`✓ <strong>${rows.length.toLocaleString()} barcodes</strong> · ${fname}`;
