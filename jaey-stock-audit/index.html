@@ -475,6 +475,9 @@ select:focus,input:focus,textarea:focus{border-color:var(--gold);background:var(
     </div>
 
     <div id="u-task-list"></div>
+
+    <button class="btn bo bb" onclick="openStylePicker()" style="margin-top:6px">➕ Pick a style to audit</button>
+    <div style="font-size:11px;color:var(--steel);text-align:center;margin-top:6px">Free? Audit any style from the catalogue — fast-movers first.</div>
   </div>
 
   <!-- MY HISTORY -->
@@ -770,6 +773,12 @@ select:focus,input:focus,textarea:focus{border-color:var(--gold);background:var(
     <div class="modal-hdr"><span id="modal-title"></span><button class="modal-close" onclick="closeModal()">✕</button></div>
     <div id="modal-body"></div>
   </div>
+</div>
+
+<!-- Full-screen garment photo zoom -->
+<div id="img-zoom-ov" onclick="closeImgZoom()" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.9);z-index:600;align-items:center;justify-content:center;padding:18px;cursor:zoom-out;flex-direction:column;gap:14px">
+  <img id="img-zoom-img" src="" alt="" style="max-width:100%;max-height:86%;object-fit:contain;border-radius:10px;box-shadow:0 10px 40px rgba(0,0,0,.5)">
+  <div style="color:#ddd;font-size:13px">Tap anywhere to close</div>
 </div>
 
 <div class="toast" id="toast"></div>
@@ -1154,8 +1163,9 @@ function renderUserTasks(){
       actionBtn=`<button class="sc-btn" style="background:var(--cream);color:var(--steel);font-size:11px" onclick="openScan('${esc(item.product)}','${esc(item.color)}')">Re-audit</button>`;
     }
 
+    const recent=recentlyAuditedBy(item.product,item.color);
     html+=`<div class="style-card">
-      ${img?`<img class="sc-img" src="${img}" onerror="this.style.display='none'" alt="">`:`<div class="sc-ph">👗</div>`}
+      ${img?`<img class="sc-img" src="${img}" onclick="zoomImg('${img}')" style="cursor:zoom-in" onerror="this.style.display='none'" alt="">`:`<div class="sc-ph">👗</div>`}
       <div class="sc-body">
         <div class="sc-name">${item.product}</div>
         <div class="sc-sub">${item.color}${item.assignee?' · <em>'+item.assignee+'</em>':''}</div>
@@ -1165,11 +1175,101 @@ function renderUserTasks(){
           ${item._carryoverFrom?`<span class="badge b-rose" style="font-size:10px">From ${formatDate(item._carryoverFrom)}</span>`:''}
           ${pillHtml}
         </div>
+        ${recent&&!status?`<div style="margin-top:5px;font-size:11px;color:var(--sky);background:var(--sky-light);padding:3px 8px;border-radius:8px;display:inline-block">✓ Recently audited ${formatDateTime(recent.when)} by ${recent.by}</div>`:''}
       </div>
       <div class="sc-actions">${actionBtn}</div>
     </div>`;
   }
   document.getElementById('u-task-list').innerHTML=html;
+}
+
+// Most recent completed audit for a style across ALL auditors/devices (audits are cloud-synced).
+function lastAuditFor(product,color){
+  return audits
+    .filter(a=>a.product===product&&a.color===color&&(a.savedAt||a.date))
+    .sort((a,b)=>new Date(b.savedAt||b.date)-new Date(a.savedAt||a.date))[0]||null;
+}
+// Returns {when, by} if the style was audited within `days` (default 7) by anyone, else null.
+function recentlyAuditedBy(product,color,days){
+  days=days||7;
+  const la=lastAuditFor(product,color);
+  if(!la) return null;
+  const when=new Date(la.savedAt||la.date);
+  const ageDays=(Date.now()-when.getTime())/86400000;
+  return ageDays<=days ? {when, by:la.auditor||'someone', audit:la} : null;
+}
+
+// ── GARMENT PHOTO ZOOM ──
+function zoomImg(url){
+  if(!url) return;
+  document.getElementById('img-zoom-img').src=url;
+  document.getElementById('img-zoom-ov').style.display='flex';
+}
+function closeImgZoom(){ document.getElementById('img-zoom-ov').style.display='none'; }
+
+// ── SELF-SERVE STYLE PICKER (catalogue, fast-movers first) ──
+function buildCatalogue(){
+  const seen=new Set(), items=[];
+  for(const s of STYLES_DATA){
+    const key=s.product+'|||'+s.color;
+    if(seen.has(key)) continue; seen.add(key);
+    const liveCount=(productMap[s.product]?.[s.color]||[]).filter(r=>r.status==='inward').length;
+    const inCount=stockData.length>0?liveCount:(s.stockCount||0);
+    items.push({product:s.product,color:s.color,tier:(s.tier||'D').toUpperCase(),vpw:s.vpw||0,inCount,recent:recentlyAuditedBy(s.product,s.color)});
+  }
+  const tierRank=t=>({A:0,B:1,C:2,D:3}[t]??9);
+  // Not-recently-audited first; then tier A→D; then fast-moving (vpw) desc; then more stock first.
+  items.sort((a,b)=>{
+    if(!!a.recent!==!!b.recent) return a.recent?1:-1;
+    if(tierRank(a.tier)!==tierRank(b.tier)) return tierRank(a.tier)-tierRank(b.tier);
+    if(b.vpw!==a.vpw) return b.vpw-a.vpw;
+    return b.inCount-a.inCount;
+  });
+  return items;
+}
+let _catalogue=[];
+function openStylePicker(){
+  _catalogue=buildCatalogue();
+  document.getElementById('modal-title').textContent='Pick a style to audit';
+  document.getElementById('modal-body').innerHTML=
+    `<input type="text" id="picker-search" placeholder="Search style or colour…" oninput="renderPicker(this.value)" style="font-size:13px;padding:9px 11px;margin-bottom:10px">
+     <div id="picker-list"></div>`;
+  renderPicker('');
+  document.getElementById('modal-ov').classList.add('show');
+}
+function renderPicker(q){
+  q=(q||'').trim().toLowerCase();
+  const list=_catalogue.filter(i=>!q||(i.product+' '+i.color).toLowerCase().includes(q));
+  if(!list.length){ document.getElementById('picker-list').innerHTML='<div style="padding:16px;text-align:center;color:var(--steel);font-size:13px">No matching style.</div>'; return; }
+  let html='';
+  for(const i of list){
+    const img=getImg(i.product,i.color);
+    const r=i.recent;
+    const bg=r?'background:var(--cream);opacity:.92':'background:var(--white)';
+    html+=`<div class="style-card" style="${bg}">
+      ${img?`<img class="sc-img" src="${img}" onclick="event.stopPropagation();zoomImg('${img}')" style="cursor:zoom-in" onerror="this.style.display='none'" alt="">`:`<div class="sc-ph">👗</div>`}
+      <div class="sc-body">
+        <div class="sc-name">${i.product}</div>
+        <div class="sc-sub">${i.color}</div>
+        <div class="sc-meta">
+          <span class="tier-${i.tier.toLowerCase()}">${i.tier}</span>
+          <span style="font-size:10px;color:var(--steel);background:var(--cream);padding:2px 6px;border-radius:10px">${i.vpw} u/wk</span>
+          <span class="badge b-steel">📦 ${i.inCount}</span>
+        </div>
+        ${r?`<div style="margin-top:5px;font-size:11px;color:var(--sky);background:var(--sky-light);padding:3px 8px;border-radius:8px;display:inline-block">✓ Recently audited ${formatDateTime(r.when)} by ${r.by}</div>`:''}
+      </div>
+      <div class="sc-actions">
+        <button class="sc-btn ${r?'':'sc-btn-start'}" style="${r?'background:var(--cream);color:var(--steel);font-size:11px':''}" onclick="startFromPicker('${esc(i.product)}','${esc(i.color)}')">${r?'Re-audit':'Start →'}</button>
+      </div>
+    </div>`;
+  }
+  document.getElementById('picker-list').innerHTML=html;
+}
+function startFromPicker(product,color){
+  const r=recentlyAuditedBy(product,color);
+  if(r && !confirm(product+' · '+color+' was already audited '+formatDateTime(r.when)+' by '+r.by+'.\n\nAudit it again anyway?')) return;
+  closeModal();
+  openScan(product,color);
 }
 
 // ══════════════════
@@ -1203,7 +1303,7 @@ function openScan(product,color){
 
   const img=getImg(product,color);
   document.getElementById('ss-img-wrap').innerHTML=img
-    ?`<img class="ss-img" src="${img}" onerror="this.style.display='none'" alt="">`
+    ?`<img class="ss-img" src="${img}" onclick="zoomImg('${img}')" style="cursor:zoom-in" onerror="this.style.display='none'" alt="">`
     :`<div class="ss-ph">👗</div>`;
 
   document.getElementById('sc-sys').textContent='System: '+(stockData.length>0?sysInward.length:(STYLES_DATA.find(s=>s.product===product&&s.color===color)?.stockCount||'?'));
@@ -1633,14 +1733,13 @@ function renderUserHistory(){
   if(!filtered.length){el.innerHTML='<div class="empty"><div class="ei">📋</div><div>No audits yet.</div></div>';return;}
   let html='';
   for(const a of filtered){
-    const d=new Date(a.savedAt||a.date);
-    const ds=d.toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'});
+    const ds=formatDateTime(a.savedAt||a.date);
     const r=a.report||{};
     const mm=(r.ghosts?.length||0)+(r.extras?.length||0)+(r.wrongProduct?.length||0);
     const status=a.status||'review';
     const img=getImg(a.product,a.color);
     html+=`<div class="hist-item" style="display:flex;gap:9px">
-      ${img?`<img src="${img}" style="width:40px;height:48px;object-fit:cover;border-radius:5px;flex-shrink:0" onerror="this.style.display='none'" alt="">`:''}
+      ${img?`<img src="${img}" onclick="zoomImg('${img}')" style="width:40px;height:48px;object-fit:cover;border-radius:5px;flex-shrink:0;cursor:zoom-in" onerror="this.style.display='none'" alt="">`:''}
       <div style="flex:1">
         <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:5px">
           <div class="hi-name">${a.product} · ${a.color}</div>
@@ -1749,7 +1848,7 @@ function renderAdminReview(){
     html+=`<div class="review-card">
       <div class="rc-top">
         <div class="rc-header">
-          ${img?`<img class="rc-img" src="${img}" onerror="this.style.display='none'" alt="">`:`<div class="rc-ph">👗</div>`}
+          ${img?`<img class="rc-img" src="${img}" onclick="zoomImg('${img}')" style="cursor:zoom-in" onerror="this.style.display='none'" alt="">`:`<div class="rc-ph">👗</div>`}
           <div class="rc-info">
             <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:6px;flex-wrap:wrap">
               <div class="rc-name">${audit.product} · ${audit.color}</div>
@@ -1902,8 +2001,7 @@ function renderAdminHistory(){
   if(!filtered.length){el.innerHTML='<div class="empty"><div class="ei">📋</div><div>No history yet.</div></div>';return;}
   let html='';
   for(const a of filtered){
-    const d=new Date(a.savedAt||a.date);
-    const ds=d.toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'});
+    const ds=formatDateTime(a.savedAt||a.date);
     const r=a.report||{};
     const mm=(r.ghosts?.length||0)+(r.extras?.length||0)+(r.wrongProduct?.length||0);
     const status=a.status||'review';
@@ -1911,7 +2009,7 @@ function renderAdminHistory(){
     const trail=[{at:a.savedAt||a.date,by:a.auditor,action:'submitted'},...(a.followUps||[]).map(f=>({at:f.at,by:f.by,action:'found '+f.foundBarcodes.length+' pcs'+( f.note?' ('+f.note+')':'')})),...(a.trail||[])];
 
     html+=`<div class="hist-item" style="display:flex;gap:9px">
-      ${img?`<img src="${img}" style="width:40px;height:48px;object-fit:cover;border-radius:5px;flex-shrink:0" onerror="this.style.display='none'" alt="">`:''}
+      ${img?`<img src="${img}" onclick="zoomImg('${img}')" style="width:40px;height:48px;object-fit:cover;border-radius:5px;flex-shrink:0;cursor:zoom-in" onerror="this.style.display='none'" alt="">`:''}
       <div style="flex:1">
         <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:5px;flex-wrap:wrap">
           <div class="hi-name">${a.product} · ${a.color}</div>
@@ -2825,6 +2923,8 @@ async function ensureStockLoaded(){
 }
 function todayStr(){const d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');}
 function formatDate(ds){const d=new Date(ds+'T00:00:00');return d.toLocaleDateString('en-IN',{weekday:'short',day:'numeric',month:'short'});}
+// Date + time, e.g. "18 Jun, 2:30 PM". Accepts an ISO string or a Date.
+function formatDateTime(v){const d=(v instanceof Date)?v:new Date(v);if(isNaN(d))return '';return d.toLocaleString('en-IN',{day:'numeric',month:'short',hour:'numeric',minute:'2-digit',hour12:true});}
 function getImg(p,c){return CATALOGUE_IMAGES[p+'|||'+c]||null;}
 function esc(s){return(s||'').replace(/'/g,"\\'").replace(/"/g,'&quot;');}
 function closeModal(){document.getElementById('modal-ov').classList.remove('show');}
