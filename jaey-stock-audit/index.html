@@ -2099,8 +2099,10 @@ function renderAdminReview(){
     const followUps=audit.followUps||[];
     const actionItems=buildActionItems(audit);
     const checked=audit.checkedActions||[];
-    const live=status==='scanning';
-    const statusLbl=status==='complete'?'✅ Complete':status==='updated'?'🔄 Updated':live?'🔵 Scanning…':'📤 For Review';
+    // "Live" = actively being worked on right now (scanning or updating) — updated within 45s.
+    const recentlyActive=(Date.now()-new Date(audit.updatedAt||audit.savedAt||audit.date||0).getTime())<45000;
+    const live=status!=='complete'&&recentlyActive;
+    const statusLbl=status==='complete'?'✅ Complete':live?'🔵 Live':status==='scanning'?'🔵 Scanning…':status==='updated'?'🔄 Updated':'📤 For Review';
 
     // Accordion: collapsed by default; expanded state preserved across live re-renders.
     html+=`<details class="review-card" data-aid="${audit.id}"${openIds.has(String(audit.id))?' open':''}>
@@ -2112,7 +2114,7 @@ function renderAdminReview(){
             <span style="color:var(--sage);font-weight:600">✓ ${accounted}/${sys}</span>${ghosts?` · <span style="color:var(--rose);font-weight:600">🔴 ${ghosts} missing</span>`:''}${extras?` · <span style="color:#c47f17">🟡 ${extras}</span>`:''}${wrong?` · <span style="color:var(--rose)">⚠️ ${wrong}</span>`:''} · ${audit.auditor}
           </div>
         </div>
-        <span class="sp sp-${status}" style="flex-shrink:0">${statusLbl}</span>
+        <span class="sp sp-${live?'scanning':status}" style="flex-shrink:0">${statusLbl}</span>
       </summary>
       <div class="rc-body">
         <div class="rc-tags" style="margin-bottom:8px">
@@ -2124,7 +2126,7 @@ function renderAdminReview(){
           ${!mm?'<span class="badge b-sage">✅ No mismatches</span>':''}
         </div>
         <div class="rc-meta" style="font-size:11px;color:var(--steel);margin-bottom:6px">${ds} · <strong>${audit.auditor}</strong></div>
-        ${live?`<div style="padding:2px 0 6px;font-size:12px;color:var(--sky);font-weight:600">🔵 Scanning live — count updating in real time</div>`:''}
+        ${live?`<div style="padding:2px 0 6px;font-size:12px;color:var(--sky);font-weight:600">🔵 Active now — ${audit.auditor} is ${status==='scanning'?'scanning':'updating'}, count updating live</div>`:''}
         ${followUps.length?`<div style="padding:2px 0 6px;font-size:12px;color:var(--sky)">🔄 ${followUps.length} update(s) from team: ${followUps.map(f=>f.foundBarcodes.length+' found').join(', ')}</div>`:''}`;
 
     if(status!=='complete'&&actionItems.length){
