@@ -2405,15 +2405,32 @@ async function testSB(){
   document.getElementById('sb-status').textContent=r.ok?'✅ Connected!':(r.status===406?'⚠️ Connected — create table stock_audits first':'❌ HTTP '+r.status);
   toast(r.ok?'✅ Connected!':'⚠️ Check config');}catch(e){document.getElementById('sb-status').textContent='❌ '+e.message;}
 }
+// Push one audit to Supabase. Returns true only if the cloud actually accepted it.
+async function pushAuditToCloud(audit){
+  if(!sbCfg.url||!sbCfg.key||!navigator.onLine) return false;
+  try{
+    const r=await fetch(sbCfg.url+'/rest/v1/stock_audits',{method:'POST',headers:{'Content-Type':'application/json','apikey':sbCfg.key,'Authorization':'Bearer '+sbCfg.key,'Prefer':'resolution=merge-duplicates,return=minimal','on_conflict':'audit_id'},body:JSON.stringify({audit_id:audit.id.toString(),audit_date:audit.date,product_name:audit.product,color:audit.color,auditor:audit.auditor,status:audit.status||'review',total_scanned:audit.report?.totalScanned||0,matched:audit.report?.matched||0,ghosts:JSON.stringify(audit.report?.ghosts||[]),extras:JSON.stringify(audit.report?.extras||[]),wrong_label:JSON.stringify(audit.report?.wrongProduct||[]),notes:audit.notes||'',raw_data:JSON.stringify(audit)})});
+    return r.ok;
+  }catch(e){ console.warn('Sync:',e); return false; }
+}
+function queueAudit(audit){
+  const p=JSON.parse(localStorage.getItem('jaey_pending_sync')||'[]');
+  const i=p.findIndex(x=>x.id===audit.id);
+  if(i>=0)p[i]=audit;else p.push(audit);
+  localStorage.setItem('jaey_pending_sync',JSON.stringify(p));
+  updatePendingDot();
+}
+// Save an audit to the cloud; if offline or the push fails, queue it for later so it is never lost.
 async function saveAuditRemote(audit){
-  if(!sbCfg.url||!sbCfg.key){if(sbCfg.url){const p=JSON.parse(localStorage.getItem('jaey_pending_sync')||'[]');const existing=p.findIndex(x=>x.id===audit.id);if(existing>=0)p[existing]=audit;else p.push(audit);localStorage.setItem('jaey_pending_sync',JSON.stringify(p));updatePendingDot();}return;}
-  try{const r=await fetch(sbCfg.url+'/rest/v1/stock_audits',{method:'POST',headers:{'Content-Type':'application/json','apikey':sbCfg.key,'Authorization':'Bearer '+sbCfg.key,'Prefer':'resolution=merge-duplicates,return=minimal','on_conflict':'audit_id'},body:JSON.stringify({audit_id:audit.id.toString(),audit_date:audit.date,product_name:audit.product,color:audit.color,auditor:audit.auditor,status:audit.status||'review',total_scanned:audit.report?.totalScanned||0,matched:audit.report?.matched||0,ghosts:JSON.stringify(audit.report?.ghosts||[]),extras:JSON.stringify(audit.report?.extras||[]),wrong_label:JSON.stringify(audit.report?.wrongProduct||[]),notes:audit.notes||'',raw_data:JSON.stringify(audit)})});if(r.ok)toast('☁️ Synced');}catch(e){console.warn('Sync:',e);}
+  const ok=await pushAuditToCloud(audit);
+  if(ok) toast('☁️ Synced'); else queueAudit(audit);
+  return ok;
 }
 async function trySyncPending(){
   const pending=JSON.parse(localStorage.getItem('jaey_pending_sync')||'[]');
-  if(!pending.length||!sbCfg.url)return;
+  if(!pending.length||!sbCfg.url||!navigator.onLine)return;
   const synced=[];
-  for(const a of pending){try{await saveAuditRemote(a);synced.push(a.id);}catch(e){}}
+  for(const a of pending){ if(await pushAuditToCloud(a)) synced.push(a.id); }
   if(synced.length){localStorage.setItem('jaey_pending_sync',JSON.stringify(pending.filter(a=>!synced.includes(a.id))));toast('☁️ Synced '+synced.length);updatePendingDot();}
 }
 
