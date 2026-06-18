@@ -655,6 +655,8 @@ select:focus,input:focus,textarea:focus{border-color:var(--gold);background:var(
         <input type="date" id="plan-date" onchange="renderPlanList()">
       </div>
 
+      <input type="text" id="plan-search" placeholder="🔍 Search style or colour…" autocomplete="off" oninput="renderPlanSuggestions()" style="width:100%;font-size:13px;padding:8px 11px;margin-bottom:9px">
+
       <div style="display:flex;gap:5px;margin-bottom:9px;flex-wrap:wrap">
         <button class="btn bo" id="pf-all" onclick="setPlanFilter('all')" style="font-size:11px;padding:5px 9px;border-color:var(--gold)">All</button>
         <button class="btn bo" id="pf-a" onclick="setPlanFilter('A')" style="font-size:11px;padding:5px 9px">🔴 A-tier</button>
@@ -1355,11 +1357,18 @@ function discardDraft(){
 function updateDraftBanner(){
   const el=document.getElementById('draft-banner'); if(!el) return;
   const d=getDraft();
+  const fd=getFoundDraft();
   if(d && (d.scanned||[]).length>0){
     el.style.display='block';
     el.innerHTML='📝 Unsent scan: <strong>'+d.product+' · '+d.color+'</strong> ('+d.scanned.length+' pcs) '+
       '<button class="btn bs" style="font-size:11px;padding:4px 10px;margin-left:6px" onclick="resumeDraft()">Resume</button> '+
       '<button class="btn bo" style="font-size:11px;padding:4px 10px" onclick="discardDraft()">Discard</button>';
+  } else if(fd && (fd.foundBuffer||[]).length>0 && audits.find(a=>a.id===fd.auditId)){
+    const au=audits.find(a=>a.id===fd.auditId);
+    el.style.display='block';
+    el.innerHTML='📦 Unsaved found pieces for <strong>'+au.product+' · '+au.color+'</strong> ('+fd.foundBuffer.length+' pcs) '+
+      '<button class="btn bs" style="font-size:11px;padding:4px 10px;margin-left:6px" onclick="openUpdateMode('+fd.auditId+')">Resume update</button> '+
+      '<button class="btn bo" style="font-size:11px;padding:4px 10px" onclick="if(confirm(\'Discard found pieces?\')){clearFoundDraft();updateDraftBanner();}">Discard</button>';
   } else el.style.display='none';
 }
 
@@ -1685,9 +1694,9 @@ function renderReportContent(report,auditId){
           <div style="font-weight:600;font-size:13px">BC ${bc}${r?` · <strong>Size ${r.size}</strong>`:''}</div>
           ${r?`<div style="font-size:11px;color:var(--steel);margin-top:1px">${r.sku||''}</div>`:''}
         </div>
-        <button onclick="quickFoundIt('${bc}',${auditId})" style="background:var(--sage);color:white;border:none;padding:8px 14px;border-radius:7px;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap;flex-shrink:0">✓ Found It!</button>
       </div>`;
     }
+    html+=`<div style="font-size:11px;color:var(--steel);padding:6px 6px 0">Found one? Tap <strong>“I Found Some Pieces”</strong> below and type the barcode.</div>`;
     html+=`</div>`;
   }
 
@@ -1701,6 +1710,10 @@ function openUpdateMode(auditId){
   const audit=audits.find(a=>a.id===auditId); if(!audit) return;
   activeScanId=auditId;
   foundBuffer=[];
+  // Restore any unsaved found pieces from a previous session for this audit.
+  const fd=getFoundDraft();
+  const restored=fd && fd.auditId===auditId && (fd.foundBuffer||[]).length>0;
+  if(restored) foundBuffer=fd.foundBuffer.slice();
 
   // Reopen scan screen in update mode
   document.getElementById('ss-prod').textContent=audit.product;
@@ -1719,13 +1732,23 @@ function openUpdateMode(auditId){
   document.getElementById('ss-report-mode').style.display='block';
   document.getElementById('footer-scan').style.display='none';
   document.getElementById('footer-review').style.display='block';
-  document.getElementById('ss-update-wrap').style.display='none';
-  document.getElementById('update-save-wrap').style.display='none';
   document.getElementById('update-toggle-btn').style.display='block';
-  document.getElementById('update-toggle-btn').textContent='🔍 I Found Some Pieces';
 
   currentScan=audit; // reference for found items
   renderReportContent(audit.report||{},auditId);
+
+  if(restored){
+    // Re-open the scanner with the previously found pieces visible and saveable.
+    document.getElementById('ss-update-wrap').style.display='block';
+    document.getElementById('update-save-wrap').style.display='block';
+    document.getElementById('update-toggle-btn').textContent='▲ Hide Scanner';
+    renderFoundList();
+    setTimeout(()=>toast('↩︎ Restored '+foundBuffer.length+' found piece(s) from your last session — review and Save'),300);
+  } else {
+    document.getElementById('ss-update-wrap').style.display='none';
+    document.getElementById('update-save-wrap').style.display='none';
+    document.getElementById('update-toggle-btn').textContent='🔍 I Found Some Pieces';
+  }
   document.getElementById('scan-screen').classList.add('active');
 }
 
@@ -1734,7 +1757,9 @@ function toggleUpdateMode(){
   const saveWrap=document.getElementById('update-save-wrap');
   const isOpen=wrap.style.display!=='none';
   wrap.style.display=isOpen?'none':'block';
-  saveWrap.style.display='none';
+  // Keep the Save button available if pieces are already in the buffer.
+  saveWrap.style.display=(!isOpen&&foundBuffer.length)?'block':'none';
+  if(!isOpen) renderFoundList();
   document.getElementById('update-toggle-btn').textContent=isOpen?'🔍 I Found Some Pieces':'▲ Hide Scanner';
   if(!isOpen) setTimeout(()=>document.getElementById('found-in').focus(),200);
 }
@@ -1746,29 +1771,49 @@ function addFoundBC(){
   const ghosts=audit?.report?.ghosts||[];
   const fbEl=document.getElementById('found-fb');
 
-  if(foundBuffer.includes(bc)){fbEl.innerHTML='<span style="color:var(--steel)">Already added.</span>';input.value='';return;}
+  if(foundBuffer.includes(bc)){fbEl.innerHTML='<span style="color:var(--steel)">Already added.</span>';input.value='';input.focus();return;}
   if(!ghosts.includes(bc)){
-    fbEl.innerHTML='<span style="color:var(--rose)">⚠️ BC '+bc+' not in missing list.</span>';
-    input.value=''; return;
+    const known=stockData.find(r=>r.barcode==bc);
+    const sameStyle=known&&known.product===audit?.product&&known.color===audit?.color;
+    fbEl.innerHTML='<span style="color:var(--rose)">⚠️ BC '+bc+(sameStyle?' was already counted in this audit.':' is not in this style’s missing list.')+'</span>';
+    input.value=''; input.focus(); return;
   }
   const f=stockData.find(r=>r.barcode==bc);
   fbEl.innerHTML=f?'<span style="color:var(--sage)">✓ '+f.product+' · '+f.color+' · Size: <strong>'+f.size+'</strong></span>':'<span style="color:var(--steel)">Added</span>';
   foundBuffer.push(bc);
+  saveFoundDraft();            // persist so a back-tap / reload never loses found pieces
   renderFoundList();
   document.getElementById('update-save-wrap').style.display=foundBuffer.length?'block':'none';
   input.value=''; input.focus();
 }
 
+// In-progress "found pieces" are auto-saved to this device, keyed to the audit being updated.
+function saveFoundDraft(){
+  try{ if(activeScanId&&foundBuffer.length) localStorage.setItem('jaey_found_draft',JSON.stringify({auditId:activeScanId,foundBuffer,at:Date.now()}));
+       else localStorage.removeItem('jaey_found_draft'); }catch(e){}
+}
+function clearFoundDraft(){ try{ localStorage.removeItem('jaey_found_draft'); }catch(e){} }
+function getFoundDraft(){ try{ return JSON.parse(localStorage.getItem('jaey_found_draft')||'null'); }catch(e){ return null; } }
+
+function removeFound(bc){
+  foundBuffer=foundBuffer.filter(b=>b!==bc);
+  saveFoundDraft();
+  renderFoundList();
+  document.getElementById('update-save-wrap').style.display=foundBuffer.length?'block':'none';
+}
+
 function renderFoundList(){
   const el=document.getElementById('found-list'); if(!el) return;
   if(!foundBuffer.length){el.innerHTML='';return;}
-  let html='<div style="font-size:11px;color:var(--sage);font-weight:600;margin-bottom:5px">'+foundBuffer.length+' found:</div>';
+  // Inline save button so it's always reachable, right next to the list.
+  let html='<button class="btn bs bb" style="margin-bottom:8px" onclick="saveUpdate()">✅ Save '+foundBuffer.length+' found piece'+(foundBuffer.length>1?'s':'')+'</button>';
+  html+='<div style="font-size:11px;color:var(--sage);font-weight:600;margin-bottom:5px">'+foundBuffer.length+' found:</div>';
   for(const bc of foundBuffer){
     const r=stockData.find(f=>f.barcode==bc);
     html+=`<div class="sc-list-item" style="background:var(--white);border:1px solid var(--border);border-radius:6px;margin-bottom:4px">
       <span class="sli-bc">${bc}</span>
       ${r?'<span class="sli-sz ok">'+r.size+'</span>':''}
-      <button class="sli-del" onclick="foundBuffer=foundBuffer.filter(b=>b!=='${bc}');renderFoundList();document.getElementById('update-save-wrap').style.display=foundBuffer.length?'block':'none'">×</button>
+      <button class="sli-del" onclick="removeFound('${bc}')">×</button>
     </div>`;
   }
   el.innerHTML=html;
@@ -1791,7 +1836,7 @@ function saveUpdate(){
   saveAuditRemote(audit);
 
   toast('✓ Update saved — '+foundBuffer.length+' piece(s) marked found');
-  foundBuffer=[]; document.getElementById('update-note').value='';
+  foundBuffer=[]; clearFoundDraft(); document.getElementById('update-note').value='';
   document.getElementById('update-save-wrap').style.display='none';
   document.getElementById('ss-update-wrap').style.display='none';
   document.getElementById('ss-status-pill').className='sp sp-updated';
@@ -2367,6 +2412,8 @@ function renderPlanSuggestions(){
   if(planFilter==='A') list=list.filter(s=>s.tier==='A');
   else if(planFilter==='B') list=list.filter(s=>s.tier==='B');
   else if(planFilter==='overdue') list=list.filter(s=>isOverdue(s));
+  const q=(document.getElementById('plan-search')?.value||'').trim().toLowerCase();
+  if(q) list=list.filter(s=>s.product.toLowerCase().includes(q)||s.color.toLowerCase().includes(q));
   list.sort((a,b)=>{const ao=isOverdue(a)?0:1,bo=isOverdue(b)?0:1;if(ao!==bo)return ao-bo;const to={A:0,B:1,C:2,D:3};if(a.tier!==b.tier)return (to[a.tier]||4)-(to[b.tier]||4);return b.vpw-a.vpw;});
 
   const el=document.getElementById('suggest-list');
