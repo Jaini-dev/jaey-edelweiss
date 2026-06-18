@@ -2097,6 +2097,7 @@ function renderAdminReview(){
     const sys=sysTotal(audit), accounted=accountedBarcodes(audit).length;
     const img=getImg(audit.product,audit.color);
     const followUps=audit.followUps||[];
+    const totalFound=followUps.reduce((n,f)=>n+(f.foundBarcodes?.length||0),0);
     const actionItems=buildActionItems(audit);
     const checked=audit.checkedActions||[];
     // "Live" = actively being worked on right now (scanning or updating) — updated within 45s.
@@ -2127,7 +2128,7 @@ function renderAdminReview(){
         </div>
         <div class="rc-meta" style="font-size:11px;color:var(--steel);margin-bottom:6px">${ds} · <strong>${audit.auditor}</strong></div>
         ${live?`<div style="padding:2px 0 6px;font-size:12px;color:var(--sage);font-weight:600">🟢 Active now — ${audit.auditor} is ${status==='scanning'?'scanning':'updating'}, count updating live</div>`:''}
-        ${followUps.length?`<div style="padding:2px 0 6px;font-size:12px;color:var(--sky)">🔄 ${followUps.length} update(s) from team: ${followUps.map(f=>f.foundBarcodes.length+' found').join(', ')}</div>`:''}`;
+        ${totalFound?`<div style="padding:2px 0 6px;font-size:12px;color:var(--sky)">🔄 ${totalFound} piece${totalFound>1?'s':''} found after the first scan</div>`:''}`;
 
     if(status!=='complete'&&actionItems.length){
       html+=`<div class="rc-actions-section">
@@ -2423,6 +2424,13 @@ async function applyCorrection(bc, auditId, newStatus){
   renderResolve(); renderAdminReview(); updateStockComposition();
 }
 
+// Collapse the many per-piece follow-ups into a single "found N pcs" trail entry.
+function followUpSummary(a){
+  const fus=a.followUps||[]; if(!fus.length) return [];
+  const total=fus.reduce((n,f)=>n+(f.foundBarcodes?.length||0),0);
+  const last=fus[fus.length-1];
+  return [{at:last.at,by:last.by||a.auditor,action:'found '+total+' pc'+(total>1?'s':''),note:''}];
+}
 // Total in system, and the barcodes physically accounted for (scanned + found-in-update).
 function sysTotal(a){ return (a.systemInward?.length) || (((a.report?.ghosts?.length)||0)+((a.report?.matched)||0)); }
 function accountedBarcodes(a){
@@ -2472,7 +2480,7 @@ function showFullDetail(id){
   if(r.ghosts?.length){html+=`<div style="font-weight:600;margin:9px 0 5px">🔴 Missing barcodes:</div>`;for(const bc of r.ghosts){const f=stockData.find(x=>x.barcode==bc);html+=`<div style="padding:5px 9px;background:var(--rose-light);border-radius:5px;margin-bottom:4px;font-size:13px;font-family:monospace">BC ${bc}${f?' · '+f.size:''}</div>`;}}
   if(r.extras?.length){html+=`<div style="font-weight:600;margin:9px 0 5px">🟡 System mismatches:</div>`;for(const bc of r.extras){const f=stockData.find(x=>x.barcode==bc);html+=`<div style="padding:5px 9px;background:var(--gold-light);border-radius:5px;margin-bottom:4px;font-size:13px;font-family:monospace">BC ${bc}${f?' · '+f.size:''}</div>`;}}
   // Trail
-  const trail=[{at:a.savedAt||a.date,by:a.auditor,action:'submitted',note:''},...(a.followUps||[]).map(f=>({at:f.at,by:f.by,action:'found '+f.foundBarcodes.length+' pcs',note:f.note})),...(a.trail||[])];
+  const trail=[{at:a.savedAt||a.date,by:a.auditor,action:'submitted',note:''},...followUpSummary(a),...(a.trail||[])];
   if(trail.length){
     html+=`<div style="font-weight:600;margin:12px 0 7px">📋 Audit Trail:</div>`;
     for(const t of trail){
@@ -2529,7 +2537,7 @@ function renderAdminHistory(){
     const mm=(r.ghosts?.length||0)+(r.extras?.length||0)+(r.wrongProduct?.length||0);
     const status=a.status||'review';
     const img=getImg(a.product,a.color);
-    const trail=[{at:a.savedAt||a.date,by:a.auditor,action:'submitted'},...(a.followUps||[]).map(f=>({at:f.at,by:f.by,action:'found '+f.foundBarcodes.length+' pcs'+( f.note?' ('+f.note+')':'')})),...(a.trail||[])];
+    const trail=[{at:a.savedAt||a.date,by:a.auditor,action:'submitted'},...followUpSummary(a),...(a.trail||[])];
 
     html+=`<div class="hist-item" style="display:flex;gap:9px">
       ${img?`<img src="${img}" onclick="zoomImg('${img}')" style="width:40px;height:48px;object-fit:cover;border-radius:5px;flex-shrink:0;cursor:zoom-in" onerror="this.style.display='none'" alt="">`:''}
