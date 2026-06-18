@@ -649,6 +649,7 @@ details.review-card[open]>.rc-summary{border-bottom:1px solid var(--border)}
 
   <!-- REVIEW -->
   <div id="apg-review" class="pg active">
+    <div id="review-daily"></div>
     <input type="text" id="review-search" placeholder="🔍 Search style or colour…" autocomplete="off" oninput="renderAdminReview()" style="width:100%;font-size:13px;padding:8px 11px;margin-bottom:9px">
     <div style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap">
       <button class="btn bo" id="rf-review" onclick="setReviewFilter('review')" style="font-size:11px;padding:5px 10px;border-color:var(--gold)">⏳ Needs Review</button>
@@ -2068,6 +2069,18 @@ function setReviewFilter(f){
 
 function renderAdminReview(){
   const el=document.getElementById('review-list'); if(!el) return;
+  // Daily progress banner — styles audited + pieces counted today (shown above the list, any filter).
+  const _dEl=document.getElementById('review-daily');
+  if(_dEl){
+    const _today=audits.filter(a=>(a.savedAt||a.date||'').startsWith(todayStr()));
+    const _pcs=_today.reduce((n,a)=>n+(a.report?.totalScanned||0),0);
+    _dEl.innerHTML=_today.length?`<div style="background:var(--cream);border:1px solid var(--border);border-radius:10px;padding:10px 14px;margin-bottom:10px;display:flex;align-items:center;gap:12px;font-size:13px;flex-wrap:wrap">
+      <span>📊 <strong>Today</strong></span>
+      <span><strong style="font-size:17px;font-family:'DM Serif Display',serif">${_today.length}</strong> style${_today.length>1?'s':''} audited</span>
+      <span style="color:var(--border)">|</span>
+      <span><strong style="font-size:17px;font-family:'DM Serif Display',serif">${_pcs.toLocaleString()}</strong> pcs found</span>
+    </div>`:'';
+  }
   const q=(document.getElementById('review-search')?.value||'').trim().toLowerCase();
   const matchQ=(p,c)=>!q||((p||'').toLowerCase().includes(q))||((c||'').toLowerCase().includes(q));
 
@@ -2947,11 +2960,13 @@ function renderPlanList(){
   for(const item of items){
     const img=getImg(item.product,item.color);
     const sd=STYLES_DATA.find(s=>s.product===item.product&&s.color===item.color);
+    // Show the assignee; if the style was never assigned, fall back to whoever actually audited it.
+    const who=item.assignee||(audits.find(a=>a.product===item.product&&a.color===item.color&&(a.savedAt||a.date||'').startsWith(date))?.auditor)||'';
     html+=`<div class="plan-item">
       ${img?`<img class="pi-img" src="${img}" onerror="this.style.display='none'" alt="">`:`<div style="width:32px;height:38px;background:var(--white);border-radius:5px;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:12px">👗</div>`}
       <div style="flex:1;min-width:0">
         <div style="font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${item.product}</div>
-        <div style="font-size:11px;color:var(--steel)">${item.color}${item.assignee?' · '+item.assignee:''}${sd?' · '+sd.tier:''}</div>
+        <div style="font-size:11px;color:var(--steel)">${item.color}${who?' · '+who:''}${sd?' · '+sd.tier:''}</div>
         <div style="font-size:10px;color:var(--steel);margin-top:2px;display:flex;gap:6px;flex-wrap:wrap">
           ${item.startedAt?'<span style="color:var(--sage)">▶ Started '+new Date(item.startedAt).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'})+'</span>':'<span>Not started</span>'}
           ${item.completedAt?'<span style="color:var(--sky)">✓ Sent '+new Date(item.completedAt).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'})+'</span>':''}
