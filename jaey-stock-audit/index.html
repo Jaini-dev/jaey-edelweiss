@@ -2095,7 +2095,7 @@ function renderAdminReview(){
     const d=new Date(audit.savedAt||audit.date);
     const ds=d.toLocaleDateString('en-IN',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});
     const r=audit.report||{};
-    const ghosts=r.ghosts?.length||0, extras=r.extras?.length||0, wrong=openWrongProduct(audit,scanIdx).length;
+    const ghosts=r.ghosts?.length||0, extras=openExtras(audit).length, wrong=openWrongProduct(audit,scanIdx).length;
     const mm=ghosts+extras+wrong;
     const status=audit.status||'review';
     const sys=sysTotal(audit), accounted=accountedBarcodes(audit).length;
@@ -2225,6 +2225,16 @@ function openWrongProduct(audit, idx){
   idx=idx||buildScanIndex();
   return (audit.report?.wrongProduct||[]).filter(e=>!wrongAccounted(e, idx));
 }
+// An "extra" (present but system says outward) auto-clears once the system shows it inward again —
+// whether fixed here or in the main inventory system (after the next stock CSV upload). Backdated
+// inward corrections still clear, because we key on current status, not the event date.
+function openExtras(audit){
+  return (audit.report?.extras||[]).filter(bc=>{
+    if((audit.systemUpdated||[]).includes(bc)) return false;
+    const row=stockData.find(r=>r.barcode==bc);
+    return !(row && row.status==='inward');   // cleared once the system shows inward
+  });
+}
 
 function buildActionItems(audit, idx){
   const items=[], r=audit.report||{};
@@ -2258,7 +2268,7 @@ function toggleAction(auditId,itemId,checked){
 function completeAudit(id){
   const audit=audits.find(a=>a.id===id); if(!audit) return;
   const r=audit.report||{};
-  const open=(r.ghosts?.length||0)+(r.extras?.length||0)+openWrongProduct(audit).length;
+  const open=(r.ghosts?.length||0)+openExtras(audit).length+openWrongProduct(audit).length;
   if(open>0&&!confirm(`${open} unresolved item(s) still open (resolve them in the 🔧 Resolve tab). Complete anyway?`)) return;
   const noteEl=document.getElementById('admin-note-'+id);
   audit.adminNote=noteEl?.value.trim()||audit.adminNote||'';
@@ -2330,7 +2340,7 @@ function renderResolve(){
   if(!lEl) return;
   const today=todayStr();
   const todays=audits.filter(a=>(a.savedAt||a.date||'').startsWith(today));
-  const mmOf=a=>{const r=a.report||{};return (r.ghosts?.length||0)+(r.extras?.length||0)+(r.wrongProduct?.length||0);};
+  const mmOf=a=>{const r=a.report||{};return (r.ghosts?.length||0)+openExtras(a).length+openWrongProduct(a).length;};
   const clean=todays.filter(a=>mmOf(a)===0).length;
   const issues=todays.length-clean;
   let missing=collectMissing();
@@ -2411,9 +2421,8 @@ function renderResolve(){
   const exCard=document.getElementById('resolve-extras-card'); const exEl=document.getElementById('resolve-extras');
   const exSeen={};
   for(const a of audits){
-    const updated=a.systemUpdated||[];
-    for(const bc of (a.report?.extras||[])){
-      if(updated.includes(bc)||exSeen[bc]) continue;
+    for(const bc of openExtras(a)){          // auto-clears once the system shows inward (incl. backdated fixes)
+      if(exSeen[bc]) continue;
       const row=stockData.find(r=>r.barcode==bc);
       exSeen[bc]={bc,product:a.product,color:a.color,auditor:a.auditor,auditId:a.id,size:row?.size||''};
     }
