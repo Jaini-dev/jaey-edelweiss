@@ -551,6 +551,11 @@ select:focus,input:focus,textarea:focus{border-color:var(--gold);background:var(
         <button class="btn bp" style="padding:11px 14px" onclick="addFoundBC()">Add</button>
       </div>
       <div id="found-fb" style="font-size:13px;margin-bottom:6px;min-height:18px"></div>
+      <details style="margin-bottom:8px">
+        <summary style="font-size:12px;color:var(--steel);cursor:pointer">📋 Paste many barcodes at once</summary>
+        <textarea id="found-bulk" rows="4" placeholder="One barcode per line" style="width:100%;font-size:13px;padding:9px 11px;margin-top:6px"></textarea>
+        <button class="btn bo" style="font-size:12px;padding:7px 12px" onclick="bulkAddFound()">Add all</button>
+      </details>
       <div id="found-list"></div>
     </div>
   </div>
@@ -1800,6 +1805,28 @@ function removeFound(bc){
   saveFoundDraft();
   renderFoundList();
   document.getElementById('update-save-wrap').style.display=foundBuffer.length?'block':'none';
+}
+
+// Add many found barcodes at once (paste from a list).
+function bulkAddFound(){
+  const ta=document.getElementById('found-bulk');
+  const lines=(ta.value||'').split(/[\s,]+/).map(l=>l.trim()).filter(Boolean);
+  if(!lines.length) return;
+  const audit=audits.find(a=>a.id===activeScanId);
+  const ghosts=audit?.report?.ghosts||[];
+  let added=0, dup=0, notMissing=0;
+  for(const bc of lines){
+    if(foundBuffer.includes(bc)){ dup++; continue; }
+    if(!ghosts.includes(bc)){ notMissing++; continue; }
+    foundBuffer.push(bc); added++;
+  }
+  saveFoundDraft();
+  renderFoundList();
+  document.getElementById('update-save-wrap').style.display=foundBuffer.length?'block':'none';
+  ta.value='';
+  document.getElementById('found-fb').innerHTML='<span style="color:var(--sage)">✓ Added '+added+'</span>'+
+    (dup?' <span style="color:var(--steel)">· '+dup+' already in list</span>':'')+
+    (notMissing?' <span style="color:var(--rose)">· '+notMissing+' not in this style’s missing list</span>':'');
 }
 
 function renderFoundList(){
