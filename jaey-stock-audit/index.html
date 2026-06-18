@@ -449,6 +449,8 @@ select:focus,input:focus,textarea:focus{border-color:var(--gold);background:var(
 
   <!-- MY TASKS -->
   <div id="upg-today" class="pg active">
+    <!-- Resume an unsent scan draft -->
+    <div id="draft-banner" class="card" style="display:none;background:#fff8e6;border:1px solid var(--gold);font-size:13px;margin-bottom:12px"></div>
     <!-- Name entry if not set -->
     <div id="u-name-card" class="card" style="display:none">
       <div class="ct">👋 Who are you?</div>
@@ -952,8 +954,12 @@ function manualSync(){
     .then(()=>trySyncPending())
     .then(()=>trySyncPendingUsers())
     .then(()=>trySyncPendingPlans())
-    .then(()=>{ updatePendingDot(); const left=(JSON.parse(localStorage.getItem('jaey_pending_sync')||'[]')).length; if(left===0) toast('✓ All scans synced'); })
-    .catch(()=>toast('Sync failed — try again'));
+    .then(()=>{ updatePendingDot();
+      const left=(JSON.parse(localStorage.getItem('jaey_pending_sync')||'[]')).length;
+      if(left===0) toast('✓ All scans synced');
+      else toast('⚠️ '+left+' still pending — '+(_lastSyncError||'could not reach cloud'));
+    })
+    .catch(e=>toast('Sync failed — '+(e&&e.message||'try again')));
 }
 
 // ══════════════════
@@ -1145,6 +1151,7 @@ function showUserTab(name,tab){
 // USER TASKS
 // ══════════════════
 function renderUserTasks(){
+  updateDraftBanner(); // surface any unsent scan so it can be resumed
   const name=localStorage.getItem('jaey_user_name')||'';
   const today=todayStr();
 
@@ -1326,6 +1333,36 @@ function startFromPicker(product,color){
 // ══════════════════
 // SCAN SCREEN
 // ══════════════════
+// In-progress scans are auto-saved to this device so a back-tap / reload never loses work.
+function saveDraft(){
+  if(currentScan && currentScan.status==='scanning' && (currentScan.scanned||[]).length>0){
+    try{ localStorage.setItem('jaey_scan_draft', JSON.stringify(currentScan)); }catch(e){}
+  }
+}
+function clearDraft(){ try{ localStorage.removeItem('jaey_scan_draft'); }catch(e){} }
+function getDraft(){ try{ return JSON.parse(localStorage.getItem('jaey_scan_draft')||'null'); }catch(e){ return null; } }
+// Reopen an unsent draft from the resume banner.
+function resumeDraft(){
+  const d=getDraft(); if(!d){ updateDraftBanner(); return; }
+  currentScan=d; currentScan.status='scanning';
+  _renderScanScreen();
+}
+function discardDraft(){
+  if(!confirm('Discard the unsent scan? This cannot be undone.')) return;
+  clearDraft(); updateDraftBanner();
+}
+// Show/hide the "you have an unsent scan" banner on the team home.
+function updateDraftBanner(){
+  const el=document.getElementById('draft-banner'); if(!el) return;
+  const d=getDraft();
+  if(d && (d.scanned||[]).length>0){
+    el.style.display='block';
+    el.innerHTML='📝 Unsent scan: <strong>'+d.product+' · '+d.color+'</strong> ('+d.scanned.length+' pcs) '+
+      '<button class="btn bs" style="font-size:11px;padding:4px 10px;margin-left:6px" onclick="resumeDraft()">Resume</button> '+
+      '<button class="btn bo" style="font-size:11px;padding:4px 10px" onclick="discardDraft()">Discard</button>';
+  } else el.style.display='none';
+}
+
 function openScan(product,color){
   const name=localStorage.getItem('jaey_user_name')||'Unknown';
   const rows=productMap[product]?.[color]||[];
@@ -1343,11 +1380,25 @@ function openScan(product,color){
     scanned:[], notes:'', status:'scanning'
   };
 
+  // Offer to resume an unsent draft of the same style (e.g. after an accidental back-tap).
+  const d=getDraft();
+  if(d && d.product===product && d.color===color && (d.scanned||[]).length>0){
+    if(confirm('Resume your unsent scan of '+product+' · '+color+'?\n\n'+d.scanned.length+' piece(s) already scanned.\n\nOK = resume · Cancel = start fresh')){
+      currentScan=d; currentScan.status='scanning';
+    } else { clearDraft(); }
+  }
+
+  _renderScanScreen();
+}
+
+// Paint the scan screen from the current (new or resumed) scan session.
+function _renderScanScreen(){
+  const product=currentScan.product, color=currentScan.color, name=currentScan.auditor;
+  const displayCount=stockData.length>0?(currentScan.systemInward?currentScan.systemInward.length:0):
+    (STYLES_DATA.find(s=>s.product===product&&s.color===color)?.stockCount||'?');
   document.getElementById('ss-prod').textContent=product;
   document.getElementById('ss-prod2').textContent=product;
   document.getElementById('ss-mode-label').textContent=color+' · Scanning';
-  const displayCount=stockData.length>0?sysInward.length:
-    (STYLES_DATA.find(s=>s.product===product&&s.color===color)?.stockCount||'?');
   document.getElementById('ss-meta').textContent=color+' · '+displayCount+' in system · '+name+(stockData.length===0?' (load CSV to scan)':'');
   liveHeartbeat(null); // announce that this device started an audit
   document.getElementById('ss-status-pill').className='sp sp-pending';
@@ -1358,7 +1409,7 @@ function openScan(product,color){
     ?`<img class="ss-img" src="${img}" onclick="zoomImg('${img}')" style="cursor:zoom-in" onerror="this.style.display='none'" alt="">`
     :`<div class="ss-ph">👗</div>`;
 
-  document.getElementById('sc-sys').textContent='System: '+(stockData.length>0?sysInward.length:(STYLES_DATA.find(s=>s.product===product&&s.color===color)?.stockCount||'?'));
+  document.getElementById('sc-sys').textContent='System: '+displayCount;
 
   document.getElementById('ss-scan-mode').style.display='block';
   document.getElementById('ss-report-mode').style.display='none';
@@ -1380,14 +1431,14 @@ function openScan(product,color){
 }
 
 function closeScanScreen(){
-  if(currentScan&&currentScan.status==='scanning'){
-    if(currentScan.scanned.length>0){
-      if(!confirm('Leave? Unsaved scan progress will be lost.')) return;
-    }
+  if(currentScan&&currentScan.status==='scanning'&&currentScan.scanned.length>0){
+    saveDraft(); // keep it safe — they can resume from the home screen
+    if(!confirm('Leave this audit?\n\nYour '+currentScan.scanned.length+' scanned piece(s) are saved as a draft you can resume from the home screen.')) return;
   }
   document.getElementById('scan-screen').classList.remove('active');
   liveStop();
   currentScan=null;
+  updateDraftBanner();
 }
 
 function addBC(){
@@ -1418,6 +1469,7 @@ function addBC(){
   }
   input.value=''; input.focus();
   renderScanList();
+  saveDraft();              // persist progress so a back-tap / reload never loses it
   liveHeartbeat({bc,type:res});
 }
 
@@ -1498,6 +1550,7 @@ function sendForReview(){
   currentScan.report=report;
   currentScan.status='review';
   liveStop(); // scanning finished — drop from the live board
+  clearDraft(); // sent for review — draft no longer needed
   currentScan.savedAt=new Date().toISOString();
   currentScan.updatedAt=currentScan.savedAt;
 
@@ -3001,12 +3054,23 @@ async function testSB(){
   toast(r.ok?'✅ Connected!':'⚠️ Check config');}catch(e){document.getElementById('sb-status').textContent='❌ '+e.message;}
 }
 // Push one audit to Supabase. Returns true only if the cloud actually accepted it.
+let _lastSyncError='';
 async function pushAuditToCloud(audit){
-  if(!sbCfg.url||!sbCfg.key||!navigator.onLine) return false;
+  if(!sbCfg.url||!sbCfg.key||!navigator.onLine){ _lastSyncError=!navigator.onLine?'no internet':'Supabase not configured'; return false; }
+  const body=JSON.stringify({audit_id:audit.id.toString(),audit_date:audit.date,product_name:audit.product,color:audit.color,auditor:audit.auditor,status:audit.status||'review',total_scanned:audit.report?.totalScanned||0,matched:audit.report?.matched||0,ghosts:JSON.stringify(audit.report?.ghosts||[]),extras:JSON.stringify(audit.report?.extras||[]),wrong_label:JSON.stringify(audit.report?.wrongProduct||[]),notes:audit.notes||'',raw_data:JSON.stringify(audit)});
+  const post=(url,prefer)=>{
+    const ctrl=new AbortController(); const t=setTimeout(()=>ctrl.abort(),15000);
+    return fetch(url,{method:'POST',headers:{'Content-Type':'application/json','apikey':sbCfg.key,'Authorization':'Bearer '+sbCfg.key,'Prefer':prefer},body,signal:ctrl.signal}).finally(()=>clearTimeout(t));
+  };
   try{
-    const r=await fetch(sbCfg.url+'/rest/v1/stock_audits',{method:'POST',headers:{'Content-Type':'application/json','apikey':sbCfg.key,'Authorization':'Bearer '+sbCfg.key,'Prefer':'resolution=merge-duplicates,return=minimal','on_conflict':'audit_id'},body:JSON.stringify({audit_id:audit.id.toString(),audit_date:audit.date,product_name:audit.product,color:audit.color,auditor:audit.auditor,status:audit.status||'review',total_scanned:audit.report?.totalScanned||0,matched:audit.report?.matched||0,ghosts:JSON.stringify(audit.report?.ghosts||[]),extras:JSON.stringify(audit.report?.extras||[]),wrong_label:JSON.stringify(audit.report?.wrongProduct||[]),notes:audit.notes||'',raw_data:JSON.stringify(audit)})});
+    // Correct upsert: on_conflict belongs in the query string, not a header.
+    let r=await post(sbCfg.url+'/rest/v1/stock_audits?on_conflict=audit_id','resolution=merge-duplicates,return=minimal');
+    // If the table has no audit_id unique constraint, the upsert target 400s — fall back to a plain insert.
+    if(!r.ok && (r.status===400||r.status===404)) r=await post(sbCfg.url+'/rest/v1/stock_audits','return=minimal');
+    if(!r.ok){ _lastSyncError='HTTP '+r.status+(r.status===401||r.status===403?' (permission/RLS)':r.status===409?' (duplicate)':''); try{const t=await r.text(); if(t) _lastSyncError+=' · '+t.slice(0,120);}catch(e){} }
+    else _lastSyncError='';
     return r.ok;
-  }catch(e){ console.warn('Sync:',e); return false; }
+  }catch(e){ _lastSyncError=e.name==='AbortError'?'timed out (slow connection)':e.message; console.warn('Sync:',e); return false; }
 }
 function queueAudit(audit){
   const p=JSON.parse(localStorage.getItem('jaey_pending_sync')||'[]');
