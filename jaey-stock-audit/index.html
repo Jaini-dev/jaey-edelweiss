@@ -629,7 +629,7 @@ details.review-card[open]>.rc-summary{border-bottom:1px solid var(--border)}
     <div class="card" style="margin-top:11px">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
         <div class="ct" style="margin-bottom:0">🔍 Missing pieces</div>
-        <button class="btn bo" id="export-lost-btn" onclick="exportLostCSV()" style="display:none;font-size:11px;padding:5px 10px;color:var(--rose);border-color:var(--rose);margin-left:auto;margin-right:6px">⬇️ Lost CSV</button>
+        <button class="btn bo" id="export-lost-btn" onclick="exportLostCSV()" style="display:none;font-size:11px;padding:5px 10px;color:var(--rose);border-color:var(--rose);margin-left:auto;margin-right:6px">⬇️ Unknown CSV</button>
         <select id="resolve-sort" onchange="renderResolve()" style="width:auto;font-size:12px;padding:5px 8px">
           <option value="age">Oldest first</option>
           <option value="style">By style</option>
@@ -2378,7 +2378,7 @@ function renderResolve(){
       <div style="display:flex;gap:6px;margin-top:8px">
         <button class="btn bs" style="font-size:11px;padding:6px 10px" onclick="resolveFound('${m.bc}',${m.auditId})">✓ Found</button>
         ${journeyBtn(m.bc)}
-        <button class="btn bo" style="font-size:11px;padding:6px 10px;color:var(--rose);border-color:var(--rose)" onclick="markLost('${m.bc}',${m.auditId},${m.foundIn?1:0})">Mark LOST</button>
+        <button class="btn bo" style="font-size:11px;padding:6px 10px;color:var(--rose);border-color:var(--rose)" onclick="markLost('${m.bc}',${m.auditId},${m.foundIn?1:0})">Mark Unknown</button>
       </div>
     </div>`;
   }
@@ -2387,7 +2387,7 @@ function renderResolve(){
   // Show "Lost CSV" export when anything was written off as Lost today.
   const _lostToday=getLostLog().filter(l=>(l.at||'').startsWith(todayStr()));
   const _lostBtn=document.getElementById('export-lost-btn');
-  if(_lostBtn){ _lostBtn.style.display=_lostToday.length?'inline-flex':'none'; _lostBtn.textContent='⬇️ Lost CSV ('+_lostToday.length+')'; }
+  if(_lostBtn){ _lostBtn.style.display=_lostToday.length?'inline-flex':'none'; _lostBtn.textContent='⬇️ Unknown CSV ('+_lostToday.length+')'; }
 
   // Extras: physically present but system says outward → offer "Mark INWARD".
   const exCard=document.getElementById('resolve-extras-card'); const exEl=document.getElementById('resolve-extras');
@@ -2466,12 +2466,12 @@ function markLost(bc, auditId, hasFoundIn){
   bc=String(bc);
   const row=stockData.find(r=>r.barcode==bc)||{};
   // Guard: a sample is usually in the sample rack, not lost.
-  if(isSample(row) && !confirm('🧷 BC '+bc+' is a SAMPLE'+(row.tags?' ('+row.tags+')':'')+' — it\'s most likely sitting in the sample rack.\n\nMark it LOST anyway?')) return;
+  if(isSample(row) && !confirm('🧷 BC '+bc+' is a SAMPLE'+(row.tags?' ('+row.tags+')':'')+' — it\'s most likely sitting in the sample rack.\n\nMark it Unknown anyway?')) return;
   // Guard: a piece seen physically in another audit is misplaced/mislabelled, not lost.
-  if(hasFoundIn && !confirm('BC '+bc+' was physically scanned inside another style\'s count — it\'s most likely MISPLACED or mislabelled, not lost.\n\nMark it LOST anyway?')) return;
-  if(!confirm('Write off BC '+bc+' as LOST?\n\nIt will be added to today\'s Lost CSV (upload that to your inventory system) and removed from the missing list.')) return;
+  if(hasFoundIn && !confirm('BC '+bc+' was physically scanned inside another style\'s count — it\'s most likely MISPLACED or mislabelled.\n\nMark it Unknown anyway?')) return;
+  if(!confirm('Write off BC '+bc+' as UNKNOWN?\n\nIt will be added to today\'s Unknown CSV (upload that to your inventory system) and removed from the missing list.')) return;
   if(!row.itemId||!row.sizeId){
-    if(!confirm('⚠️ BC '+bc+' has no Item ID / Size ID loaded, so its Lost CSV row will be incomplete.\n\nTip: load today\'s stock CSV in the Data tab first. Continue anyway?')) return;
+    if(!confirm('⚠️ BC '+bc+' has no Item ID / Size ID loaded, so its Unknown CSV row will be incomplete.\n\nTip: load today\'s stock CSV in the Data tab first. Continue anyway?')) return;
   }
   const log=getLostLog();
   if(!log.find(l=>l.barcode===bc && !l.recovered)){
@@ -2493,7 +2493,7 @@ function markLost(bc, auditId, hasFoundIn){
       body:JSON.stringify({status:'outward', purpose:'Unknown'})
     }).catch(()=>{});
   }
-  toast('🔴 BC '+bc+' marked Lost');
+  toast('🔴 BC '+bc+' marked Unknown');
   renderResolve(); renderAdminReview(); updateStockComposition();
 }
 
@@ -2501,19 +2501,19 @@ function markLost(bc, auditId, hasFoundIn){
 //   barcode,item_id,size_id,note,status,purpose  → note blank, status outward, purpose Unknown.
 function exportLostCSV(){
   const todays=getLostLog().filter(l=>(l.at||'').startsWith(todayStr()) && !l.recovered);
-  if(!todays.length){ toast('No pieces marked Lost today'); return; }
+  if(!todays.length){ toast('No pieces marked Unknown today'); return; }
   const missingIds=todays.filter(l=>!l.itemId||!l.sizeId);
-  if(missingIds.length && !confirm('⚠️ '+missingIds.length+' of '+todays.length+' Lost rows are missing Item ID / Size ID (stock CSV not loaded when marked).\n\nLoad today\'s stock CSV and re-mark for complete rows, or export now with blanks?\n\nExport now?')) return;
+  if(missingIds.length && !confirm('⚠️ '+missingIds.length+' of '+todays.length+' Unknown rows are missing Item ID / Size ID (stock CSV not loaded when marked).\n\nLoad today\'s stock CSV and re-mark for complete rows, or export now with blanks?\n\nExport now?')) return;
   const rows=[['barcode','item_id','size_id','note','status','purpose']];
   for(const l of todays) rows.push([l.barcode, l.itemId||'', l.sizeId||'', '', 'outward', 'Unknown']);
   const csv=rows.map(r=>r.join(',')).join('\n');
   const b=new Blob([csv],{type:'text/csv'}); const u=URL.createObjectURL(b);
-  const a=document.createElement('a'); a.href=u; a.download='jaey_lost_'+todayStr()+'.csv'; a.click(); URL.revokeObjectURL(u);
+  const a=document.createElement('a'); a.href=u; a.download='jaey_unknown_'+todayStr()+'.csv'; a.click(); URL.revokeObjectURL(u);
   // Mark exported (keeps them in the log for recovery-watch).
   const log=getLostLog(); const set=new Set(todays.map(l=>l.barcode));
   for(const l of log){ if(set.has(l.barcode)) l.exported=true; }
   saveLostLog(log);
-  toast('⬇️ Exported '+todays.length+' Lost piece'+(todays.length>1?'s':''));
+  toast('⬇️ Exported '+todays.length+' Unknown piece'+(todays.length>1?'s':''));
 }
 
 // After a fresh stock CSV loads, flag any previously-Lost barcode that is now inward again
@@ -2523,7 +2523,7 @@ function recoveryCheck(rows){
   const inward=new Set(rows.filter(r=>r.status==='inward').map(r=>String(r.barcode)));
   let n=0;
   for(const l of log){ if(!l.recovered && inward.has(l.barcode)){ l.recovered=true; l.recoveredAt=new Date().toISOString(); n++; } }
-  if(n){ saveLostLog(log); toast('♻️ '+n+' Lost piece'+(n>1?'s':'')+' recovered (now inward)'); }
+  if(n){ saveLostLog(log); toast('♻️ '+n+' written-off piece'+(n>1?'s':'')+' recovered (now inward)'); }
 }
 
 // Collapse the many per-piece follow-ups into a single "found N pcs" trail entry.
