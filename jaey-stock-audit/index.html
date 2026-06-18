@@ -2354,13 +2354,31 @@ function renderResolve(){
   }
   // worklist
   const q=(document.getElementById('resolve-search')?.value||'').trim().toLowerCase();
+  const missingBcSet=new Set(missing.map(m=>String(m.bc)));   // all open missing (before the search filter)
   if(q) missing=missing.filter(m=>String(m.bc).includes(q)||(m.product||'').toLowerCase().includes(q)||(m.color||'').toLowerCase().includes(q)||(m.sku||'').toLowerCase().includes(q));
   const sort=document.getElementById('resolve-sort')?.value||'age';
   if(sort==='style') missing.sort((a,b)=>(a.product+a.color).localeCompare(b.product+b.color));
   else if(sort==='found') missing.sort((a,b)=>(b.foundIn?1:0)-(a.foundIn?1:0));
   else missing.sort((a,b)=>new Date(a.at)-new Date(b.at)); // oldest first
-  let html='';
-  if(!missing.length) html='<div class="empty"><div class="ei">'+(q?'🔍':'✅')+'</div><div>'+(q?'No missing pieces match “'+q+'”.':'No unresolved missing pieces.')+'</div></div>';
+
+  // Searching a barcode that was already scanned in an audit (and is NOT open-missing) → green confirmation.
+  let auditedHtml='';
+  if(q){
+    const idx=buildScanIndex();
+    const hits=Object.keys(idx).filter(bc=>bc.includes(q)&&!missingBcSet.has(bc)).slice(0,25);
+    for(const bc of hits){
+      const last=(idx[bc]||[]).slice().sort((x,y)=>new Date(y.at)-new Date(x.at))[0];
+      if(!last) continue;
+      const mis=last.kind==='misplaced';
+      auditedHtml+=`<div style="border:1px solid #90b890;border-left:3px solid var(--sage);background:var(--sage-light);border-radius:8px;padding:10px;margin-bottom:8px">
+        <div style="font-weight:600;font-size:13px;color:#2f5d2f">✓ BC ${bc} — already audited</div>
+        <div style="font-size:12px;color:#3d6b3d;margin-top:2px">Scanned by <strong>${last.auditor}</strong> under <strong>${last.product} · ${last.color}</strong> · ${formatDateTime(last.at)}${mis?' <span style="color:#a06800">(scanned here, belongs to another style)</span>':''}</div>
+      </div>`;
+    }
+  }
+
+  let html=auditedHtml;
+  if(!missing.length&&!auditedHtml) html='<div class="empty"><div class="ei">'+(q?'🔍':'✅')+'</div><div>'+(q?'No missing pieces match “'+q+'”.':'No unresolved missing pieces.')+'</div></div>';
   for(const m of missing){
     const days=Math.floor((Date.now()-new Date(m.at))/86400000);
     const ageTxt=days<=0?'today':days+'d ago';
