@@ -592,11 +592,21 @@ select:focus,input:focus,textarea:focus{border-color:var(--gold);background:var(
 
   <div class="admin-nav">
     <div class="ant active" onclick="showAdminTab('review',this)">📥 Review</div>
+    <div class="ant" onclick="showAdminTab('live',this)">🟢 Live</div>
     <div class="ant" onclick="showAdminTab('resolve',this)">🔧 Resolve</div>
     <div class="ant" onclick="showAdminTab('plan',this)">📅 Plan</div>
     <div class="ant" onclick="showAdminTab('a-history',this)">🕒 History</div>
     <div class="ant" onclick="showAdminTab('users',this)">👥 Team</div>
     <div class="ant" onclick="showAdminTab('data',this)">📂 Data</div>
+  </div>
+
+  <!-- LIVE: who is scanning what, right now -->
+  <div id="apg-live" class="pg">
+    <div class="card" style="margin-bottom:11px">
+      <div class="ct" style="margin-bottom:4px">🟢 Live scanning</div>
+      <div style="font-size:12px;color:var(--steel)">See who's auditing what in real time. Each device appears while scanning and drops off ~40s after they stop.</div>
+    </div>
+    <div id="live-feed"></div>
   </div>
 
   <!-- RESOLVE: summary + missing-pieces worklist + corrections -->
@@ -1339,6 +1349,7 @@ function openScan(product,color){
   const displayCount=stockData.length>0?sysInward.length:
     (STYLES_DATA.find(s=>s.product===product&&s.color===color)?.stockCount||'?');
   document.getElementById('ss-meta').textContent=color+' · '+displayCount+' in system · '+name+(stockData.length===0?' (load CSV to scan)':'');
+  liveHeartbeat(null); // announce that this device started an audit
   document.getElementById('ss-status-pill').className='sp sp-pending';
   document.getElementById('ss-status-pill').textContent='';
 
@@ -1375,6 +1386,7 @@ function closeScanScreen(){
     }
   }
   document.getElementById('scan-screen').classList.remove('active');
+  liveStop();
   currentScan=null;
 }
 
@@ -1387,24 +1399,26 @@ function addBC(){
     input.value=''; return;
   }
   const found=stockData.find(r=>r.barcode==bc);
+  let res='match';
   if(!found){
     showFB('mm','❌ Unknown barcode','Not in system.','',null);
-    currentScan.scanned.push(bc+'__UNKNOWN');
+    currentScan.scanned.push(bc+'__UNKNOWN'); res='unknown';
   } else {
     const right=found.product===currentScan.product&&found.color===currentScan.color;
     if(!right){
       showFB('mm','⚠️ Wrong product!',`Expected: <strong>${currentScan.product}</strong><br>Found: <strong>${found.product} · ${found.color}</strong>`,found.size,found.status);
-      currentScan.scanned.push(bc+'__WRONG:'+found.product+'|||'+found.color);
+      currentScan.scanned.push(bc+'__WRONG:'+found.product+'|||'+found.color); res='wrong';
     } else if(found.status!=='inward'){
       showFB('warn','⚠️ System says OUTWARD',`<strong>${found.product} · ${found.color}</strong>`,found.size,found.status);
-      currentScan.scanned.push(bc);
+      currentScan.scanned.push(bc); res='outward';
     } else {
       showFB('ok','✓ Match',`<strong>${found.product} · ${found.color}</strong>`,found.size,found.status);
-      currentScan.scanned.push(bc);
+      currentScan.scanned.push(bc); res='match';
     }
   }
   input.value=''; input.focus();
   renderScanList();
+  liveHeartbeat({bc,type:res});
 }
 
 function addBulk(){
@@ -1483,6 +1497,7 @@ function sendForReview(){
   const report=genReport(currentScan);
   currentScan.report=report;
   currentScan.status='review';
+  liveStop(); // scanning finished — drop from the live board
   currentScan.savedAt=new Date().toISOString();
   currentScan.updatedAt=currentScan.savedAt;
 
@@ -1833,6 +1848,7 @@ function refreshRosterUI(){
 }
 
 function adminLogout(){
+  stopLivePolling();
   localStorage.removeItem('jaey_admin_name');
   localStorage.removeItem('jaey_session');
   document.getElementById('shell-admin').classList.remove('active');
@@ -1844,6 +1860,7 @@ function showAdminTab(name,tab){
   document.querySelectorAll('.ant').forEach(t=>t.classList.remove('active'));
   document.getElementById('apg-'+name).classList.add('active');
   if(tab) tab.classList.add('active');
+  if(name==='live') startLivePolling(); else stopLivePolling();
   if(name==='review'){ renderAdminReview(); refreshAuditsUI(); }
   if(name==='resolve'){ renderResolve(); refreshAuditsUI(); }
   if(name==='a-history'){ renderAdminHistory(); refreshAuditsUI(); }
@@ -2697,6 +2714,65 @@ async function showBarcodeJourney(bc){
   body.innerHTML=html;
 }
 function journeyBtn(bc){ return `<button class="btn bo" style="font-size:11px;padding:6px 10px" onclick="showBarcodeJourney('${String(bc).replace(/'/g,"")}')">📜 History</button>`; }
+
+// ── LIVE SCANNING (per-device heartbeat → admin live feed) ──
+function deviceId(){ let d=localStorage.getItem('jaey_device'); if(!d){ d='d'+Math.random().toString(36).slice(2,10); localStorage.setItem('jaey_device',d); } return d; }
+let _lastHB=0,_hbTimer=null,_hbResult=null;
+// Throttled (~2.5s) upsert of this device's current scanning state.
+function liveHeartbeat(result){
+  if(!sbCfg.url||!sbCfg.key||!navigator.onLine||!currentScan) return;
+  _hbResult=result; // always reflect the latest scan, even on a trailing send
+  const send=()=>{
+    _lastHB=Date.now(); _hbTimer=null;
+    const row={device_id:deviceId(),name:currentScan.auditor||'Unknown',product:currentScan.product,color:currentScan.color,
+      last_bc:_hbResult?String(_hbResult.bc):'',last_result:_hbResult?_hbResult.type:'',scan_count:currentScan.scanned.length,updated_at:new Date().toISOString()};
+    fetch(sbCfg.url+'/rest/v1/live_scans?on_conflict=device_id',{method:'POST',
+      headers:sbHeaders({'Content-Type':'application/json','Prefer':'resolution=merge-duplicates,return=minimal'}),
+      body:JSON.stringify([row])}).catch(()=>{});
+  };
+  const dt=Date.now()-_lastHB;
+  if(dt>=2500) send();
+  else if(!_hbTimer) _hbTimer=setTimeout(send,2500-dt);
+}
+// Remove this device from the live feed when it stops scanning.
+function liveStop(){
+  if(_hbTimer){ clearTimeout(_hbTimer); _hbTimer=null; }
+  if(!sbCfg.url||!sbCfg.key||!navigator.onLine) return;
+  fetch(sbCfg.url+'/rest/v1/live_scans?device_id=eq.'+deviceId(),{method:'DELETE',headers:sbHeaders()}).catch(()=>{});
+}
+
+let _liveTimer=null;
+function startLivePolling(){ stopLivePolling(); renderLiveFeed(); _liveTimer=setInterval(renderLiveFeed,3000); }
+function stopLivePolling(){ if(_liveTimer){ clearInterval(_liveTimer); _liveTimer=null; } }
+async function renderLiveFeed(){
+  const el=document.getElementById('live-feed'); if(!el) return;
+  if(!sbCfg.url||!sbCfg.key){ el.innerHTML='<div class="card" style="color:var(--steel);font-size:13px">Connect Supabase (Data tab) to see live scanning.</div>'; return; }
+  let rows=[];
+  try{ const res=await fetch(sbCfg.url+'/rest/v1/live_scans?select=*&order=updated_at.desc',{headers:sbHeaders()});
+    if(res.ok) rows=await res.json(); else if(res.status===404){ el.innerHTML='<div class="card" style="color:var(--steel);font-size:13px">⚠️ Create the <code>live_scans</code> table (see setup) to enable the live feed.</div>'; return; }
+  }catch(e){ return; }
+  const now=Date.now();
+  const active=rows.filter(r=>now-new Date(r.updated_at).getTime()<40000);
+  if(!active.length){ el.innerHTML='<div class="card" style="text-align:center;color:var(--steel);font-size:13px;padding:22px">😴 Nobody is scanning right now.<br><span style="font-size:11px">This board updates every 3 seconds.</span></div>'; return; }
+  const badge={match:['var(--sage)','✓ Match'],outward:['var(--rose)','System OUTWARD'],wrong:['#c47f17','⚠ Wrong product'],unknown:['var(--rose)','❌ Unknown']};
+  let html='<div style="font-size:12px;color:var(--steel);margin-bottom:8px">🟢 '+active.length+' scanning now · auto-refreshing</div>';
+  for(const r of active){
+    const ago=Math.max(0,Math.round((now-new Date(r.updated_at).getTime())/1000));
+    const b=badge[r.last_result]||['var(--steel)',''];
+    html+=`<div class="card" style="margin-bottom:9px;padding:12px 14px">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+        <div style="font-weight:700;font-size:14px">🧑 ${r.name||'Unknown'}</div>
+        <div style="font-size:11px;color:var(--steel)">${ago<=2?'live now':ago+'s ago'}</div>
+      </div>
+      <div style="font-size:13px;margin-top:3px">${r.product||''} · ${r.color||''}</div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:7px">
+        <div style="font-size:12px;color:var(--steel)">${r.last_bc?'Last: BC '+r.last_bc:'starting…'} ${r.last_result?`<span style="background:${b[0]};color:#fff;font-size:10px;font-weight:700;padding:2px 7px;border-radius:9px;margin-left:4px">${b[1]}</span>`:''}</div>
+        <div style="font-weight:700;font-size:15px">${r.scan_count||0}<span style="font-size:11px;color:var(--steel);font-weight:500"> scanned</span></div>
+      </div>
+    </div>`;
+  }
+  el.innerHTML=html;
+}
 
 
 // Show whether the loaded barcode CSV has inward + outward rows (or only one), plus last upload date.
