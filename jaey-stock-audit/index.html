@@ -592,10 +592,33 @@ select:focus,input:focus,textarea:focus{border-color:var(--gold);background:var(
 
   <div class="admin-nav">
     <div class="ant active" onclick="showAdminTab('review',this)">📥 Review</div>
+    <div class="ant" onclick="showAdminTab('resolve',this)">🔧 Resolve</div>
     <div class="ant" onclick="showAdminTab('plan',this)">📅 Plan</div>
     <div class="ant" onclick="showAdminTab('a-history',this)">🕒 History</div>
     <div class="ant" onclick="showAdminTab('users',this)">👥 Team</div>
     <div class="ant" onclick="showAdminTab('data',this)">📂 Data</div>
+  </div>
+
+  <!-- RESOLVE: summary + missing-pieces worklist + corrections -->
+  <div id="apg-resolve" class="pg">
+    <div id="resolve-summary"></div>
+    <div class="card" style="margin-top:11px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <div class="ct" style="margin-bottom:0">🔍 Missing pieces</div>
+        <select id="resolve-sort" onchange="renderResolve()" style="width:auto;font-size:12px;padding:5px 8px">
+          <option value="age">Oldest first</option>
+          <option value="style">By style</option>
+          <option value="found">Found-elsewhere first</option>
+        </select>
+      </div>
+      <div style="font-size:12px;color:var(--steel);margin-bottom:8px">Every unresolved piece the system expects but nobody scanned. "Last scanned in" = it was scanned inside another style's audit (misplaced).</div>
+      <div id="resolve-list"></div>
+    </div>
+    <div class="card" id="resolve-extras-card" style="margin-top:11px;display:none">
+      <div class="ct">🟡 System mismatches</div>
+      <div style="font-size:12px;color:var(--steel);margin-bottom:8px">Pieces physically present but the system marked OUTWARD. Set them back to INWARD so counts are correct.</div>
+      <div id="resolve-extras"></div>
+    </div>
   </div>
 
   <!-- REVIEW -->
@@ -1461,6 +1484,7 @@ function sendForReview(){
   currentScan.report=report;
   currentScan.status='review';
   currentScan.savedAt=new Date().toISOString();
+  currentScan.updatedAt=currentScan.savedAt;
 
   // Record completedAt on the plan item
   const _planItems=plans[todayStr()]||[];
@@ -1820,6 +1844,7 @@ function showAdminTab(name,tab){
   document.getElementById('apg-'+name).classList.add('active');
   if(tab) tab.classList.add('active');
   if(name==='review'){ renderAdminReview(); refreshAuditsUI(); }
+  if(name==='resolve'){ renderResolve(); refreshAuditsUI(); }
   if(name==='a-history'){ renderAdminHistory(); refreshAuditsUI(); }
   if(name==='plan'){ populatePlanDropdowns(); renderPlanList(); refreshRosterUI(); refreshPlansUI(); }
   if(name==='users'){ renderUserMgmt(); refreshRosterUI(); }
@@ -1966,6 +1991,7 @@ function completeAudit(id){
   audit.adminNote=noteEl?.value.trim()||audit.adminNote||'';
   audit.status='complete';
   audit.completedAt=new Date().toISOString();
+  audit.updatedAt=audit.completedAt;
   audit.completedBy=localStorage.getItem('jaey_admin_name')||localStorage.getItem('jaey_user_name')||'Admin';
   // Add to trail
   if(!audit.trail) audit.trail=[];
@@ -1980,12 +2006,161 @@ function completeAudit(id){
 function reopenAudit(id){
   const audit=audits.find(a=>a.id===id); if(!audit) return;
   audit.status='review'; delete audit.completedAt; delete audit.completedBy;
+  audit.updatedAt=new Date().toISOString();
   if(!audit.trail) audit.trail=[];
-  audit.trail.push({at:new Date().toISOString(),by:localStorage.getItem('jaey_admin_name')||localStorage.getItem('jaey_user_name')||'Admin',action:'reopened'});
+  audit.trail.push({at:audit.updatedAt,by:localStorage.getItem('jaey_admin_name')||localStorage.getItem('jaey_user_name')||'Admin',action:'reopened'});
   try{localStorage.setItem('jaey_audits',JSON.stringify(audits));}catch(e){console.warn('Storage full, audit in memory only');}
   saveAuditRemote(audit);
   toast('Audit reopened');
   renderAdminReview();
+}
+
+// ══════════════════
+// RESOLVE: summary + missing worklist + cross-audit match + corrections
+// ══════════════════
+// Index every physically-scanned barcode across all audits → where it was last seen.
+function buildScanIndex(){
+  const idx={};
+  for(const a of audits){
+    for(const e of (a.scanned||[])){
+      const bc=String(e).split('__')[0];
+      const kind=e.includes('__WRONG:')?'misplaced':(String(e).endsWith('__UNKNOWN')?'unknown':'scanned');
+      (idx[bc]=idx[bc]||[]).push({auditId:a.id,product:a.product,color:a.color,auditor:a.auditor,at:a.savedAt||a.date,kind});
+    }
+  }
+  return idx;
+}
+
+// Collect every unresolved missing piece (ghost still open, not yet corrected in the system), deduped by barcode.
+function collectMissing(){
+  const idx=buildScanIndex();
+  const seen={};
+  for(const a of audits){
+    const updated=a.systemUpdated||[];
+    for(const bc of (a.report?.ghosts||[])){
+      if(updated.includes(bc)) continue;
+      const at=a.savedAt||a.date;
+      if(seen[bc] && new Date(seen[bc].at)>=new Date(at)) continue; // keep most recent flag
+      const row=stockData.find(r=>r.barcode==bc);
+      // Last physical scan of this bc in any OTHER audit = its likely current location.
+      const scans=(idx[bc]||[]).filter(s=>s.auditId!==a.id).sort((x,y)=>new Date(y.at)-new Date(x.at));
+      seen[bc]={bc, auditId:a.id, product:a.product, color:a.color, auditor:a.auditor, at,
+        size:row?.size||'', sku:row?.sku||'', foundIn:scans[0]||null};
+    }
+  }
+  return Object.values(seen);
+}
+
+function renderResolve(){
+  const sEl=document.getElementById('resolve-summary'); const lEl=document.getElementById('resolve-list');
+  if(!lEl) return;
+  const today=todayStr();
+  const todays=audits.filter(a=>(a.savedAt||a.date||'').startsWith(today));
+  const mmOf=a=>{const r=a.report||{};return (r.ghosts?.length||0)+(r.extras?.length||0)+(r.wrongProduct?.length||0);};
+  const clean=todays.filter(a=>mmOf(a)===0).length;
+  const issues=todays.length-clean;
+  const missing=collectMissing();
+  const extrasTotal=audits.reduce((n,a)=>n+(a.status!=='complete'?(a.report?.extras?.length||0):0),0);
+  // per-auditor (today)
+  const byAuditor={};
+  for(const a of todays){const k=a.auditor||'—';(byAuditor[k]=byAuditor[k]||{audits:0,found:0});byAuditor[k].audits++;byAuditor[k].found+=(a.followUps||[]).reduce((n,f)=>n+(f.foundBarcodes?.length||0),0);}
+  const tile=(n,l,c)=>`<div style="flex:1;min-width:70px;text-align:center;background:var(--white);border:1px solid var(--border);border-radius:10px;padding:9px 6px"><div style="font-family:'DM Serif Display',serif;font-size:24px;color:${c}">${n}</div><div style="font-size:10px;color:var(--steel);letter-spacing:.03em">${l}</div></div>`;
+  if(sEl){
+    sEl.innerHTML=`<div class="card"><div class="ct">📊 Today</div>
+      <div style="display:flex;gap:7px;flex-wrap:wrap">
+        ${tile(todays.length,'Audited','var(--ink)')}
+        ${tile(clean,'Clean','var(--sage)')}
+        ${tile(issues,'With issues','var(--gold)')}
+        ${tile(missing.length,'Missing open','var(--rose)')}
+      </div>
+      ${Object.keys(byAuditor).length?`<div style="margin-top:10px;border-top:1px solid var(--border);padding-top:8px">
+        ${Object.entries(byAuditor).map(([k,v])=>`<div style="display:flex;justify-content:space-between;font-size:12px;padding:3px 0"><span><strong>${k}</strong></span><span style="color:var(--steel)">${v.audits} audit${v.audits>1?'s':''}${v.found?' · recovered '+v.found:''}</span></div>`).join('')}
+      </div>`:''}
+    </div>`;
+  }
+  // worklist
+  const sort=document.getElementById('resolve-sort')?.value||'age';
+  if(sort==='style') missing.sort((a,b)=>(a.product+a.color).localeCompare(b.product+b.color));
+  else if(sort==='found') missing.sort((a,b)=>(b.foundIn?1:0)-(a.foundIn?1:0));
+  else missing.sort((a,b)=>new Date(a.at)-new Date(b.at)); // oldest first
+  let html='';
+  if(!missing.length) html='<div class="empty"><div class="ei">✅</div><div>No unresolved missing pieces.</div></div>';
+  for(const m of missing){
+    const days=Math.floor((Date.now()-new Date(m.at))/86400000);
+    const ageTxt=days<=0?'today':days+'d ago';
+    html+=`<div style="border:1px solid var(--border);border-left:3px solid var(--rose);border-radius:8px;padding:10px;margin-bottom:8px">
+      <div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start">
+        <div style="flex:1;min-width:0">
+          <div style="font-weight:600;font-size:13px">BC ${m.bc}${m.size?' · Size '+m.size:''}</div>
+          <div style="font-size:12px;color:var(--steel)">${m.product} · ${m.color}${m.sku?' · '+m.sku:''}</div>
+          <div style="font-size:11px;color:var(--steel);margin-top:2px">Flagged by ${m.auditor} · ${ageTxt}</div>
+          ${m.foundIn?`<div style="margin-top:5px;font-size:11px;color:var(--sky);background:var(--sky-light);padding:4px 8px;border-radius:7px">📍 Last scanned in <strong>${m.foundIn.product} · ${m.foundIn.color}</strong> by ${m.foundIn.auditor} · ${formatDateTime(m.foundIn.at)}${m.foundIn.kind==='misplaced'?' (misplaced)':''}</div>`:''}
+        </div>
+      </div>
+      <div style="display:flex;gap:6px;margin-top:8px">
+        <button class="btn bs" style="font-size:11px;padding:6px 10px" onclick="resolveFound('${m.bc}',${m.auditId})">✓ Found</button>
+        <button class="btn bo" style="font-size:11px;padding:6px 10px;color:var(--rose);border-color:var(--rose)" onclick="applyCorrection('${m.bc}',${m.auditId},'outward')">Mark OUTWARD in system</button>
+      </div>
+    </div>`;
+  }
+  lEl.innerHTML=html;
+
+  // Extras: physically present but system says outward → offer "Mark INWARD".
+  const exCard=document.getElementById('resolve-extras-card'); const exEl=document.getElementById('resolve-extras');
+  const exSeen={};
+  for(const a of audits){
+    const updated=a.systemUpdated||[];
+    for(const bc of (a.report?.extras||[])){
+      if(updated.includes(bc)||exSeen[bc]) continue;
+      const row=stockData.find(r=>r.barcode==bc);
+      exSeen[bc]={bc,product:a.product,color:a.color,auditor:a.auditor,auditId:a.id,size:row?.size||''};
+    }
+  }
+  const exList=Object.values(exSeen);
+  if(exCard) exCard.style.display=exList.length?'block':'none';
+  if(exEl) exEl.innerHTML=exList.map(m=>`<div style="border:1px solid var(--border);border-left:3px solid var(--gold);border-radius:8px;padding:10px;margin-bottom:8px">
+      <div style="font-weight:600;font-size:13px">BC ${m.bc}${m.size?' · Size '+m.size:''}</div>
+      <div style="font-size:12px;color:var(--steel)">${m.product} · ${m.color} · flagged by ${m.auditor}</div>
+      <button class="btn bs" style="font-size:11px;padding:6px 10px;margin-top:8px" onclick="applyCorrection('${m.bc}',${m.auditId},'inward')">Mark INWARD in system</button>
+    </div>`).join('');
+}
+
+// Mark a missing piece as physically found (resolves the ghost on its audit).
+function resolveFound(bc,auditId){
+  const audit=audits.find(a=>a.id===auditId); if(!audit||!audit.report) return;
+  if(!audit.followUps) audit.followUps=[];
+  audit.followUps.push({at:new Date().toISOString(),foundBarcodes:[bc],note:'Found via Resolve',by:localStorage.getItem('jaey_admin_name')||'Admin'});
+  audit.report.ghosts=(audit.report.ghosts||[]).filter(b=>b!==bc);
+  audit.report.matched=(audit.report.matched||0)+1;
+  if(audit.status!=='complete') audit.status='updated';
+  audit.updatedAt=new Date().toISOString();
+  try{localStorage.setItem('jaey_audits',JSON.stringify(audits));}catch(e){}
+  saveAuditRemote(audit);
+  toast('✓ BC '+bc+' marked found');
+  renderResolve(); renderAdminReview();
+}
+
+// Close the loop: update the barcode's status in the live stock_data (cloud + local) so future audits don't re-flag it.
+async function applyCorrection(bc, auditId, newStatus){
+  if(!navigator.onLine){ toast('Connect to the internet to update the system'); return; }
+  const verb=newStatus==='outward'?'OUTWARD (written off / left stock)':'INWARD (back in stock)';
+  if(!confirm('Update the SYSTEM: mark BC '+bc+' as '+verb+'?\n\nThis changes the master stock data so future audits won\'t re-flag it.')) return;
+  try{
+    const res=await fetch(sbCfg.url+'/rest/v1/stock_data?barcode=eq.'+encodeURIComponent(bc),{
+      method:'PATCH',
+      headers:sbHeaders({'Content-Type':'application/json','Prefer':'return=minimal'}),
+      body:JSON.stringify({status:newStatus})
+    });
+    if(!res.ok) throw new Error('HTTP '+res.status);
+  }catch(e){ toast('❌ Could not update system: '+e.message); return; }
+  // Update local cache too.
+  for(const r of stockData){ if(r.barcode==bc) r.status=newStatus; }
+  buildMap();
+  try{localStorage.setItem('jaey_stock',JSON.stringify(stockData));}catch(e){}
+  const audit=audits.find(a=>a.id===auditId);
+  if(audit){ (audit.systemUpdated=audit.systemUpdated||[]).push(bc); audit.updatedAt=new Date().toISOString(); try{localStorage.setItem('jaey_audits',JSON.stringify(audits));}catch(e){} saveAuditRemote(audit); }
+  toast('✓ System updated — BC '+bc+' set '+newStatus);
+  renderResolve(); renderAdminReview(); updateStockComposition();
 }
 
 function showFullDetail(id){
@@ -2669,10 +2844,12 @@ async function fetchAuditsFromSupabase(){
       all=all.concat(rows);
       from+=page; if(rows.length<page) break;
     }
-    // Reconstruct audit objects from raw_data. Keep local-only audits; cloud is source of truth otherwise.
+    // Reconstruct audit objects from raw_data. On conflict keep the most-recently-modified copy
+    // (guards against a stale cloud copy reverting a local complete / resolve / correction).
+    const tms=a=>new Date(a.updatedAt||a.lastUpdated||a.completedAt||a.savedAt||a.date||0).getTime();
     const byId={};
     for(const a of audits) if(a&&a.id!=null) byId[a.id]=a;
-    for(const r of all){ try{ const o=JSON.parse(r.raw_data); if(o&&o.id!=null) byId[o.id]=o; }catch(e){} }
+    for(const r of all){ try{ const o=JSON.parse(r.raw_data); if(o&&o.id!=null){ const ex=byId[o.id]; if(!ex||tms(o)>=tms(ex)) byId[o.id]=o; } }catch(e){} }
     audits=Object.values(byId).sort((a,b)=>new Date(b.date||0)-new Date(a.date||0));
     try{localStorage.setItem('jaey_audits',JSON.stringify(audits));}catch(e){}
     return audits;
@@ -2685,6 +2862,7 @@ function refreshAuditsUI(){
     if(typeof renderAdminReview==='function') renderAdminReview();
     if(typeof renderAdminHistory==='function') renderAdminHistory();
     if(typeof renderUserHistory==='function') renderUserHistory();
+    if(typeof renderResolve==='function') renderResolve();
   }).catch(()=>{});
 }
 
