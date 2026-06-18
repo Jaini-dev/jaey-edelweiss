@@ -2510,8 +2510,9 @@ function handleScanCSV(e){
 
 function recalcTiers(text, fname){
   try{
-    const lines=text.trim().split('\n');
-    const headers=lines[0].split(',').map(h=>h.trim().replace(/"/g,''));
+    const recs=parseCSVRecords(text);
+    if(!recs.length) throw new Error('Empty file');
+    const headers=recs[0].map(h=>h.trim().replace(/^﻿/,''));
     const idx={};headers.forEach((h,i)=>idx[h]=i);
     const req=['Barcode','Product Name','Color','Status','Purpose','Scan Time'];
     for(const r of req) if(idx[r]===undefined) throw new Error('Missing column: '+r);
@@ -2523,9 +2524,8 @@ function recalcTiers(text, fname){
     let minDate=Infinity, maxDate=-Infinity;
     const recentCutoff=Date.now()-7*86400000;
 
-    for(let i=1;i<lines.length;i++){
-      const line=lines[i].trim(); if(!line) continue;
-      const cols=parseCSVLine(line);
+    for(let i=1;i<recs.length;i++){
+      const cols=recs[i]; if(cols.length===1&&cols[0].trim()==='') continue;
       const product=cols[idx['Product Name']]?.trim();
       const color=cols[idx['Color']]?.trim();
       const status=cols[idx['Status']]?.trim().toLowerCase();
@@ -2644,18 +2644,40 @@ function checkMonthlyAlert(daysSince, meta){
   if(banner) banner.style.display='block';
 }
 function loadPaste(){const t=document.getElementById('csv-paste').value.trim();if(!t)return toast('Nothing to load');parseCSV(t,'pasted');}
+// Robust CSV tokenizer (RFC-4180): handles quoted fields, commas & newlines inside
+// quotes, and escaped "" — so free-text columns (Note/Tags) can't shift other columns.
+function parseCSVRecords(text){
+  text=String(text).replace(/\r\n?/g,'\n');
+  const recs=[]; let row=[], f='', q=false;
+  for(let i=0;i<text.length;i++){
+    const ch=text[i];
+    if(q){
+      if(ch==='"'){ if(text[i+1]==='"'){ f+='"'; i++; } else q=false; }
+      else f+=ch;
+    } else {
+      if(ch==='"'&&f===''){ q=true; }
+      else if(ch===','){ row.push(f); f=''; }
+      else if(ch==='\n'){ row.push(f); recs.push(row); row=[]; f=''; }
+      else f+=ch;
+    }
+  }
+  if(f!==''||row.length){ row.push(f); recs.push(row); }
+  return recs;
+}
+
 function parseCSV(text,fname){
   try{
-    const lines=text.trim().split('\n');
-    const headers=lines[0].split(',').map(h=>h.trim().replace(/"/g,''));
+    const recs=parseCSVRecords(text);
+    if(!recs.length) throw new Error('Empty file');
+    const headers=recs[0].map(h=>h.trim().replace(/^﻿/,''));
     const idx={};headers.forEach((h,i)=>idx[h]=i);
     const req=['Barcode','Product Name','Color','Size','Status'];
     for(const r of req)if(idx[r]===undefined)throw new Error('Missing column: '+r);
     const rows=[];
-    for(let i=1;i<lines.length;i++){
-      const line=lines[i].trim();if(!line)continue;
-      const cols=parseCSVLine(line);
-      const row={barcode:String(parseInt(cols[idx['Barcode']]?.trim()||'0',10)),product:cols[idx['Product Name']]?.trim(),color:cols[idx['Color']]?.trim(),size:cols[idx['Size']]?.trim(),status:cols[idx['Status']]?.trim().toLowerCase(),sku:cols[idx['Item SKU']]?.trim()||''};
+    for(let i=1;i<recs.length;i++){
+      const cols=recs[i];
+      if(cols.length===1&&cols[0].trim()==='')continue; // skip blank lines
+      const row={barcode:String(parseInt(cols[idx['Barcode']]?.trim()||'0',10)),product:cols[idx['Product Name']]?.trim(),color:cols[idx['Color']]?.trim(),size:cols[idx['Size']]?.trim(),status:(cols[idx['Status']]?.trim()||'').toLowerCase(),sku:cols[idx['Item SKU']]?.trim()||''};
       if(row.barcode&&row.product)rows.push(row);
     }
     if(!rows.length)throw new Error('No valid rows found');
