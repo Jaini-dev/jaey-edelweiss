@@ -652,7 +652,15 @@ select:focus,input:focus,textarea:focus{border-color:var(--gold);background:var(
   <div id="apg-a-history" class="pg">
     <div class="card">
       <div class="ct">🕒 Full Audit History</div>
-      <input type="text" id="a-hist-search" placeholder="Search product, color, person..." oninput="renderAdminHistory()" style="font-size:13px;padding:8px 11px">
+      <input type="text" id="a-hist-search" placeholder="Search product, color, person..." oninput="renderAdminHistory()" style="font-size:13px;padding:8px 11px;margin-bottom:8px">
+      <div style="display:flex;gap:7px">
+        <select id="a-hist-person" onchange="renderAdminHistory()" style="flex:1;font-size:13px;padding:8px 11px"><option value="">All people</option></select>
+        <input type="date" id="a-hist-date" onchange="renderAdminHistory()" style="flex:1;font-size:13px;padding:8px 11px">
+      </div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;gap:8px">
+        <div id="a-hist-summary" style="font-size:12px;color:var(--steel)"></div>
+        <button class="btn bo" onclick="clearHistFilters()" style="font-size:11px;padding:5px 10px;flex-shrink:0">Clear</button>
+      </div>
     </div>
     <div id="a-hist-list"></div>
     <button class="btn bo bb" id="a-exp-btn" onclick="exportHistory()" style="display:none">⬇️ Export CSV</button>
@@ -1996,9 +2004,37 @@ function showFullDetail(id){
 function renderAdminHistory(){
   const el=document.getElementById('a-hist-list'); if(!el) return;
   const q=(document.getElementById('a-hist-search')?.value||'').toLowerCase();
+  const personSel=document.getElementById('a-hist-person');
+  const dateSel=document.getElementById('a-hist-date');
+  const person=personSel?.value||'';
+  const dateF=dateSel?.value||''; // YYYY-MM-DD
   document.getElementById('a-exp-btn').style.display=audits.length?'block':'none';
-  const filtered=q?audits.filter(a=>a.product?.toLowerCase().includes(q)||a.color?.toLowerCase().includes(q)||a.auditor?.toLowerCase().includes(q)):audits;
-  if(!filtered.length){el.innerHTML='<div class="empty"><div class="ei">📋</div><div>No history yet.</div></div>';return;}
+
+  // Refresh the person dropdown from everyone who has audits (keep current selection).
+  if(personSel){
+    const people=[...new Set(audits.map(a=>a.auditor).filter(Boolean))].sort((a,b)=>a.localeCompare(b));
+    personSel.innerHTML='<option value="">All people</option>'+people.map(p=>`<option value="${p.replace(/"/g,'&quot;')}"${p===person?' selected':''}>${p}</option>`).join('');
+  }
+
+  const filtered=audits.filter(a=>{
+    if(q && !(a.product?.toLowerCase().includes(q)||a.color?.toLowerCase().includes(q)||a.auditor?.toLowerCase().includes(q))) return false;
+    if(person && a.auditor!==person) return false;
+    if(dateF && !((a.savedAt||a.date||'').startsWith(dateF))) return false;
+    return true;
+  });
+
+  // Summary line: count + who/when context.
+  const sumEl=document.getElementById('a-hist-summary');
+  if(sumEl){
+    const ppl=new Set(filtered.map(a=>a.auditor).filter(Boolean)).size;
+    let s=filtered.length+' audit'+(filtered.length===1?'':'s');
+    if(!person && ppl) s+=' · '+ppl+' '+(ppl===1?'person':'people');
+    if(person) s+=' by '+person;
+    if(dateF) s+=' on '+formatDate(dateF);
+    sumEl.textContent=s;
+  }
+
+  if(!filtered.length){el.innerHTML='<div class="empty"><div class="ei">📋</div><div>'+(audits.length?'No audits match these filters.':'No history yet.')+'</div></div>';return;}
   let html='';
   for(const a of filtered){
     const ds=formatDateTime(a.savedAt||a.date);
@@ -2031,6 +2067,13 @@ function renderAdminHistory(){
     </div>`;
   }
   el.innerHTML=html;
+}
+
+function clearHistFilters(){
+  const s=document.getElementById('a-hist-search'); if(s) s.value='';
+  const p=document.getElementById('a-hist-person'); if(p) p.value='';
+  const d=document.getElementById('a-hist-date'); if(d) d.value='';
+  renderAdminHistory();
 }
 
 // ══════════════════
