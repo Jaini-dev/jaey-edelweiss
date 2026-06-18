@@ -157,6 +157,14 @@ select:focus,input:focus,textarea:focus{border-color:var(--gold);background:var(
 
 /* ── ADMIN: REVIEW CARDS ── */
 .review-card{background:var(--white);border:1.5px solid var(--border);border-radius:var(--r);margin-bottom:12px;overflow:hidden;box-shadow:var(--shadow)}
+details.review-card>summary{list-style:none}
+details.review-card>summary::-webkit-details-marker{display:none}
+.rc-summary{display:flex;align-items:center;gap:10px;padding:11px 13px;cursor:pointer;user-select:none}
+.rc-summary:hover{background:var(--cream)}
+details.review-card[open]>.rc-summary{border-bottom:1px solid var(--border)}
+.rc-sum-img{width:42px;height:42px;border-radius:7px;object-fit:cover;flex-shrink:0}
+.rc-sum-ph{width:42px;height:42px;border-radius:7px;background:var(--cream);display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:20px}
+.rc-body{padding:11px 13px}
 .rc-top{padding:12px 12px 0}
 .rc-header{display:flex;align-items:flex-start;gap:10px}
 .rc-img{width:48px;height:56px;object-fit:cover;border-radius:6px;flex-shrink:0}
@@ -522,9 +530,11 @@ select:focus,input:focus,textarea:focus{border-color:var(--gold);background:var(
       <button class="btn bp" style="padding:11px 14px" onclick="addBC()">Add</button>
     </div>
     <div id="bc-fb" class="scan-fb"></div>
-    <div class="sep">or paste multiple</div>
-    <textarea id="bc-bulk" style="min-height:65px;font-family:monospace;font-size:13px;resize:vertical;margin-bottom:7px" placeholder="One barcode per line..."></textarea>
-    <button class="btn bo bb" onclick="addBulk()" style="margin-bottom:14px">Add All</button>
+    <div id="scan-bulk-wrap" style="display:none">
+      <div class="sep">or paste multiple</div>
+      <textarea id="bc-bulk" style="min-height:65px;font-family:monospace;font-size:13px;resize:vertical;margin-bottom:7px" placeholder="One barcode per line..."></textarea>
+      <button class="btn bo bb" onclick="addBulk()" style="margin-bottom:14px">Add All</button>
+    </div>
 
     <div class="sc-count-row">
       <span>Scanned: <strong id="sc-cnt">0</strong></span>
@@ -535,29 +545,25 @@ select:focus,input:focus,textarea:focus{border-color:var(--gold);background:var(
     </div>
   </div>
 
-  <!-- REPORT MODE (after Send for Review) -->
+  <!-- REPORT / UPDATE MODE (after Send for Review, or admin update) -->
   <div id="ss-report-mode" style="display:none" class="ss-body">
-    <div style="padding:10px 0 4px;font-size:13px;color:var(--steel)">
-      Sent for review. Mismatches to investigate:
-    </div>
-    <div id="ss-report-content"></div>
-
-    <!-- UPDATE MODE: scan found pieces -->
-    <div id="ss-update-wrap" style="display:none;margin-top:10px">
-      <div style="font-weight:600;font-size:13px;margin-bottom:8px;color:var(--rose)">📦 Scan pieces you found:</div>
+    <!-- INPUT AT TOP — add pieces you found, same as normal scanning -->
+    <div id="ss-update-wrap">
       <div class="bc-wrap">
-        <input type="text" id="found-in" placeholder="Found barcode..." inputmode="numeric" autocomplete="off"
+        <input type="text" id="found-in" placeholder="Barcode you found..." inputmode="numeric" autocomplete="off"
                onkeydown="if(event.key==='Enter')addFoundBC()">
         <button class="btn bp" style="padding:11px 14px" onclick="addFoundBC()">Add</button>
       </div>
       <div id="found-fb" style="font-size:13px;margin-bottom:6px;min-height:18px"></div>
-      <details style="margin-bottom:8px">
-        <summary style="font-size:12px;color:var(--steel);cursor:pointer">📋 Paste many barcodes at once</summary>
-        <textarea id="found-bulk" rows="4" placeholder="One barcode per line" style="width:100%;font-size:13px;padding:9px 11px;margin-top:6px"></textarea>
+      <div id="found-bulk-wrap" style="display:none;margin-bottom:8px">
+        <textarea id="found-bulk" rows="3" placeholder="Paste many barcodes — one per line (admin)" style="width:100%;font-size:13px;padding:9px 11px"></textarea>
         <button class="btn bo" style="font-size:12px;padding:7px 12px" onclick="bulkAddFound()">Add all</button>
-      </details>
-      <div id="found-list"></div>
+      </div>
     </div>
+    <!-- MISSING / mismatches -->
+    <div id="ss-report-content"></div>
+    <!-- SCANNED THIS RUN -->
+    <div id="found-list" style="margin-top:10px"></div>
   </div>
 
   <div class="ss-footer">
@@ -566,15 +572,8 @@ select:focus,input:focus,textarea:focus{border-color:var(--gold);background:var(
       <button class="btn bg bb bl" onclick="sendForReview()">📤 Send for Review</button>
     </div>
     <div id="footer-review" style="display:none">
-      <div style="font-size:12px;color:var(--steel);margin-bottom:8px;text-align:center">
-        Go look for the missing pieces and come back to update
-      </div>
-      <button class="btn bo bb" onclick="toggleUpdateMode()" id="update-toggle-btn">🔍 I Found Some Pieces</button>
-      <div id="update-save-wrap" style="display:none;margin-top:8px">
-        <div class="fg"><label>Note (optional)</label>
-          <input type="text" id="update-note" placeholder="e.g. Found in packing area" style="font-size:13px;padding:9px 11px">
-        </div>
-        <button class="btn bs bb" onclick="saveUpdate()">Save Update</button>
+      <div id="update-save-wrap" style="display:none">
+        <button class="btn bs bb" onclick="saveUpdate()">✅ Save found pieces</button>
       </div>
     </div>
   </div>
@@ -645,11 +644,11 @@ select:focus,input:focus,textarea:focus{border-color:var(--gold);background:var(
 
   <!-- REVIEW -->
   <div id="apg-review" class="pg active">
+    <input type="text" id="review-search" placeholder="🔍 Search style or colour…" autocomplete="off" oninput="renderAdminReview()" style="width:100%;font-size:13px;padding:8px 11px;margin-bottom:9px">
     <div style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap">
-      <button class="btn bo" id="rf-pending" onclick="setReviewFilter('review')" style="font-size:11px;padding:5px 10px;border-color:var(--gold)">⏳ Needs Review</button>
-      <button class="btn bo" id="rf-updated" onclick="setReviewFilter('updated')" style="font-size:11px;padding:5px 10px">🔄 Updated</button>
-      <button class="btn bo" id="rf-all" onclick="setReviewFilter('all')" style="font-size:11px;padding:5px 10px">All open</button>
-      <button class="btn bo" id="rf-done" onclick="setReviewFilter('complete')" style="font-size:11px;padding:5px 10px">✅ Completed</button>
+      <button class="btn bo" id="rf-review" onclick="setReviewFilter('review')" style="font-size:11px;padding:5px 10px;border-color:var(--gold)">⏳ Needs Review</button>
+      <button class="btn bo" id="rf-pending" onclick="setReviewFilter('pending')" style="font-size:11px;padding:5px 10px">📋 Pending</button>
+      <button class="btn bo" id="rf-complete" onclick="setReviewFilter('complete')" style="font-size:11px;padding:5px 10px">✅ Completed</button>
     </div>
     <div id="review-list">
       <div class="empty"><div class="ei">✅</div><div>Nothing to review.</div></div>
@@ -672,6 +671,7 @@ select:focus,input:focus,textarea:focus{border-color:var(--gold);background:var(
         <button class="btn bo" id="pf-a" onclick="setPlanFilter('A')" style="font-size:11px;padding:5px 9px">🔴 A-tier</button>
         <button class="btn bo" id="pf-b" onclick="setPlanFilter('B')" style="font-size:11px;padding:5px 9px">🟡 B-tier</button>
         <button class="btn bo" id="pf-over" onclick="setPlanFilter('overdue')" style="font-size:11px;padding:5px 9px">⚠️ Overdue</button>
+        <button class="btn bo" id="pf-oos" onclick="setPlanFilter('oos')" style="font-size:11px;padding:5px 9px">📦 OOS / hidden</button>
       </div>
 
       <div id="suggest-list" style="max-height:300px;overflow-y:auto;margin-bottom:8px"></div>
@@ -1439,6 +1439,7 @@ function _renderScanScreen(){
 
   document.getElementById('bc-in').value='';
   document.getElementById('bc-fb').className='scan-fb';
+  document.getElementById('scan-bulk-wrap').style.display=isAdmin()?'block':'none'; // bulk paste is admin-only
   renderScanList();
 
   // Show warning if stock CSV not loaded
@@ -1591,12 +1592,19 @@ function sendForReview(){
   document.getElementById('ss-status-pill').className='sp sp-review';
   document.getElementById('ss-status-pill').textContent='📤 Sent';
 
-  renderReportContent(report, currentScan.id);
   activeScanId=currentScan.id;
+  foundBuffer=[];
+  document.getElementById('ss-update-wrap').style.display='block';        // input ready at top
+  document.getElementById('found-bulk-wrap').style.display=isAdmin()?'block':'none';
+  document.getElementById('update-save-wrap').style.display='none';
+  document.getElementById('found-fb').innerHTML='';
+  renderReportContent(report, currentScan.id);
+  renderFoundList();
 
   renderUserTasks();
   renderAdminIfActive();
   toast('✅ Sent for review');
+  setTimeout(()=>document.getElementById('found-in').focus(),300);
 }
 
 function genReport(scan){
@@ -1637,7 +1645,7 @@ function renderReportContent(report,auditId){
       <div style="font-size:16px">🎉 Perfect match!</div>
       <div style="font-size:13px;color:var(--sage);margin-top:3px">All barcodes matched. Admin will review and complete.</div>
     </div>`;
-    document.getElementById('update-toggle-btn').style.display='none';
+    const sw=document.getElementById('update-save-wrap'); if(sw&&!foundBuffer.length) sw.style.display='none';
     return;
   }
 
@@ -1706,7 +1714,7 @@ function renderReportContent(report,auditId){
         </div>
       </div>`;
     }
-    html+=`<div style="font-size:11px;color:var(--steel);padding:6px 6px 0">Found one? Tap <strong>“I Found Some Pieces”</strong> below and type the barcode.</div>`;
+    html+=`<div style="font-size:11px;color:var(--steel);padding:6px 6px 0">Found one? Type its barcode in the box at the top.</div>`;
     html+=`</div>`;
   }
 
@@ -1742,36 +1750,21 @@ function openUpdateMode(auditId){
   document.getElementById('ss-report-mode').style.display='block';
   document.getElementById('footer-scan').style.display='none';
   document.getElementById('footer-review').style.display='block';
-  document.getElementById('update-toggle-btn').style.display='block';
+  document.getElementById('ss-update-wrap').style.display='block';   // input always at top
+  document.getElementById('found-bulk-wrap').style.display=isAdmin()?'block':'none';
 
   currentScan=audit; // reference for found items
   renderReportContent(audit.report||{},auditId);
-
-  if(restored){
-    // Re-open the scanner with the previously found pieces visible and saveable.
-    document.getElementById('ss-update-wrap').style.display='block';
-    document.getElementById('update-save-wrap').style.display='block';
-    document.getElementById('update-toggle-btn').textContent='▲ Hide Scanner';
-    renderFoundList();
-    setTimeout(()=>toast('↩︎ Restored '+foundBuffer.length+' found piece(s) from your last session — review and Save'),300);
-  } else {
-    document.getElementById('ss-update-wrap').style.display='none';
-    document.getElementById('update-save-wrap').style.display='none';
-    document.getElementById('update-toggle-btn').textContent='🔍 I Found Some Pieces';
-  }
+  renderFoundList(); // shows pieces found in this run (+ inline Save)
+  document.getElementById('update-save-wrap').style.display=foundBuffer.length?'block':'none';
+  if(restored) setTimeout(()=>toast('↩︎ Restored '+foundBuffer.length+' found piece(s) from your last session'),300);
   document.getElementById('scan-screen').classList.add('active');
+  setTimeout(()=>document.getElementById('found-in').focus(),300);
 }
 
-function toggleUpdateMode(){
-  const wrap=document.getElementById('ss-update-wrap');
-  const saveWrap=document.getElementById('update-save-wrap');
-  const isOpen=wrap.style.display!=='none';
-  wrap.style.display=isOpen?'none':'block';
-  // Keep the Save button available if pieces are already in the buffer.
-  saveWrap.style.display=(!isOpen&&foundBuffer.length)?'block':'none';
-  if(!isOpen) renderFoundList();
-  document.getElementById('update-toggle-btn').textContent=isOpen?'🔍 I Found Some Pieces':'▲ Hide Scanner';
-  if(!isOpen) setTimeout(()=>document.getElementById('found-in').focus(),200);
+// Is the current device logged in as admin? (controls bulk-paste availability)
+function isAdmin(){
+  try{ return (JSON.parse(localStorage.getItem('jaey_session')||'{}').type)==='admin'; }catch(e){ return false; }
 }
 
 function addFoundBC(){
@@ -1839,7 +1832,7 @@ function renderFoundList(){
   if(!foundBuffer.length){el.innerHTML='';return;}
   // Inline save button so it's always reachable, right next to the list.
   let html='<button class="btn bs bb" style="margin-bottom:8px" onclick="saveUpdate()">✅ Save '+foundBuffer.length+' found piece'+(foundBuffer.length>1?'s':'')+'</button>';
-  html+='<div style="font-size:11px;color:var(--sage);font-weight:600;margin-bottom:5px">'+foundBuffer.length+' found:</div>';
+  html+='<div style="font-size:11px;color:var(--sage);font-weight:600;margin-bottom:5px">✓ Found this run ('+foundBuffer.length+'):</div>';
   for(const bc of foundBuffer){
     const r=stockData.find(f=>f.barcode==bc);
     html+=`<div class="sc-list-item" style="background:var(--white);border:1px solid var(--border);border-radius:6px;margin-bottom:4px">
@@ -1868,12 +1861,13 @@ function saveUpdate(){
   saveAuditRemote(audit);
 
   toast('✓ Update saved — '+foundBuffer.length+' piece(s) marked found');
-  foundBuffer=[]; clearFoundDraft(); document.getElementById('update-note').value='';
+  foundBuffer=[]; clearFoundDraft();
+  document.getElementById('found-fb').innerHTML='';
   document.getElementById('update-save-wrap').style.display='none';
-  document.getElementById('ss-update-wrap').style.display='none';
   document.getElementById('ss-status-pill').className='sp sp-updated';
   document.getElementById('ss-status-pill').textContent='🔄 Updated';
-  renderReportContent(audit.report,activeScanId);
+  renderReportContent(audit.report,activeScanId); // refresh remaining missing
+  renderFoundList();                               // clears the this-run list
   renderUserTasks();
   renderAdminIfActive();
 }
@@ -2014,16 +2008,21 @@ function setReviewFilter(f){
 
 function renderAdminReview(){
   const el=document.getElementById('review-list'); if(!el) return;
+  const q=(document.getElementById('review-search')?.value||'').trim().toLowerCase();
+  const matchQ=(p,c)=>!q||((p||'').toLowerCase().includes(q))||((c||'').toLowerCase().includes(q));
+
+  if(reviewFilter==='pending'){ renderPendingReview(el,matchQ); return; }
+
   let filtered=audits.filter(a=>{
     const s=a.status||'review';
-    if(reviewFilter==='review') return s==='review';
-    if(reviewFilter==='updated') return s==='updated';
+    if(!matchQ(a.product,a.color)) return false;
     if(reviewFilter==='complete') return s==='complete';
-    return s!=='complete'; // 'all'
+    return s==='review'||s==='updated'; // Needs Review = sent or updated, still open
   });
+  filtered.sort((a,b)=>new Date(b.savedAt||b.date||0)-new Date(a.savedAt||a.date||0));
 
   if(!filtered.length){
-    el.innerHTML='<div class="empty"><div class="ei">'+(reviewFilter==='complete'?'✅':'📋')+'</div><div>'+(reviewFilter==='complete'?'No completed audits yet.':'Nothing pending review.')+'</div></div>';
+    el.innerHTML='<div class="empty"><div class="ei">'+(reviewFilter==='complete'?'✅':'📋')+'</div><div>'+(q?'No matches for “'+q+'”.':(reviewFilter==='complete'?'No completed audits yet.':'Nothing needs review.'))+'</div></div>';
     return;
   }
 
@@ -2035,33 +2034,36 @@ function renderAdminReview(){
     const ghosts=r.ghosts?.length||0, extras=r.extras?.length||0, wrong=r.wrongProduct?.length||0;
     const mm=ghosts+extras+wrong;
     const status=audit.status||'review';
+    const sys=sysTotal(audit), accounted=accountedBarcodes(audit).length;
     const img=getImg(audit.product,audit.color);
     const followUps=audit.followUps||[];
     const actionItems=buildActionItems(audit);
     const checked=audit.checkedActions||[];
+    const statusLbl=status==='complete'?'✅ Complete':status==='updated'?'🔄 Updated':'📤 For Review';
 
-    html+=`<div class="review-card">
-      <div class="rc-top">
-        <div class="rc-header">
-          ${img?`<img class="rc-img" src="${img}" onclick="zoomImg('${img}')" style="cursor:zoom-in" onerror="this.style.display='none'" alt="">`:`<div class="rc-ph">👗</div>`}
-          <div class="rc-info">
-            <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:6px;flex-wrap:wrap">
-              <div class="rc-name">${audit.product} · ${audit.color}</div>
-              <span class="sp sp-${status}">${status==='complete'?'✅ Complete':status==='updated'?'🔄 Updated':status==='review'?'📤 For Review':'⏳'}</span>
-            </div>
-            <div class="rc-meta">${ds} · <strong>${audit.auditor}</strong></div>
-            <div class="rc-tags">
-              <span class="badge b-steel">📦 ${r.totalScanned||0} scanned</span>
-              <span class="badge b-sage">✓ ${r.matched||0}</span>
-              ${ghosts?'<span class="badge b-rose">🔴 '+ghosts+' missing</span>':''}
-              ${extras?'<span class="badge b-gold">🟡 '+extras+' sys mismatch</span>':''}
-              ${wrong?'<span class="badge b-rose">⚠️ '+wrong+' wrong label</span>':''}
-              ${!mm?'<span class="badge b-sage">✅ No mismatches</span>':''}
-            </div>
+    // Accordion: collapsed by default, summary shows the key counts.
+    html+=`<details class="review-card"${reviewFilter==='complete'?'':' '}>
+      <summary class="rc-summary">
+        ${img?`<img src="${img}" class="rc-sum-img" onerror="this.style.display='none'" alt="">`:`<div class="rc-sum-ph">👗</div>`}
+        <div style="flex:1;min-width:0">
+          <div style="font-weight:700;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${audit.product} · ${audit.color}</div>
+          <div style="font-size:11px;color:var(--steel);margin-top:1px">
+            <span style="color:var(--sage);font-weight:600">✓ ${accounted}/${sys} accounted</span>${ghosts?` · <span style="color:var(--rose);font-weight:600">🔴 ${ghosts} missing</span>`:''}${extras?` · <span style="color:#c47f17">🟡 ${extras}</span>`:''}${wrong?` · <span style="color:var(--rose)">⚠️ ${wrong}</span>`:''} · ${audit.auditor}
           </div>
         </div>
-        ${followUps.length?`<div style="padding:7px 0 2px;font-size:12px;color:var(--sky)">🔄 ${followUps.length} update(s) from team: ${followUps.map(f=>f.foundBarcodes.length+' found').join(', ')}</div>`:''}
-      </div>`;
+        <span class="sp sp-${status}" style="flex-shrink:0">${statusLbl}</span>
+      </summary>
+      <div class="rc-body">
+        <div class="rc-tags" style="margin-bottom:8px">
+          <span class="badge b-steel" style="cursor:pointer" onclick="showScannedBarcodes(${audit.id})">📋 ${sys} in system</span>
+          <span class="badge b-sage" style="cursor:pointer" onclick="showScannedBarcodes(${audit.id})">✓ ${accounted} accounted ›</span>
+          ${ghosts?'<span class="badge b-rose">🔴 '+ghosts+' missing</span>':''}
+          ${extras?'<span class="badge b-gold">🟡 '+extras+' sys mismatch</span>':''}
+          ${wrong?'<span class="badge b-rose">⚠️ '+wrong+' wrong label</span>':''}
+          ${!mm?'<span class="badge b-sage">✅ No mismatches</span>':''}
+        </div>
+        <div class="rc-meta" style="font-size:11px;color:var(--steel);margin-bottom:6px">${ds} · <strong>${audit.auditor}</strong></div>
+        ${followUps.length?`<div style="padding:2px 0 6px;font-size:12px;color:var(--sky)">🔄 ${followUps.length} update(s) from team: ${followUps.map(f=>f.foundBarcodes.length+' found').join(', ')}</div>`:''}`;
 
     if(status!=='complete'&&actionItems.length){
       html+=`<div class="rc-actions-section">
@@ -2095,7 +2097,36 @@ function renderAdminReview(){
       html+=`<button class="btn bo" style="font-size:12px;padding:7px 11px" onclick="showFullDetail(${audit.id})">View detail</button>`;
       html+=`<button class="btn bs bl" style="flex:1;margin-left:auto;max-width:160px" onclick="completeAudit(${audit.id})">✅ Complete</button>`;
     }
-    html+=`</div></div>`;
+    html+=`</div></div></details>`;
+  }
+  el.innerHTML=html;
+}
+
+// "Pending" = styles that were planned but nobody has started scanning yet.
+function renderPendingReview(el,matchQ){
+  const items=[];
+  for(const date of Object.keys(plans||{})){
+    for(const it of (plans[date]||[])){
+      if(it.startedAt||it.completedAt) continue;
+      if(!matchQ(it.product,it.color)) continue;
+      items.push(it);
+    }
+  }
+  items.sort((a,b)=>(a.plannedDate||'').localeCompare(b.plannedDate||''));
+  if(!items.length){ el.innerHTML='<div class="empty"><div class="ei">📋</div><div>Nothing planned-but-not-started.</div></div>'; return; }
+  let html='<div style="font-size:12px;color:var(--steel);margin-bottom:8px">'+items.length+' planned · not started yet</div>';
+  for(const it of items){
+    const sd=STYLES_DATA.find(s=>s.product===it.product&&s.color===it.color);
+    const img=getImg(it.product,it.color);
+    const pd=it.plannedDate?new Date(it.plannedDate).toLocaleDateString('en-IN',{day:'numeric',month:'short'}):'';
+    html+=`<div class="review-card" style="padding:10px 13px;display:flex;align-items:center;gap:10px;margin-bottom:8px">
+      ${img?`<img src="${img}" class="rc-sum-img" onerror="this.style.display='none'" alt="">`:`<div class="rc-sum-ph">👗</div>`}
+      <div style="flex:1;min-width:0">
+        <div style="font-weight:700;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${it.product} · ${it.color}</div>
+        <div style="font-size:11px;color:var(--steel)">${it.assignee?'👤 '+it.assignee+' · ':''}Planned ${pd}${sd?' · '+sd.tier+'-tier':''}</div>
+      </div>
+      <span class="sp sp-pending" style="flex-shrink:0">⏳ Not started</span>
+    </div>`;
   }
   el.innerHTML=html;
 }
@@ -2316,6 +2347,34 @@ async function applyCorrection(bc, auditId, newStatus){
   renderResolve(); renderAdminReview(); updateStockComposition();
 }
 
+// Total in system, and the barcodes physically accounted for (scanned + found-in-update).
+function sysTotal(a){ return (a.systemInward?.length) || (((a.report?.ghosts?.length)||0)+((a.report?.matched)||0)); }
+function accountedBarcodes(a){
+  const ghosts=(a.report?.ghosts)||[];
+  return (a.systemInward||[]).filter(b=>!ghosts.includes(b));
+}
+// Modal: list every barcode physically accounted for (scanned in the original count or found later).
+function showScannedBarcodes(id){
+  const a=audits.find(x=>x.id===id); if(!a) return;
+  const acc=accountedBarcodes(a);
+  const found=new Set(); (a.followUps||[]).forEach(f=>(f.foundBarcodes||[]).forEach(b=>found.add(String(b))));
+  document.getElementById('modal-title').textContent='✅ Accounted · '+a.product+' · '+a.color;
+  let html='<div style="font-size:12px;color:var(--steel);margin-bottom:8px">'+acc.length+' of '+sysTotal(a)+' in system physically accounted for'+(found.size?' ('+found.size+' found after the first scan)':'')+'</div>';
+  if(!acc.length) html+='<div style="color:var(--steel);font-size:13px">None accounted yet.</div>';
+  for(const bc of acc){
+    const f=stockData.find(x=>x.barcode==bc);
+    const isFound=found.has(String(bc));
+    html+=`<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 9px;background:var(--sage-light);border-radius:5px;margin-bottom:4px;font-size:13px">
+      <span style="font-family:monospace">BC ${bc}${f?' · '+f.size:''}</span>
+      <span style="font-size:11px;color:${isFound?'var(--sky)':'var(--sage)'}">${isFound?'🔄 found in update':'✓ scanned'}</span></div>`;
+  }
+  const extras=(a.report?.extras)||[];
+  if(extras.length){ html+='<div style="font-weight:600;margin:10px 0 5px;font-size:13px">🟡 Also in hand (system says outward): '+extras.length+'</div>';
+    for(const bc of extras){ const f=stockData.find(x=>x.barcode==bc); html+=`<div style="padding:5px 9px;background:var(--gold-light);border-radius:5px;margin-bottom:4px;font-size:13px;font-family:monospace">BC ${bc}${f?' · '+f.size:''}</div>`; } }
+  document.getElementById('modal-body').innerHTML=html;
+  document.getElementById('modal-ov').classList.add('show');
+}
+
 function showFullDetail(id){
   const a=audits.find(x=>x.id===id); if(!a) return;
   const r=a.report||{};
@@ -2323,7 +2382,17 @@ function showFullDetail(id){
   let html=`${img?`<img src="${img}" style="width:100%;max-height:140px;object-fit:cover;border-radius:9px;margin-bottom:11px" onerror="this.style.display='none'" alt="">`:''}
     <div style="margin-bottom:12px"><div style="font-size:16px;font-weight:600">${a.product} · ${a.color}</div>
     <div style="font-size:13px;color:var(--steel)">${new Date(a.savedAt||a.date).toLocaleDateString('en-IN',{weekday:'long',day:'numeric',month:'long'})} · ${a.auditor}</div></div>
-    <div class="stats-row"><div class="sb"><div class="sn">${r.totalScanned||0}</div><div class="sl">Scanned</div></div><div class="sb"><div class="sn g">${r.matched||0}</div><div class="sl">Matched</div></div><div class="sb"><div class="sn r">${(r.ghosts?.length||0)+(r.extras?.length||0)+(r.wrongProduct?.length||0)}</div><div class="sl">Mismatches</div></div></div>`;
+    <div class="stats-row">
+      <div class="sb"><div class="sn">${sysTotal(a)}</div><div class="sl">In system</div></div>
+      <div class="sb" style="cursor:pointer" onclick="showScannedBarcodes(${a.id})"><div class="sn g">${accountedBarcodes(a).length}</div><div class="sl">Accounted&nbsp;›</div></div>
+      <div class="sb"><div class="sn r">${r.ghosts?.length||0}</div><div class="sl">Missing</div></div>
+    </div>
+    <div style="font-size:11px;color:var(--steel);margin:-4px 0 8px;text-align:center">${r.totalScanned||0} scanned${(a.followUps||[]).length?' + '+(a.followUps||[]).reduce((n,f)=>n+(f.foundBarcodes?.length||0),0)+' found in updates':''} · tap “Accounted” to see them</div>`;
+  html+=`<details style="margin:4px 0 8px"><summary style="font-weight:600;cursor:pointer;font-size:13px">✅ Accounted barcodes (${accountedBarcodes(a).length})</summary><div style="margin-top:6px">`;
+  { const found=new Set(); (a.followUps||[]).forEach(f=>(f.foundBarcodes||[]).forEach(b=>found.add(String(b))));
+    for(const bc of accountedBarcodes(a)){ const f=stockData.find(x=>x.barcode==bc); const isF=found.has(String(bc));
+      html+=`<div style="display:flex;justify-content:space-between;padding:5px 9px;background:var(--sage-light);border-radius:5px;margin-bottom:4px;font-size:13px;font-family:monospace">BC ${bc}${f?' · '+f.size:''}<span style="font-size:11px;color:${isF?'var(--sky)':'var(--sage)'}">${isF?'🔄 found':'✓'}</span></div>`; } }
+  html+=`</div></details>`;
   if(r.ghosts?.length){html+=`<div style="font-weight:600;margin:9px 0 5px">🔴 Missing barcodes:</div>`;for(const bc of r.ghosts){const f=stockData.find(x=>x.barcode==bc);html+=`<div style="padding:5px 9px;background:var(--rose-light);border-radius:5px;margin-bottom:4px;font-size:13px;font-family:monospace">BC ${bc}${f?' · '+f.size:''}</div>`;}}
   if(r.extras?.length){html+=`<div style="font-weight:600;margin:9px 0 5px">🟡 System mismatches:</div>`;for(const bc of r.extras){const f=stockData.find(x=>x.barcode==bc);html+=`<div style="padding:5px 9px;background:var(--gold-light);border-radius:5px;margin-bottom:4px;font-size:13px;font-family:monospace">BC ${bc}${f?' · '+f.size:''}</div>`;}}
   // Trail
@@ -2440,12 +2509,19 @@ function populatePlanDropdowns(){ renderPlanSuggestions(); }
 function renderPlanSuggestions(){
   const today=todayStr();
   const planned=new Set((plans[today]||[]).map(p=>p.product+'|||'+p.color));
-  let list=STYLES_DATA.filter(s=>s.stockCount>0&&!planned.has(s.product+'|||'+s.color));
-  if(planFilter==='A') list=list.filter(s=>s.tier==='A');
-  else if(planFilter==='B') list=list.filter(s=>s.tier==='B');
-  else if(planFilter==='overdue') list=list.filter(s=>isOverdue(s));
   const q=(document.getElementById('plan-search')?.value||'').trim().toLowerCase();
-  if(q) list=list.filter(s=>s.product.toLowerCase().includes(q)||s.color.toLowerCase().includes(q));
+  let list;
+  if(q){
+    // Global search — across ALL styles, every stock level (incl. OOS) and every tier.
+    list=STYLES_DATA.filter(s=>!planned.has(s.product+'|||'+s.color)&&(s.product.toLowerCase().includes(q)||s.color.toLowerCase().includes(q)));
+  } else if(planFilter==='oos'){
+    list=STYLES_DATA.filter(s=>(s.stockCount||0)<=0&&!planned.has(s.product+'|||'+s.color));
+  } else {
+    list=STYLES_DATA.filter(s=>s.stockCount>0&&!planned.has(s.product+'|||'+s.color));
+    if(planFilter==='A') list=list.filter(s=>s.tier==='A');
+    else if(planFilter==='B') list=list.filter(s=>s.tier==='B');
+    else if(planFilter==='overdue') list=list.filter(s=>isOverdue(s));
+  }
   list.sort((a,b)=>{const ao=isOverdue(a)?0:1,bo=isOverdue(b)?0:1;if(ao!==bo)return ao-bo;const to={A:0,B:1,C:2,D:3};if(a.tier!==b.tier)return (to[a.tier]||4)-(to[b.tier]||4);return b.vpw-a.vpw;});
 
   const el=document.getElementById('suggest-list');
@@ -2460,7 +2536,7 @@ function renderPlanSuggestions(){
       ${s.image?`<img class="si-img" src="${s.image}" onerror="this.style.display='none'" alt="">`:`<div class="si-ph">👗</div>`}
       <div class="si-info">
         <div class="si-name">${s.product}</div>
-        <div class="si-meta">${s.color} · <span class="tier-${s.tier.toLowerCase()}" style="padding:1px 5px">${s.tier}</span>${s.vpw>0?' · '+s.vpw+' u/wk':''} · 📦${s.stockCount}${overdue?(' · <span style="color:var(--rose);font-weight:600">'+(days===null?'Never audited':days+'d ago')+'</span>'):(days!==null?' · ✓ '+days+'d ago':'')}</div>
+        <div class="si-meta">${s.color} · <span class="tier-${s.tier.toLowerCase()}" style="padding:1px 5px">${s.tier}</span>${s.vpw>0?' · '+s.vpw+' u/wk':''} · 📦${s.stockCount}${(s.stockCount||0)<=0?' <span style="color:var(--rose);font-weight:700">OOS</span>':''}${overdue?(' · <span style="color:var(--rose);font-weight:600">'+(days===null?'Never audited':days+'d ago')+'</span>'):(days!==null?' · ✓ '+days+'d ago':'')}</div>
       </div>
       <div class="si-ck">${sel?'✓':''}</div>
     </div>`;
