@@ -2485,12 +2485,12 @@ function markLost(bc, auditId, hasFoundIn){
   // Drop from the missing worklist locally (best-effort cloud write-off as outward/Lost).
   const audit=audits.find(a=>a.id===auditId);
   if(audit){ (audit.systemUpdated=audit.systemUpdated||[]).push(bc); audit.updatedAt=new Date().toISOString(); try{localStorage.setItem('jaey_audits',JSON.stringify(audits));}catch(e){} saveAuditRemote(audit); }
-  for(const r of stockData){ if(r.barcode==bc){ r.status='outward'; r.purpose='Lost'; } }
+  for(const r of stockData){ if(r.barcode==bc){ r.status='outward'; r.purpose='Unknown'; } }
   buildMap(); try{localStorage.setItem('jaey_stock',JSON.stringify(stockData));}catch(e){}
   if(navigator.onLine && sbCfg.url && sbCfg.key){
     fetch(sbCfg.url+'/rest/v1/stock_data?barcode=eq.'+encodeURIComponent(bc),{
       method:'PATCH', headers:sbHeaders({'Content-Type':'application/json','Prefer':'return=minimal'}),
-      body:JSON.stringify({status:'outward', purpose:'Lost'})
+      body:JSON.stringify({status:'outward', purpose:'Unknown'})
     }).catch(()=>{});
   }
   toast('🔴 BC '+bc+' marked Lost');
@@ -2498,14 +2498,14 @@ function markLost(bc, auditId, hasFoundIn){
 }
 
 // Download today's Lost write-offs in the inventory upload format:
-//   barcode,item_id,size_id,note,status,purpose  → note blank, status outward, purpose Lost.
+//   barcode,item_id,size_id,note,status,purpose  → note blank, status outward, purpose Unknown.
 function exportLostCSV(){
   const todays=getLostLog().filter(l=>(l.at||'').startsWith(todayStr()) && !l.recovered);
   if(!todays.length){ toast('No pieces marked Lost today'); return; }
   const missingIds=todays.filter(l=>!l.itemId||!l.sizeId);
   if(missingIds.length && !confirm('⚠️ '+missingIds.length+' of '+todays.length+' Lost rows are missing Item ID / Size ID (stock CSV not loaded when marked).\n\nLoad today\'s stock CSV and re-mark for complete rows, or export now with blanks?\n\nExport now?')) return;
   const rows=[['barcode','item_id','size_id','note','status','purpose']];
-  for(const l of todays) rows.push([l.barcode, l.itemId||'', l.sizeId||'', '', 'outward', 'Lost']);
+  for(const l of todays) rows.push([l.barcode, l.itemId||'', l.sizeId||'', '', 'outward', 'Unknown']);
   const csv=rows.map(r=>r.join(',')).join('\n');
   const b=new Blob([csv],{type:'text/csv'}); const u=URL.createObjectURL(b);
   const a=document.createElement('a'); a.href=u; a.download='jaey_lost_'+todayStr()+'.csv'; a.click(); URL.revokeObjectURL(u);
