@@ -81,6 +81,7 @@ select:focus,input:focus,textarea:focus{border-color:var(--gold);background:var(
 .sp-pending{background:#fff4e0;color:#a06800;border:1px solid #e6c060}
 .sp-review{background:var(--sky-light);color:var(--sky);border:1px solid #9aaae8}
 .sp-updated{background:#ede0ff;color:#6a3db0;border:1px solid #c8aae8}
+.sp-scanning{background:#ffe6e6;color:#c0392b;border:1px solid #e6a0a0}
 .sp-complete{background:var(--sage-light);color:var(--sage);border:1px solid #90b890}
 
 /* ── USER: TODAY CARDS ── */
@@ -1492,6 +1493,34 @@ function addBC(){
   renderScanList();
   saveDraft();              // persist progress so a back-tap / reload never loses it
   liveHeartbeat({bc,type:res});
+  liveSyncAudit();          // push the growing count to admin Review (debounced, non-blocking)
+}
+
+// Debounced, non-blocking push of the in-progress scan so admin Review sees the count grow live.
+let _liveAuditTimer=null,_liveAuditLast=0;
+function liveSyncAudit(){
+  if(!currentScan) return;
+  const work=()=>{
+    _liveAuditTimer=null; _liveAuditLast=Date.now();
+    if(!currentScan||!currentScan.scanned||!currentScan.scanned.length) return;
+    if(!audits.find(a=>a.id===currentScan.id)) audits.unshift(currentScan); // track locally so it merges
+    currentScan.report=genReport(currentScan);
+    if(!['review','updated','complete'].includes(currentScan.status)) currentScan.status='scanning';
+    currentScan.updatedAt=new Date().toISOString();
+    if(!currentScan.savedAt) currentScan.savedAt=currentScan.updatedAt;
+    try{localStorage.setItem('jaey_audits',JSON.stringify(audits));}catch(e){}
+    if(sbCfg.url&&sbCfg.key&&navigator.onLine) pushAuditToCloud(currentScan); // fire-and-forget
+  };
+  const dt=Date.now()-_liveAuditLast;
+  if(dt>=2500) work(); else if(!_liveAuditTimer) _liveAuditTimer=setTimeout(work,2500-dt);
+}
+// Debounced push for an already-stored audit (used by live update mode).
+const _auditPushTimers={};
+function liveSyncPush(audit){
+  try{localStorage.setItem('jaey_audits',JSON.stringify(audits));}catch(e){}
+  if(!sbCfg.url||!sbCfg.key||!navigator.onLine||!audit) return;
+  if(_auditPushTimers[audit.id]) return;
+  _auditPushTimers[audit.id]=setTimeout(()=>{ delete _auditPushTimers[audit.id]; pushAuditToCloud(audit); },2000);
 }
 
 function addBulk(){
@@ -1580,7 +1609,8 @@ function sendForReview(){
   const _planItem=_planItems.find(p=>p.product===currentScan.product&&p.color===currentScan.color&&(!p.assignee||p.assignee.toLowerCase()===currentScan.auditor.toLowerCase()));
   if(_planItem&&!_planItem.completedAt){ _planItem.completedAt=new Date().toISOString(); savePlans(); syncPlanChange({op:'upsert',item:_planItem}); }
 
-  audits.unshift(currentScan);
+  if(_liveAuditTimer){ clearTimeout(_liveAuditTimer); _liveAuditTimer=null; } // cancel pending live push
+  if(!audits.find(a=>a.id===currentScan.id)) audits.unshift(currentScan); // may already be tracked from live sync
   try{localStorage.setItem('jaey_audits',JSON.stringify(audits));}catch(e){console.warn('Storage full, audit in memory only');}
   saveAuditRemote(currentScan);
 
@@ -1785,10 +1815,28 @@ function addFoundBC(){
   const f=stockData.find(r=>r.barcode==bc);
   fbEl.innerHTML=f?'<span style="color:var(--sage)">✓ '+f.product+' · '+f.color+' · Size: <strong>'+f.size+'</strong></span>':'<span style="color:var(--steel)">Added</span>';
   foundBuffer.push(bc);
+  applyFound(audit,bc);        // mark found immediately
   saveFoundDraft();            // persist so a back-tap / reload never loses found pieces
+  liveSyncPush(audit);         // push to admin Review live (debounced)
+  renderReportContent(audit.report,activeScanId); // missing list shrinks live
   renderFoundList();
   document.getElementById('update-save-wrap').style.display=foundBuffer.length?'block':'none';
   input.value=''; input.focus();
+}
+
+// Resolve / un-resolve a missing piece on its audit (used by the live update flow).
+function applyFound(audit,bc){
+  audit.report.ghosts=(audit.report.ghosts||[]).filter(b=>b!==bc);
+  audit.report.matched=(audit.report.matched||0)+1;
+  if(!audit.followUps) audit.followUps=[];
+  audit.followUps.push({at:new Date().toISOString(),foundBarcodes:[bc],by:audit.auditor||'',note:''});
+  if(audit.status!=='complete') audit.status='updated';
+  audit.updatedAt=new Date().toISOString();
+}
+function unapplyFound(audit,bc){
+  if(!(audit.report.ghosts||[]).includes(bc)){ (audit.report.ghosts=audit.report.ghosts||[]).push(bc); audit.report.matched=Math.max(0,(audit.report.matched||0)-1); }
+  audit.followUps=(audit.followUps||[]).map(f=>({...f,foundBarcodes:(f.foundBarcodes||[]).filter(b=>b!==bc)})).filter(f=>(f.foundBarcodes||[]).length);
+  audit.updatedAt=new Date().toISOString();
 }
 
 // In-progress "found pieces" are auto-saved to this device, keyed to the audit being updated.
@@ -1801,6 +1849,8 @@ function getFoundDraft(){ try{ return JSON.parse(localStorage.getItem('jaey_foun
 
 function removeFound(bc){
   foundBuffer=foundBuffer.filter(b=>b!==bc);
+  const audit=audits.find(a=>a.id===activeScanId);
+  if(audit){ unapplyFound(audit,bc); liveSyncPush(audit); renderReportContent(audit.report,activeScanId); } // reverse the live mark
   saveFoundDraft();
   renderFoundList();
   document.getElementById('update-save-wrap').style.display=foundBuffer.length?'block':'none';
@@ -1817,9 +1867,11 @@ function bulkAddFound(){
   for(const bc of lines){
     if(foundBuffer.includes(bc)){ dup++; continue; }
     if(!ghosts.includes(bc)){ notMissing++; continue; }
-    foundBuffer.push(bc); added++;
+    foundBuffer.push(bc); applyFound(audit,bc); added++;
   }
   saveFoundDraft();
+  if(audit&&added) liveSyncPush(audit);
+  if(audit) renderReportContent(audit.report,activeScanId);
   renderFoundList();
   document.getElementById('update-save-wrap').style.display=foundBuffer.length?'block':'none';
   ta.value='';
@@ -1831,9 +1883,9 @@ function bulkAddFound(){
 function renderFoundList(){
   const el=document.getElementById('found-list'); if(!el) return;
   if(!foundBuffer.length){el.innerHTML='';return;}
-  // Inline save button so it's always reachable, right next to the list.
-  let html='<button class="btn bs bb" style="margin-bottom:8px" onclick="saveUpdate()">✅ Save '+foundBuffer.length+' found piece'+(foundBuffer.length>1?'s':'')+'</button>';
-  html+='<div style="font-size:11px;color:var(--sage);font-weight:600;margin-bottom:5px">✓ Found this run ('+foundBuffer.length+'):</div>';
+  // Pieces auto-sync to admin on each Add; this button is an explicit confirm/finish.
+  let html='<button class="btn bs bb" style="margin-bottom:8px" onclick="saveUpdate()">✅ Done ('+foundBuffer.length+' found, synced)</button>';
+  html+='<div style="font-size:11px;color:var(--sage);font-weight:600;margin-bottom:5px">✓ Found this run ('+foundBuffer.length+') · auto-synced to admin:</div>';
   for(const bc of foundBuffer){
     const r=stockData.find(f=>f.barcode==bc);
     html+=`<div class="sc-list-item" style="background:var(--white);border:1px solid var(--border);border-radius:6px;margin-bottom:4px">
@@ -1845,30 +1897,21 @@ function renderFoundList(){
   el.innerHTML=html;
 }
 
+// Found pieces are already applied + synced live on each Add; Save is an explicit final push/confirm.
 function saveUpdate(){
-  if(!foundBuffer.length) return toast('No barcodes added');
   const audit=audits.find(a=>a.id===activeScanId); if(!audit) return;
-  const note=document.getElementById('update-note')?.value.trim()||'';
-  const now=new Date().toISOString();
-
-  if(!audit.followUps) audit.followUps=[];
-  audit.followUps.push({at:now, foundBarcodes:[...foundBuffer], note, by:audit.auditor});
-  audit.report.ghosts=(audit.report.ghosts||[]).filter(bc=>!foundBuffer.includes(bc));
-  audit.report.matched=(audit.report.matched||0)+foundBuffer.length;
-  audit.status='updated';
-  audit.lastUpdated=now;
-
+  audit.lastUpdated=new Date().toISOString();
   try{localStorage.setItem('jaey_audits',JSON.stringify(audits));}catch(e){console.warn('Storage full, audit in memory only');}
-  saveAuditRemote(audit);
+  saveAuditRemote(audit); // immediate final push (safety, in case a debounced push was pending)
 
-  toast('✓ Update saved — '+foundBuffer.length+' piece(s) marked found');
+  toast('✓ Saved'+(foundBuffer.length?(' — '+foundBuffer.length+' piece(s) marked found'):''));
   foundBuffer=[]; clearFoundDraft();
   document.getElementById('found-fb').innerHTML='';
   document.getElementById('update-save-wrap').style.display='none';
   document.getElementById('ss-status-pill').className='sp sp-updated';
   document.getElementById('ss-status-pill').textContent='🔄 Updated';
-  renderReportContent(audit.report,activeScanId); // refresh remaining missing
-  renderFoundList();                               // clears the this-run list
+  renderReportContent(audit.report,activeScanId);
+  renderFoundList();
   renderUserTasks();
   renderAdminIfActive();
 }
@@ -1972,8 +2015,18 @@ function refreshRosterUI(){
   fetchUsersFromSupabase().then(()=>{ renderUserMgmt(); renderAssigneeRows(); }).catch(()=>{});
 }
 
+// Poll the cloud while the Review tab is open so live counts climb — without disrupting the admin.
+let _reviewTimer=null;
+function startReviewPolling(){ stopReviewPolling(); _reviewTimer=setInterval(()=>{
+  if(reviewFilter==='complete') return;
+  const ae=document.activeElement, list=document.getElementById('review-list');
+  if(ae&&list&&list.contains(ae)) return; // don't re-render while admin is typing/interacting
+  refreshAuditsUI();
+},5000); }
+function stopReviewPolling(){ if(_reviewTimer){ clearInterval(_reviewTimer); _reviewTimer=null; } }
+
 function adminLogout(){
-  stopLivePolling();
+  stopLivePolling(); stopReviewPolling();
   localStorage.removeItem('jaey_admin_name');
   localStorage.removeItem('jaey_session');
   document.getElementById('shell-admin').classList.remove('active');
@@ -1986,6 +2039,7 @@ function showAdminTab(name,tab){
   document.getElementById('apg-'+name).classList.add('active');
   if(tab) tab.classList.add('active');
   if(name==='live') startLivePolling(); else stopLivePolling();
+  if(name==='review') startReviewPolling(); else stopReviewPolling();
   if(name==='review'){ renderAdminReview(); refreshAuditsUI(); }
   if(name==='resolve'){ renderResolve(); refreshAuditsUI(); }
   if(name==='a-history'){ renderAdminHistory(); refreshAuditsUI(); }
@@ -2018,15 +2072,18 @@ function renderAdminReview(){
     const s=a.status||'review';
     if(!matchQ(a.product,a.color)) return false;
     if(reviewFilter==='complete') return s==='complete';
-    return s==='review'||s==='updated'; // Needs Review = sent or updated, still open
+    if(s==='scanning') return (Date.now()-new Date(a.updatedAt||a.savedAt||0).getTime())<2*3600000; // hide abandoned live scans
+    return s==='review'||s==='updated'; // Needs Review = live, sent, or updated
   });
-  filtered.sort((a,b)=>new Date(b.savedAt||b.date||0)-new Date(a.savedAt||a.date||0));
+  filtered.sort((a,b)=>new Date(b.updatedAt||b.savedAt||b.date||0)-new Date(a.updatedAt||a.savedAt||a.date||0));
 
   if(!filtered.length){
     el.innerHTML='<div class="empty"><div class="ei">'+(reviewFilter==='complete'?'✅':'📋')+'</div><div>'+(q?'No matches for “'+q+'”.':(reviewFilter==='complete'?'No completed audits yet.':'Nothing needs review.'))+'</div></div>';
     return;
   }
 
+  // Preserve which cards are expanded across live re-renders.
+  const openIds=new Set([...el.querySelectorAll('details[open]')].map(d=>d.getAttribute('data-aid')));
   let html='';
   for(const audit of filtered){
     const d=new Date(audit.savedAt||audit.date);
@@ -2040,10 +2097,11 @@ function renderAdminReview(){
     const followUps=audit.followUps||[];
     const actionItems=buildActionItems(audit);
     const checked=audit.checkedActions||[];
-    const statusLbl=status==='complete'?'✅ Complete':status==='updated'?'🔄 Updated':'📤 For Review';
+    const live=status==='scanning';
+    const statusLbl=status==='complete'?'✅ Complete':status==='updated'?'🔄 Updated':live?'🔴 Scanning…':'📤 For Review';
 
-    // Accordion: collapsed by default, summary shows the key counts.
-    html+=`<details class="review-card"${reviewFilter==='complete'?'':' '}>
+    // Accordion: collapsed by default; expanded state preserved across live re-renders.
+    html+=`<details class="review-card" data-aid="${audit.id}"${openIds.has(String(audit.id))?' open':''}>
       <summary class="rc-summary">
         ${img?`<img src="${img}" class="rc-sum-img" onerror="this.style.display='none'" alt="">`:`<div class="rc-sum-ph">👗</div>`}
         <div style="flex:1;min-width:0">
@@ -2064,6 +2122,7 @@ function renderAdminReview(){
           ${!mm?'<span class="badge b-sage">✅ No mismatches</span>':''}
         </div>
         <div class="rc-meta" style="font-size:11px;color:var(--steel);margin-bottom:6px">${ds} · <strong>${audit.auditor}</strong></div>
+        ${live?`<div style="padding:2px 0 6px;font-size:12px;color:var(--rose);font-weight:600">🔴 Scanning live — count updating in real time</div>`:''}
         ${followUps.length?`<div style="padding:2px 0 6px;font-size:12px;color:var(--sky)">🔄 ${followUps.length} update(s) from team: ${followUps.map(f=>f.foundBarcodes.length+' found').join(', ')}</div>`:''}`;
 
     if(status!=='complete'&&actionItems.length){
@@ -2083,10 +2142,10 @@ function renderAdminReview(){
       html+=`</div>`;
     }
 
-    if(status!=='complete'){
+    if(status!=='complete'&&!live){
       html+=`<div class="rc-note-wrap">
         <label>Admin note (optional)</label>
-        <textarea id="admin-note-${audit.id}" placeholder="Add a note about actions taken..." style="font-size:13px;min-height:50px;resize:none">${audit.adminNote||''}</textarea>
+        <textarea id="admin-note-${audit.id}" oninput="setAdminNote(${audit.id},this.value)" placeholder="Add a note about actions taken..." style="font-size:13px;min-height:50px;resize:none">${audit.adminNote||''}</textarea>
       </div>`;
     }
 
@@ -2094,6 +2153,9 @@ function renderAdminReview(){
     if(status==='complete'){
       html+=`<div style="font-size:12px;color:var(--sage)">✅ Completed by <strong>${audit.completedBy||'Admin'}</strong> · ${audit.completedAt?new Date(audit.completedAt).toLocaleDateString('en-IN',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}):''}</div>`;
       html+=`<button class="btn bo" style="font-size:11px;padding:5px 9px;margin-left:auto;color:var(--rose);border-color:var(--rose)" onclick="reopenAudit(${audit.id})">Reopen</button>`;
+    } else if(live){
+      html+=`<button class="btn bo" style="font-size:12px;padding:7px 11px" onclick="showFullDetail(${audit.id})">View detail</button>`;
+      html+=`<div style="font-size:12px;color:var(--steel);margin-left:auto">⏳ Waiting for ${audit.auditor} to finish…</div>`;
     } else {
       html+=`<button class="btn bo" style="font-size:12px;padding:7px 11px" onclick="showFullDetail(${audit.id})">View detail</button>`;
       html+=`<button class="btn bs bl" style="flex:1;margin-left:auto;max-width:160px" onclick="completeAudit(${audit.id})">✅ Complete</button>`;
@@ -2101,6 +2163,13 @@ function renderAdminReview(){
     html+=`</div></div></details>`;
   }
   el.innerHTML=html;
+}
+
+// Persist the admin note as it's typed (so a live re-render never loses it).
+function setAdminNote(id,val){
+  const a=audits.find(x=>x.id===id); if(!a) return;
+  a.adminNote=val;
+  try{localStorage.setItem('jaey_audits',JSON.stringify(audits));}catch(e){}
 }
 
 // "Pending" = styles that were planned but nobody has started scanning yet.
