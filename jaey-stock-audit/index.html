@@ -81,7 +81,7 @@ select:focus,input:focus,textarea:focus{border-color:var(--gold);background:var(
 .sp-pending{background:#fff4e0;color:#a06800;border:1px solid #e6c060}
 .sp-review{background:var(--sky-light);color:var(--sky);border:1px solid #9aaae8}
 .sp-updated{background:#ede0ff;color:#6a3db0;border:1px solid #c8aae8}
-.sp-scanning{background:#e6f0ff;color:#2b6cb0;border:1px solid #a8c4ec}
+.sp-scanning{background:#e3f4e8;color:#2f7d4f;border:1px solid #a8d8bb}
 .sp-complete{background:var(--sage-light);color:var(--sage);border:1px solid #90b890}
 
 /* ── USER: TODAY CARDS ── */
@@ -2102,7 +2102,7 @@ function renderAdminReview(){
     // "Live" = actively being worked on right now (scanning or updating) — updated within 45s.
     const recentlyActive=(Date.now()-new Date(audit.updatedAt||audit.savedAt||audit.date||0).getTime())<45000;
     const live=status!=='complete'&&recentlyActive;
-    const statusLbl=status==='complete'?'✅ Complete':live?'🔵 Live':status==='scanning'?'🔵 Scanning…':status==='updated'?'🔄 Updated':'📤 For Review';
+    const statusLbl=status==='complete'?'✅ Complete':live?'🟢 Live':status==='scanning'?'🟢 Scanning…':status==='updated'?'🔄 Updated':'📤 For Review';
 
     // Accordion: collapsed by default; expanded state preserved across live re-renders.
     html+=`<details class="review-card" data-aid="${audit.id}"${openIds.has(String(audit.id))?' open':''}>
@@ -2126,7 +2126,7 @@ function renderAdminReview(){
           ${!mm?'<span class="badge b-sage">✅ No mismatches</span>':''}
         </div>
         <div class="rc-meta" style="font-size:11px;color:var(--steel);margin-bottom:6px">${ds} · <strong>${audit.auditor}</strong></div>
-        ${live?`<div style="padding:2px 0 6px;font-size:12px;color:var(--sky);font-weight:600">🔵 Active now — ${audit.auditor} is ${status==='scanning'?'scanning':'updating'}, count updating live</div>`:''}
+        ${live?`<div style="padding:2px 0 6px;font-size:12px;color:var(--sage);font-weight:600">🟢 Active now — ${audit.auditor} is ${status==='scanning'?'scanning':'updating'}, count updating live</div>`:''}
         ${followUps.length?`<div style="padding:2px 0 6px;font-size:12px;color:var(--sky)">🔄 ${followUps.length} update(s) from team: ${followUps.map(f=>f.foundBarcodes.length+' found').join(', ')}</div>`:''}`;
 
     if(status!=='complete'&&actionItems.length){
