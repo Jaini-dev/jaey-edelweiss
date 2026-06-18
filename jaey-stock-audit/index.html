@@ -2387,13 +2387,25 @@ function renderResolve(){
     }
   }
 
-  let html=auditedHtml;
+  // Bulk-select state for the missing list (survives re-render; pruned to what's currently shown).
+  _resolveVisible=missing.map(m=>({bc:String(m.bc), auditId:m.auditId, sample:!!m.sample, foundIn:!!m.foundIn}));
+  resolveSel=new Set([...resolveSel].filter(bc=>_resolveVisible.some(v=>v.bc===bc)));
+  const bulkBar=missing.length?`<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;padding:6px 2px;font-size:12px;border-bottom:1px solid var(--border)">
+      <label style="display:flex;align-items:center;gap:5px;cursor:pointer;margin:0;font-size:12px;text-transform:none;letter-spacing:0;font-weight:500;color:var(--ink)"><input type="checkbox" id="resolve-selall" onchange="toggleResolveAll(this.checked)" style="width:15px;height:15px"> Select all</label>
+      <span id="resolve-selcount" style="color:var(--steel)"></span>
+      <span id="resolve-bulkactions" style="margin-left:auto;display:none;gap:6px">
+        <button class="btn bs" style="font-size:11px;padding:5px 9px" onclick="bulkMarkFound()">✓ Found</button>
+        <button class="btn bo" style="font-size:11px;padding:5px 9px;color:var(--rose);border-color:var(--rose)" onclick="bulkMarkUnknown()">🔴 Mark Unknown</button>
+      </span>
+    </div>`:'';
+  let html=auditedHtml+bulkBar;
   if(!missing.length&&!auditedHtml) html='<div class="empty"><div class="ei">'+(q?'🔍':'✅')+'</div><div>'+(q?'No missing pieces match “'+q+'”.':'No unresolved missing pieces.')+'</div></div>';
   for(const m of missing){
     const days=Math.floor((Date.now()-new Date(m.at))/86400000);
     const ageTxt=days<=0?'today':days+'d ago';
     html+=`<div style="border:1px solid var(--border);border-left:3px solid var(--rose);border-radius:8px;padding:10px;margin-bottom:8px">
-      <div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start">
+      <div style="display:flex;gap:8px;align-items:flex-start">
+        <input type="checkbox" class="rsl-cb" ${resolveSel.has(String(m.bc))?'checked':''} onchange="toggleResolveSel('${m.bc}',this.checked)" style="margin-top:2px;flex-shrink:0;width:15px;height:15px">
         <div style="flex:1;min-width:0">
           <div style="font-weight:600;font-size:13px">BC ${m.bc}${m.size?' · Size '+m.size:''}${m.sample?' <span style="background:#6b3fa0;color:#fff;font-size:9px;font-weight:700;padding:1px 6px;border-radius:20px;vertical-align:middle">🧷 SAMPLE</span>':''}</div>
           <div style="font-size:12px;color:var(--steel)">${m.product} · ${m.color}${m.sku?' · '+m.sku:''}</div>
@@ -2411,6 +2423,7 @@ function renderResolve(){
     </div>`;
   }
   lEl.innerHTML=html;
+  updateBulkBar();
 
   // Show "Lost CSV" export when anything was written off as Lost today.
   const _lostToday=getLostLog().filter(l=>(l.at||'').startsWith(todayStr()));
@@ -2440,8 +2453,8 @@ function renderResolve(){
 }
 
 // Mark a missing piece as physically found (resolves the ghost on its audit).
-function resolveFound(bc,auditId){
-  const audit=audits.find(a=>a.id===auditId); if(!audit||!audit.report) return;
+function markFoundCore(bc,auditId){
+  const audit=audits.find(a=>a.id===auditId); if(!audit||!audit.report) return false;
   if(!audit.followUps) audit.followUps=[];
   audit.followUps.push({at:new Date().toISOString(),foundBarcodes:[bc],note:'Found via Resolve',by:localStorage.getItem('jaey_admin_name')||'Admin'});
   audit.report.ghosts=(audit.report.ghosts||[]).filter(b=>b!==bc);
@@ -2450,6 +2463,10 @@ function resolveFound(bc,auditId){
   audit.updatedAt=new Date().toISOString();
   try{localStorage.setItem('jaey_audits',JSON.stringify(audits));}catch(e){}
   saveAuditRemote(audit);
+  return true;
+}
+function resolveFound(bc,auditId){
+  if(!markFoundCore(bc,auditId)) return;
   toast('✓ BC '+bc+' marked found');
   renderResolve(); renderAdminReview();
 }
@@ -2489,6 +2506,30 @@ function saveLostLog(log){ try{ localStorage.setItem('jaey_lost_log',JSON.string
 
 // Write off a missing piece as Lost: record it for the CSV upload, drop it from the
 // missing list, and best-effort flip the app's own stock to outward/Lost.
+// Core write-off (no prompts/render) — shared by single markLost and the bulk action.
+function writeOffUnknownCore(bc, auditId){
+  bc=String(bc);
+  const row=stockData.find(r=>r.barcode==bc)||{};
+  const log=getLostLog();
+  if(!log.find(l=>l.barcode===bc && !l.recovered)){
+    log.push({barcode:bc, itemId:row.itemId||'', sizeId:row.sizeId||'',
+      product:row.product||'', color:row.color||'', size:row.size||'', sku:row.sku||'',
+      sample:isSample(row), tags:row.tags||'',
+      at:new Date().toISOString(), by:localStorage.getItem('jaey_admin_name')||localStorage.getItem('jaey_user_name')||'Admin',
+      auditId, exported:false, recovered:false});
+    saveLostLog(log);
+  }
+  const audit=audits.find(a=>a.id===auditId);
+  if(audit){ (audit.systemUpdated=audit.systemUpdated||[]).push(bc); audit.updatedAt=new Date().toISOString(); try{localStorage.setItem('jaey_audits',JSON.stringify(audits));}catch(e){} saveAuditRemote(audit); }
+  for(const r of stockData){ if(r.barcode==bc){ r.status='outward'; r.purpose='Unknown'; } }
+  if(navigator.onLine && sbCfg.url && sbCfg.key){
+    fetch(sbCfg.url+'/rest/v1/stock_data?barcode=eq.'+encodeURIComponent(bc),{
+      method:'PATCH', headers:sbHeaders({'Content-Type':'application/json','Prefer':'return=minimal'}),
+      body:JSON.stringify({status:'outward', purpose:'Unknown'})
+    }).catch(()=>{});
+  }
+}
+
 function markLost(bc, auditId, hasFoundIn){
   bc=String(bc);
   const row=stockData.find(r=>r.barcode==bc)||{};
@@ -2500,28 +2541,43 @@ function markLost(bc, auditId, hasFoundIn){
   if(!row.itemId||!row.sizeId){
     if(!confirm('⚠️ BC '+bc+' has no Item ID / Size ID loaded, so its Unknown CSV row will be incomplete.\n\nTip: load today\'s stock CSV in the Data tab first. Continue anyway?')) return;
   }
-  const log=getLostLog();
-  if(!log.find(l=>l.barcode===bc && !l.recovered)){
-    log.push({barcode:bc, itemId:row.itemId||'', sizeId:row.sizeId||'',
-      product:row.product||'', color:row.color||'', size:row.size||'', sku:row.sku||'',
-      sample:isSample(row), tags:row.tags||'',
-      at:new Date().toISOString(), by:localStorage.getItem('jaey_admin_name')||localStorage.getItem('jaey_user_name')||'Admin',
-      auditId, exported:false, recovered:false});
-    saveLostLog(log);
-  }
-  // Drop from the missing worklist locally (best-effort cloud write-off as outward/Lost).
-  const audit=audits.find(a=>a.id===auditId);
-  if(audit){ (audit.systemUpdated=audit.systemUpdated||[]).push(bc); audit.updatedAt=new Date().toISOString(); try{localStorage.setItem('jaey_audits',JSON.stringify(audits));}catch(e){} saveAuditRemote(audit); }
-  for(const r of stockData){ if(r.barcode==bc){ r.status='outward'; r.purpose='Unknown'; } }
+  writeOffUnknownCore(bc, auditId);
   buildMap(); try{localStorage.setItem('jaey_stock',JSON.stringify(stockData));}catch(e){}
-  if(navigator.onLine && sbCfg.url && sbCfg.key){
-    fetch(sbCfg.url+'/rest/v1/stock_data?barcode=eq.'+encodeURIComponent(bc),{
-      method:'PATCH', headers:sbHeaders({'Content-Type':'application/json','Prefer':'return=minimal'}),
-      body:JSON.stringify({status:'outward', purpose:'Unknown'})
-    }).catch(()=>{});
-  }
   toast('🔴 BC '+bc+' marked Unknown');
   renderResolve(); renderAdminReview(); updateStockComposition();
+}
+
+// ── BULK SELECT + ACTIONS for the Resolve missing list ──
+let resolveSel=new Set(), _resolveVisible=[];   // selected barcodes + currently-shown {bc,auditId,sample,foundIn}
+function toggleResolveSel(bc,checked){ if(checked) resolveSel.add(String(bc)); else resolveSel.delete(String(bc)); updateBulkBar(); }
+function toggleResolveAll(checked){ _resolveVisible.forEach(v=>checked?resolveSel.add(v.bc):resolveSel.delete(v.bc)); renderResolve(); }
+function updateBulkBar(){
+  const n=[...resolveSel].filter(bc=>_resolveVisible.some(v=>v.bc===bc)).length;
+  const cEl=document.getElementById('resolve-selcount'); if(cEl) cEl.textContent=n?n+' selected':'';
+  const aEl=document.getElementById('resolve-bulkactions'); if(aEl) aEl.style.display=n?'inline-flex':'none';
+  const all=document.getElementById('resolve-selall'); if(all) all.checked=_resolveVisible.length>0 && _resolveVisible.every(v=>resolveSel.has(v.bc));
+}
+function _selectedVisible(){ return _resolveVisible.filter(v=>resolveSel.has(v.bc)); }
+function bulkMarkUnknown(){
+  const sel=_selectedVisible(); if(!sel.length) return;
+  const samples=sel.filter(v=>v.sample).length, seen=sel.filter(v=>v.foundIn).length;
+  let warn='';
+  if(samples) warn+='\n• '+samples+' are SAMPLES (usually in the sample rack)';
+  if(seen) warn+='\n• '+seen+' were seen in another count (likely misplaced)';
+  if(!confirm('Write off '+sel.length+' piece'+(sel.length>1?'s':'')+' as UNKNOWN?'+(warn?'\n'+warn+'\n':'')+'\nThey\'ll be added to today\'s Unknown CSV and removed from the list.')) return;
+  for(const v of sel) writeOffUnknownCore(v.bc, v.auditId);
+  buildMap(); try{localStorage.setItem('jaey_stock',JSON.stringify(stockData));}catch(e){}
+  resolveSel.clear();
+  toast('🔴 '+sel.length+' marked Unknown');
+  renderResolve(); renderAdminReview(); updateStockComposition();
+}
+function bulkMarkFound(){
+  const sel=_selectedVisible(); if(!sel.length) return;
+  if(!confirm('Mark '+sel.length+' piece'+(sel.length>1?'s':'')+' as FOUND?')) return;
+  for(const v of sel) markFoundCore(v.bc, v.auditId);
+  resolveSel.clear();
+  toast('✓ '+sel.length+' marked found');
+  renderResolve(); renderAdminReview();
 }
 
 // Download today's Lost write-offs in the inventory upload format:
