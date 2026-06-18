@@ -623,6 +623,15 @@ details.review-card[open]>.rc-summary{border-bottom:1px solid var(--border)}
   <!-- RESOLVE: summary + missing-pieces worklist + corrections -->
   <div id="apg-resolve" class="pg">
     <div id="resolve-summary"></div>
+    <div class="card" style="margin-top:11px;background:var(--sage-light);border-color:var(--sage)">
+      <div class="ct" style="margin-bottom:4px">✓ Found a piece? Mark it here</div>
+      <div style="font-size:12px;color:var(--steel);margin-bottom:8px">Type any barcode you physically found — it'll be matched to its open audit and marked found automatically.</div>
+      <div class="bc-wrap">
+        <input type="text" id="resolve-found-in" placeholder="Found barcode…" inputmode="numeric" autocomplete="off" onkeydown="if(event.key==='Enter')resolveFoundByBarcode()">
+        <button class="btn bp" style="padding:11px 14px" onclick="resolveFoundByBarcode()">Mark found</button>
+      </div>
+      <div id="resolve-found-fb" style="font-size:13px;min-height:18px;margin-top:4px"></div>
+    </div>
     <div class="card" style="margin-top:11px">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
         <div class="ct" style="margin-bottom:0">🔍 Missing pieces</div>
@@ -632,6 +641,7 @@ details.review-card[open]>.rc-summary{border-bottom:1px solid var(--border)}
           <option value="found">Found-elsewhere first</option>
         </select>
       </div>
+      <input type="text" id="resolve-search" placeholder="🔍 Search barcode, style or colour…" autocomplete="off" oninput="renderResolve()" style="width:100%;font-size:13px;padding:8px 11px;margin-bottom:8px">
       <div style="font-size:12px;color:var(--steel);margin-bottom:8px">Every unresolved piece the system expects but nobody scanned. "Last scanned in" = it was scanned inside another style's audit (misplaced).</div>
       <div id="resolve-list"></div>
     </div>
@@ -2239,7 +2249,7 @@ function renderResolve(){
   const mmOf=a=>{const r=a.report||{};return (r.ghosts?.length||0)+(r.extras?.length||0)+(r.wrongProduct?.length||0);};
   const clean=todays.filter(a=>mmOf(a)===0).length;
   const issues=todays.length-clean;
-  const missing=collectMissing();
+  let missing=collectMissing();
   const extrasTotal=audits.reduce((n,a)=>n+(a.status!=='complete'?(a.report?.extras?.length||0):0),0);
   // per-auditor (today)
   const byAuditor={};
@@ -2259,12 +2269,14 @@ function renderResolve(){
     </div>`;
   }
   // worklist
+  const q=(document.getElementById('resolve-search')?.value||'').trim().toLowerCase();
+  if(q) missing=missing.filter(m=>String(m.bc).includes(q)||(m.product||'').toLowerCase().includes(q)||(m.color||'').toLowerCase().includes(q)||(m.sku||'').toLowerCase().includes(q));
   const sort=document.getElementById('resolve-sort')?.value||'age';
   if(sort==='style') missing.sort((a,b)=>(a.product+a.color).localeCompare(b.product+b.color));
   else if(sort==='found') missing.sort((a,b)=>(b.foundIn?1:0)-(a.foundIn?1:0));
   else missing.sort((a,b)=>new Date(a.at)-new Date(b.at)); // oldest first
   let html='';
-  if(!missing.length) html='<div class="empty"><div class="ei">✅</div><div>No unresolved missing pieces.</div></div>';
+  if(!missing.length) html='<div class="empty"><div class="ei">'+(q?'🔍':'✅')+'</div><div>'+(q?'No missing pieces match “'+q+'”.':'No unresolved missing pieces.')+'</div></div>';
   for(const m of missing){
     const days=Math.floor((Date.now()-new Date(m.at))/86400000);
     const ageTxt=days<=0?'today':days+'d ago';
@@ -2307,6 +2319,27 @@ function renderResolve(){
         ${journeyBtn(m.bc)}
       </div>
     </div>`).join('');
+}
+
+// Quick global mark-found: type any barcode, find the open audit where it's missing, and resolve it.
+function resolveFoundByBarcode(){
+  const input=document.getElementById('resolve-found-in');
+  const raw=(input.value||'').trim(); if(!raw) return;
+  const bc=String(parseInt(raw,10)||0)!=='0'?String(parseInt(raw,10)):raw;
+  const fb=document.getElementById('resolve-found-fb');
+  // Find an open (not complete) audit that still lists this barcode as missing.
+  const audit=audits.find(a=>a.status!=='complete'&&(a.report?.ghosts||[]).includes(bc));
+  if(!audit){
+    const f=stockData.find(r=>r.barcode==bc);
+    const already=audits.find(a=>(a.followUps||[]).some(u=>(u.foundBarcodes||[]).map(String).includes(bc)));
+    fb.innerHTML=already?'<span style="color:var(--steel)">BC '+bc+' is already marked found.</span>'
+      :'<span style="color:var(--rose)">⚠️ BC '+bc+(f?' ('+f.product+' · '+f.color+')':'')+' isn’t in any open audit’s missing list.</span>';
+    input.value=''; input.focus(); return;
+  }
+  resolveFound(bc,audit.id);
+  const f=stockData.find(r=>r.barcode==bc);
+  fb.innerHTML='<span style="color:var(--sage)">✓ BC '+bc+' marked found in <strong>'+audit.product+' · '+audit.color+'</strong>'+(f?' · Size '+f.size:'')+'</span>';
+  input.value=''; input.focus();
 }
 
 // Mark a missing piece as physically found (resolves the ghost on its audit).
