@@ -2520,41 +2520,55 @@ function recalcTiers(text, fname){
     const SALE=['Website','Myntra','Nykaa','Zilo','Zilo Malad','Zilo Ghatkopar','Zilo Parel','Akshaya','ZIFOR','Zifor','AKSHAYA CTS'];
     const INWARD_P=['Inhouse','Post-Exhibition Inward','Return - Website','Return- Myntra','Return - Nykaa','Return','No Error','Unknown','By System','Exhibition Stock Return'];
 
-    const sales={}, lastInward={}, recentInward={};
+    const parseTs=(timeStr)=>{
+      if(!timeStr) return NaN;
+      const dmy=timeStr.match(/^(\d{2})-(\d{2})-(\d{4})/);
+      const ymd=timeStr.match(/^(\d{4})-(\d{2})-(\d{2})/);
+      if(dmy) return new Date(dmy[3]+'-'+dmy[2]+'-'+dmy[1]).getTime();
+      if(ymd) return new Date(timeStr).getTime();
+      return NaN;
+    };
+
+    // Pass 1: find the uploaded data's full date span.
     let minDate=Infinity, maxDate=-Infinity;
+    for(let i=1;i<recs.length;i++){
+      const cols=recs[i]; if(cols.length===1&&cols[0].trim()==='') continue;
+      const ts=parseTs(cols[idx['Scan Time']]?.trim());
+      if(isNaN(ts)) continue;
+      if(ts<minDate) minDate=ts;
+      if(ts>maxDate) maxDate=ts;
+    }
+    if(maxDate===-Infinity) throw new Error('No valid Scan Time dates found');
+
+    // A/B/C tiers are always computed on only the LAST 60 DAYS of the data,
+    // however long a period the CSV covers.
+    const WINDOW_DAYS=60;
+    const windowCutoff=maxDate-WINDOW_DAYS*86400000;
+    const windowStart=Math.max(minDate,windowCutoff);
+    const rangeDays=Math.max(1,(maxDate-windowStart)/86400000); // ≤ 60
+
+    const sales={}, lastInward={}, recentInward={};
     const recentCutoff=Date.now()-7*86400000;
 
+    // Pass 2: sales velocity counts ONLY the last-60-days window; restock recency stays full-history.
     for(let i=1;i<recs.length;i++){
       const cols=recs[i]; if(cols.length===1&&cols[0].trim()==='') continue;
       const product=cols[idx['Product Name']]?.trim();
       const color=cols[idx['Color']]?.trim();
       const status=cols[idx['Status']]?.trim().toLowerCase();
       const purpose=cols[idx['Purpose']]?.trim()||'';
-      const timeStr=cols[idx['Scan Time']]?.trim();
-      if(!product||!color||!timeStr) continue;
-
-      // Parse date dd-mm-yyyy hh:mm:ss or yyyy-mm-dd
-      let ts;
-      const dmy=timeStr.match(/^(\d{2})-(\d{2})-(\d{4})/);
-      const ymd=timeStr.match(/^(\d{4})-(\d{2})-(\d{2})/);
-      if(dmy) ts=new Date(dmy[3]+'-'+dmy[2]+'-'+dmy[1]).getTime();
-      else if(ymd) ts=new Date(timeStr).getTime();
-      else continue;
-
-      if(ts<minDate) minDate=ts;
-      if(ts>maxDate) maxDate=ts;
+      const ts=parseTs(cols[idx['Scan Time']]?.trim());
+      if(!product||!color||isNaN(ts)) continue;
 
       const key=product+'|||'+color;
       if(status==='outward'&&SALE.includes(purpose)){
-        sales[key]=(sales[key]||0)+1;
+        if(ts>=windowCutoff) sales[key]=(sales[key]||0)+1;
       }
       if(status==='inward'&&INWARD_P.includes(purpose)){
         if(!lastInward[key]||ts>lastInward[key]) lastInward[key]=ts;
         if(ts>=recentCutoff) recentInward[key]=(recentInward[key]||0)+1;
       }
     }
-
-    const rangeDays=Math.max(1,(maxDate-minDate)/86400000);
     let aCount=0,bCount=0,cCount=0,dCount=0,updated=0;
 
     // Recalculate tiers for all STYLES_DATA entries
@@ -2580,16 +2594,22 @@ function recalcTiers(text, fname){
       else dCount++;
     }
 
-    // Save recalc metadata
-    const meta={fname,loadedAt:new Date().toISOString(),rangeDays:Math.round(rangeDays),dateFrom:new Date(minDate).toLocaleDateString('en-IN'),dateTo:new Date(maxDate).toLocaleDateString('en-IN'),a:aCount,b:bCount,c:cCount,d:dCount,updated};
+    // Save recalc metadata. dateFrom/dateTo = the last-60-day velocity window actually used.
+    const fullFrom=new Date(minDate).toLocaleDateString('en-IN');
+    const meta={fname,loadedAt:new Date().toISOString(),rangeDays:Math.round(rangeDays),windowDays:WINDOW_DAYS,
+      dateFrom:new Date(windowStart).toLocaleDateString('en-IN'),dateTo:new Date(maxDate).toLocaleDateString('en-IN'),
+      fullFrom,a:aCount,b:bCount,c:cCount,d:dCount,updated};
     localStorage.setItem('jaey_scan_meta',JSON.stringify(meta));
     updateScanDataStatus();
     renderPlanSuggestions();
-    toast('✓ Tiers recalculated: '+aCount+' A, '+bCount+' B, '+cCount+' C, '+dCount+' D');
+    toast('✓ Tiers recalculated (last '+Math.round(rangeDays)+'d): '+aCount+' A, '+bCount+' B, '+cCount+' C, '+dCount+' D');
 
+    const capped=(maxDate-minDate)/86400000>WINDOW_DAYS;
     document.getElementById('tier-recalc-status').style.display='block';
     document.getElementById('tier-recalc-status').innerHTML=
-      '✓ Updated '+updated+' styles from <strong>'+meta.dateFrom+'</strong> to <strong>'+meta.dateTo+'</strong> ('+Math.round(rangeDays)+' days). A:'+aCount+' B:'+bCount+' C:'+cCount+' D:'+dCount;
+      '✓ Updated '+updated+' styles. Tiers from the <strong>last '+Math.round(rangeDays)+' days</strong> ('+meta.dateFrom+' → '+meta.dateTo+')'+
+      (capped?' <span style="color:var(--steel)">· uploaded '+fullFrom+'→'+meta.dateTo+', older data ignored for velocity</span>':'')+
+      '. A:'+aCount+' B:'+bCount+' C:'+cCount+' D:'+dCount;
 
   }catch(e){ toast('❌ '+e.message); console.error(e); }
 }
