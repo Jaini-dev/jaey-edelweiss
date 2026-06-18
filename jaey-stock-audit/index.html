@@ -2960,11 +2960,13 @@ function renderPlanList(){
   for(const item of items){
     const img=getImg(item.product,item.color);
     const sd=STYLES_DATA.find(s=>s.product===item.product&&s.color===item.color);
+    // Show the assignee; if the style was never assigned, fall back to whoever actually audited it.
+    const who=item.assignee||(audits.find(a=>a.product===item.product&&a.color===item.color&&(a.savedAt||a.date||'').startsWith(date))?.auditor)||'';
     html+=`<div class="plan-item">
       ${img?`<img class="pi-img" src="${img}" onerror="this.style.display='none'" alt="">`:`<div style="width:32px;height:38px;background:var(--white);border-radius:5px;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:12px">👗</div>`}
       <div style="flex:1;min-width:0">
         <div style="font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${item.product}</div>
-        <div style="font-size:11px;color:var(--steel)">${item.color}${item.assignee?' · '+item.assignee:''}${sd?' · '+sd.tier:''}</div>
+        <div style="font-size:11px;color:var(--steel)">${item.color}${who?' · '+who:''}${sd?' · '+sd.tier:''}</div>
         <div style="font-size:10px;color:var(--steel);margin-top:2px;display:flex;gap:6px;flex-wrap:wrap">
           ${item.startedAt?'<span style="color:var(--sage)">▶ Started '+new Date(item.startedAt).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'})+'</span>':'<span>Not started</span>'}
           ${item.completedAt?'<span style="color:var(--sky)">✓ Sent '+new Date(item.completedAt).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'})+'</span>':''}
