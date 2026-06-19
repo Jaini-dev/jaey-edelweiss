@@ -592,7 +592,7 @@ details.review-card[open]>.rc-summary{border-bottom:1px solid var(--border)}
     <div style="display:flex;align-items:center;gap:10px">
       <div class="logo">Jaey<span>.</span></div>
       <span id="admin-name-hdr" style="font-size:12px;color:#aaa"></span>
-      <span id="app-ver" style="font-size:10px;color:#777">v58</span>
+      <span id="app-ver" style="font-size:10px;color:#777">v59</span>
     </div>
     <div class="hdr-r">
       <span class="admin-badge-hdr">ADMIN</span>
@@ -1190,7 +1190,7 @@ function showUserTab(name,tab){
   document.querySelectorAll('.unt').forEach(t=>t.classList.remove('active'));
   document.getElementById('upg-'+name).classList.add('active');
   if(tab) tab.classList.add('active');
-  if(name==='my-history'){ renderUserHistory(); refreshAuditsUI(); }
+  if(name==='my-history'){ renderUserHistory(); refreshAuditsUI(); syncStockDelta(); }
   if(name==='today') refreshPlansUI();
 }
 
@@ -2051,6 +2051,9 @@ function renderUserHistory(){
   const filtered=q?mine.filter(a=>a.product?.toLowerCase().includes(q)||a.color?.toLowerCase().includes(q)):mine;
   const el=document.getElementById('u-hist-list');
   if(!filtered.length){el.innerHTML='<div class="empty"><div class="ei">📋</div><div>No audits yet.</div></div>';return;}
+  // Only flag "new pieces added" on the latest audit per style, so it shows once.
+  const latestId={};
+  for(const a of filtered){ const k=a.product+'|||'+a.color; if(!latestId[k]||new Date(a.savedAt||a.date||0)>new Date(latestId[k].t)) latestId[k]={id:a.id,t:new Date(a.savedAt||a.date||0)}; }
   let html='';
   for(const a of filtered){
     const ds=formatDateTime(a.savedAt||a.date);
@@ -2072,6 +2075,7 @@ function renderUserHistory(){
           ${mm?'<span class="badge b-rose">⚠️ '+mm+'</span>':'<span class="badge b-sage">✅ Clear</span>'}
         </div>
         ${mm&&status!=='complete'?`<button style="background:none;border:none;color:var(--rose);font-size:12px;cursor:pointer;padding:0;margin-top:4px;text-decoration:underline" onclick="openUpdateMode(${a.id})">Update →</button>`:''}
+        ${(latestId[a.product+'|||'+a.color]?.id===a.id)?(()=>{const np=newPiecesFor(a.product,a.color);return np>0?`<div style="margin-top:6px;background:var(--sage-light);border:1px solid var(--sage);border-radius:8px;padding:5px 9px;font-size:11px;display:flex;justify-content:space-between;align-items:center;gap:8px"><span style="color:#3d6b3d;font-weight:600">📦 +${np} new piece${np>1?'s':''} added</span><button class="btn bo" style="font-size:10px;padding:3px 9px" onclick="continueAudit(${a.id})">➕ Add pieces</button></div>`:'';})():''}
       </div>
     </div>`;
   }
@@ -2090,6 +2094,7 @@ function enterAdminShell(){
   const sfCard=document.getElementById('start-fresh-card');
   if(sfCard) sfCard.style.display=(adminName==='Jaini')?'block':'none';
   renderAdminReview();
+  syncStockDelta(); // pull the shared "pcs added" panel so every admin sees the same
   updateScanDataStatus();
   updateStockComposition();
   const pd=document.getElementById('plan-date');
@@ -2827,7 +2832,47 @@ function saveStockDelta(since, added, removed){
   const grp=arr=>{const m={};for(const x of arr){const k=x.p+'|||'+x.c;const e=(m[k]=m[k]||{product:x.p,color:x.c,n:0,barcodes:[]});e.n++;if(x.bc)e.barcodes.push(String(x.bc));}return Object.values(m).sort((a,b)=>b.n-a.n);};
   const delta={date:new Date().toISOString(), since, added:added.length, removed:removed.length, addedStyles:grp(added), removedStyles:grp(removed)};
   try{localStorage.setItem('jaey_stock_delta',JSON.stringify(delta));}catch(e){}
+  pushStockDeltaCloud(delta); // share the "pcs added" panel with every admin + the team
   if(added.length||removed.length) setTimeout(()=>toast('📦 +'+added.length+' added, '+removed.length+' left'),700);
+}
+// ── STOCK-DELTA CLOUD SYNC (one tiny app_state key so all devices see the same "pcs added") ──
+function pushStockDeltaCloud(delta){
+  if(!sbCfg.url||!sbCfg.key||!navigator.onLine) return;
+  const body=JSON.stringify([{key:'stock_delta', value:JSON.stringify(delta), updated_at:new Date().toISOString()}]);
+  fetch(sbCfg.url+'/rest/v1/app_state?on_conflict=key',{method:'POST',
+    headers:sbHeaders({'Content-Type':'application/json','Prefer':'resolution=merge-duplicates,return=minimal'}),
+    body}).catch(()=>{});
+}
+async function fetchStockDeltaCloud(){
+  if(!sbCfg.url||!sbCfg.key||!navigator.onLine) return;
+  try{
+    const res=await fetch(sbCfg.url+'/rest/v1/app_state?select=value&key=eq.stock_delta',{headers:sbHeaders()});
+    if(!res.ok) return; // table not created yet → keep whatever is local
+    const rows=await res.json();
+    if(rows&&rows.length&&rows[0].value){ try{localStorage.setItem('jaey_stock_delta', rows[0].value);}catch(e){} }
+    else { try{localStorage.removeItem('jaey_stock_delta');}catch(e){} } // dismissed elsewhere → hide everywhere
+  }catch(e){}
+}
+// Pull the shared delta, then refresh every place it's shown.
+function syncStockDelta(){
+  fetchStockDeltaCloud().then(()=>{
+    if(typeof renderStockDelta==='function') renderStockDelta();
+    if(typeof renderReviewStockDelta==='function') renderReviewStockDelta();
+    if(typeof renderUserHistory==='function' && document.getElementById('u-hist-list')) renderUserHistory();
+  });
+}
+// Newly-added (CSV) pieces for a style still not scanned/found in its latest audit, else 0.
+function newPiecesFor(product,color){
+  let d=null; try{ d=JSON.parse(localStorage.getItem('jaey_stock_delta')||'null'); }catch(e){}
+  if(!d || !(d.addedStyles||[]).length) return 0;
+  const s=(d.addedStyles||[]).find(x=>x.product===product&&x.color===color);
+  if(!s) return 0;
+  let a=null;
+  for(const x of audits){ if(x.product===product&&x.color===color){ if(!a||new Date(x.savedAt||x.date||0)>new Date(a.savedAt||a.date||0)) a=x; } }
+  if(!a) return s.n;
+  const scanned=new Set((a.scanned||[]).map(e=>String(e).split('__')[0]));
+  for(const fu of (a.followUps||[])) for(const bc of (fu.foundBarcodes||[])) scanned.add(String(bc));
+  return (s.barcodes&&s.barcodes.length)? s.barcodes.filter(bc=>!scanned.has(String(bc))).length : s.n;
 }
 function _deltaRows(styles, btn){
   return (styles||[]).map(s=>`<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;padding:4px 0;border-bottom:1px solid var(--border)">
@@ -2869,7 +2914,16 @@ function renderReviewStockDelta(){
     <button class="btn bo" style="font-size:11px;padding:4px 9px;margin-top:8px" onclick="dismissStockDelta()">Dismiss</button>
   </div>`;
 }
-function dismissStockDelta(){ try{localStorage.removeItem('jaey_stock_delta');}catch(e){} renderStockDelta(); if(typeof renderAdminReview==='function') renderAdminReview(); }
+function dismissStockDelta(){
+  try{localStorage.removeItem('jaey_stock_delta');}catch(e){}
+  if(sbCfg.url&&sbCfg.key&&navigator.onLine){ // clear it for every device too
+    fetch(sbCfg.url+'/rest/v1/app_state?key=eq.stock_delta',{method:'DELETE',headers:sbHeaders({'Prefer':'return=minimal'})}).catch(()=>{});
+  }
+  renderStockDelta();
+  if(typeof renderReviewStockDelta==='function') renderReviewStockDelta();
+  if(typeof renderUserHistory==='function' && document.getElementById('u-hist-list')) renderUserHistory();
+  if(typeof renderAdminReview==='function') renderAdminReview();
+}
 function auditStyle(product,color){ if(!stockData.length){ toast('Load stock first'); return; } openScan(product,color); }
 
 function recoveryCheck(rows){
