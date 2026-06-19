@@ -932,7 +932,7 @@ function setUserName(){ proceedToUserPin(); }
 // Service Worker registered via sw.js when hosted on GitHub Pages
 
 if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./sw.js').catch(()=>{});
-const APP_VER='v68'; // single source of truth — shown in both admin + team headers
+const APP_VER='v69'; // single source of truth — shown in both admin + team headers
 document.addEventListener('DOMContentLoaded',()=>{
   document.querySelectorAll('.app-ver').forEach(e=>e.textContent=APP_VER);
   loadStorage();
@@ -3031,6 +3031,7 @@ function newPiecesFor(product,color){
   let a=null;
   for(const x of audits){ if(x.product===product&&x.color===color){ if(!a||new Date(x.savedAt||x.date||0)>new Date(a.savedAt||a.date||0)) a=x; } }
   if(!a) return s.n;
+  if(d.date && new Date(a.savedAt||a.date||0) >= new Date(d.date)) return 0; // audited after the new CSV → already counted
   const scanned=new Set((a.scanned||[]).map(e=>String(e).split('__')[0]));
   for(const fu of (a.followUps||[])) for(const bc of (fu.foundBarcodes||[])) scanned.add(String(bc));
   return (s.barcodes&&s.barcodes.length)? s.barcodes.filter(bc=>!scanned.has(String(bc))).length : s.n;
@@ -3054,12 +3055,13 @@ function renderReviewStockDelta(){
   const el=document.getElementById('review-stockdelta'); if(!el) return;
   let d=null; try{ d=JSON.parse(localStorage.getItem('jaey_stock_delta')||'null'); }catch(e){}
   if(!d || !(d.addedStyles||[]).length){ el.innerHTML=''; return; }
-  // Only surface added styles that are ALREADY audited and still have new pieces NOT yet scanned.
+  // Only surface added styles AUDITED BEFORE this CSV upload (later audits already include the new pieces).
   const latest={};
   for(const a of audits){ const k=a.product+'|||'+a.color; if(!latest[k]||new Date(a.savedAt||a.date||0)>new Date(latest[k].savedAt||latest[k].date||0)) latest[k]=a; }
   const rows=[];
   for(const s of (d.addedStyles||[])){
     const a=latest[s.product+'|||'+s.color]; if(!a) continue;
+    if(d.date && new Date(a.savedAt||a.date||0) >= new Date(d.date)) continue; // audited after the new CSV → already counted
     const scanned=new Set((a.scanned||[]).map(e=>String(e).split('__')[0]));
     for(const fu of (a.followUps||[])) for(const bc of (fu.foundBarcodes||[])) scanned.add(String(bc)); // count found-in-update too
     const rem=(s.barcodes&&s.barcodes.length)? s.barcodes.filter(bc=>!scanned.has(String(bc))).length : s.n; // drop once new pcs are scanned/found
