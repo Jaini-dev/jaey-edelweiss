@@ -881,7 +881,7 @@ const CATALOGUE_IMAGES={"Color Block Straight Dress|||Green": "https://jaey.blr1
 // STATE
 // ══════════════════
 // Shared backend baked in so every device connects automatically (anon key is public, protected by RLS).
-const SB_DEFAULT={url:'https://djyzaoisfslgkkfmgzuy.supabase.co',key:'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRqeXphb2lzZnNsZ2trZm1nenV5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ4NjI0NjgsImV4cCI6MjA5MDQzODQ2OH0.YC5FQjZGn1a8wMaE8ykMlOHBURNACrZRiBDtXd-TLjw'};
+const SB_DEFAULT={url:'https://uicittlmjpkzxwabwihv.supabase.co',key:'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVpY2l0dGxtanBrenh3YWJ3aWh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE4MzM2OTIsImV4cCI6MjA5NzQwOTY5Mn0.uKfrn7PiwTTcAXOYo7Dz0TgzOSgSIQIp1ChTpRpKgjI'};
 let stockData=[], productMap={}, audits=[], plans={}, sbCfg={url:SB_DEFAULT.url,key:SB_DEFAULT.key};
 let currentScan=null; // active scan session
 let foundBuffer=[], activeScanId=null;
@@ -4115,9 +4115,12 @@ function loadStorage(){
     document.getElementById('data-status').innerHTML='✓ <strong>'+stockData.length.toLocaleString()+' barcodes</strong> (cached)';
     updateStockComposition();}
   const sb=localStorage.getItem('jaey_supabase');
-  if(sb){const c=JSON.parse(sb); if(c&&c.url&&c.key) sbCfg=c;}
-  // Always fall back to the baked-in shared backend if nothing valid was stored.
-  if(!sbCfg.url||!sbCfg.key) sbCfg={url:SB_DEFAULT.url,key:SB_DEFAULT.key};
+  if(sb){try{const c=JSON.parse(sb); if(c&&c.url&&c.key) sbCfg=c;}catch(e){}}
+  // Force-migrate any device still pointing at the old project (or with no/invalid config) to the new backend.
+  if(!sbCfg.url||!sbCfg.key||/djyzaoisfslgkkfmgzuy/.test(sbCfg.url)){
+    sbCfg={url:SB_DEFAULT.url,key:SB_DEFAULT.key};
+    try{localStorage.setItem('jaey_supabase',JSON.stringify(sbCfg));}catch(e){}
+  }
   document.getElementById('sb-url').value=sbCfg.url;
   document.getElementById('sb-key').value=sbCfg.key;
   // Always start on login screen — no auto-login
