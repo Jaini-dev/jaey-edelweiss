@@ -1289,9 +1289,22 @@ function zoomImg(url){
 function closeImgZoom(){ document.getElementById('img-zoom-ov').style.display='none'; }
 
 // ── SELF-SERVE STYLE PICKER (catalogue, fast-movers first) ──
+// Every style to audit = baked STYLES_DATA + any product/colour that exists in the uploaded stock
+// but isn't in STYLES_DATA yet, so new styles/colours always appear (with a live inward count).
+function allStyles(){
+  const out=[], seen=new Set();
+  for(const s of STYLES_DATA){ const k=s.product+'|||'+s.color; if(!seen.has(k)){ seen.add(k); out.push(s); } }
+  for(const p in productMap){ for(const c in productMap[p]){
+    const k=p+'|||'+c; if(seen.has(k)) continue; seen.add(k);
+    out.push({product:p,color:c,tier:'D',vpw:0,auditEveryDays:30,
+      stockCount:(productMap[p][c]||[]).filter(r=>r.status==='inward').length,
+      unitsSold:0,restockNote:'',lastSale:'',lastInward:'',image:'',_fromStock:true});
+  }}
+  return out;
+}
 function buildCatalogue(){
   const seen=new Set(), items=[];
-  for(const s of STYLES_DATA){
+  for(const s of allStyles()){
     const key=s.product+'|||'+s.color;
     if(seen.has(key)) continue; seen.add(key);
     const liveCount=(productMap[s.product]?.[s.color]||[]).filter(r=>r.status==='inward').length;
@@ -2103,12 +2116,12 @@ function renderAdminReview(){
   const _dEl=document.getElementById('review-daily');
   if(_dEl){
     const _today=audits.filter(a=>(a.savedAt||a.date||'').startsWith(todayStr()));
-    const _pcs=_today.reduce((n,a)=>n+(a.report?.totalScanned||0),0);
+    const _pcs=_today.reduce((n,a)=>n+(a.report?.matched||0),0);
     _dEl.innerHTML=_today.length?`<div style="background:var(--cream);border:1px solid var(--border);border-radius:10px;padding:10px 14px;margin-bottom:10px;display:flex;align-items:center;gap:12px;font-size:13px;flex-wrap:wrap">
       <span>📊 <strong>Today</strong></span>
       <span><strong style="font-size:17px;font-family:'DM Serif Display',serif">${_today.length}</strong> style${_today.length>1?'s':''} audited</span>
       <span style="color:var(--border)">|</span>
-      <span><strong style="font-size:17px;font-family:'DM Serif Display',serif">${_pcs.toLocaleString()}</strong> pcs scanned</span>
+      <span><strong style="font-size:17px;font-family:'DM Serif Display',serif">${_pcs.toLocaleString()}</strong> pcs found</span>
     </div>`:'';
   }
   // New-arrivals heads-up — audited styles that gained pieces since (one-tap Add pieces each).
@@ -2781,18 +2794,18 @@ function renderDailySummary(){
   const byDay={};
   for(const a of audits){
     const d=(a.savedAt||a.date||'').slice(0,10); if(!d) continue;
-    const v=(byDay[d]=byDay[d]||{audits:0,scanned:0,accounted:0,missing:0});
+    const v=(byDay[d]=byDay[d]||{audits:0,found:0,missing:0});
     const r=a.report||{};
-    v.audits++; v.scanned+=(r.totalScanned||0); v.accounted+=(r.matched||0); v.missing+=(r.ghosts?.length||0);
+    v.audits++; v.found+=(r.matched||0); v.missing+=(r.ghosts?.length||0);
   }
   const days=Object.keys(byDay).sort((a,b)=>b.localeCompare(a)); // newest first
   if(!days.length){ el.innerHTML=''; return; }
   let html='<div class="card"><div class="ct">📅 Daily summary</div>'
-    +'<div style="font-size:11px;color:var(--steel);margin-bottom:8px">Scanned = barcodes physically counted that day · ✓ = accounted (correctly matched) · 🔴 = still missing</div>'
+    +'<div style="font-size:11px;color:var(--steel);margin-bottom:8px">Found = pieces verified present (includes ones found later in Resolve) · Missing = still not found. Found + Missing = total expected across the styles audited.</div>'
     +'<table style="width:100%;border-collapse:collapse;font-size:13px">'
-    +'<tr style="color:var(--steel);font-size:10px;letter-spacing:.04em;text-transform:uppercase;text-align:right"><th style="text-align:left;padding:4px 0">Date</th><th>Audits</th><th>Scanned</th><th>✓ Acc.</th><th>🔴 Miss</th></tr>';
+    +'<tr style="color:var(--steel);font-size:10px;letter-spacing:.04em;text-transform:uppercase;text-align:right"><th style="text-align:left;padding:4px 0">Date</th><th>Audits</th><th>✓ Found</th><th>🔴 Missing</th></tr>';
   for(const d of days){ const v=byDay[d];
-    html+=`<tr style="border-top:1px solid var(--border);text-align:right"><td style="text-align:left;padding:7px 0;font-weight:600">${formatDate(d)}</td><td>${v.audits}</td><td>${v.scanned.toLocaleString()}</td><td style="color:var(--sage)">${v.accounted.toLocaleString()}</td><td style="color:var(--rose)">${v.missing}</td></tr>`;
+    html+=`<tr style="border-top:1px solid var(--border);text-align:right"><td style="text-align:left;padding:7px 0;font-weight:600">${formatDate(d)}</td><td>${v.audits}</td><td style="color:var(--sage)">${v.found.toLocaleString()}</td><td style="color:var(--rose)">${v.missing}</td></tr>`;
   }
   html+='</table></div>';
   el.innerHTML=html;
@@ -2897,14 +2910,15 @@ function renderPlanSuggestions(){
   const today=todayStr();
   const planned=new Set((plans[today]||[]).map(p=>p.product+'|||'+p.color));
   const q=(document.getElementById('plan-search')?.value||'').trim().toLowerCase();
+  const styles=allStyles();   // baked styles + any in the uploaded stock (so new styles/colours appear)
   let list;
   if(q){
     // Global search — across ALL styles, every stock level (incl. OOS) and every tier.
-    list=STYLES_DATA.filter(s=>!planned.has(s.product+'|||'+s.color)&&(s.product.toLowerCase().includes(q)||s.color.toLowerCase().includes(q)));
+    list=styles.filter(s=>!planned.has(s.product+'|||'+s.color)&&(s.product.toLowerCase().includes(q)||s.color.toLowerCase().includes(q)));
   } else if(planFilter==='oos'){
-    list=STYLES_DATA.filter(s=>(s.stockCount||0)<=0&&!planned.has(s.product+'|||'+s.color));
+    list=styles.filter(s=>(s.stockCount||0)<=0&&!planned.has(s.product+'|||'+s.color));
   } else {
-    list=STYLES_DATA.filter(s=>s.stockCount>0&&!planned.has(s.product+'|||'+s.color));
+    list=styles.filter(s=>s.stockCount>0&&!planned.has(s.product+'|||'+s.color));
     if(planFilter==='A') list=list.filter(s=>s.tier==='A');
     else if(planFilter==='B') list=list.filter(s=>s.tier==='B');
     else if(planFilter==='overdue') list=list.filter(s=>isOverdue(s));
