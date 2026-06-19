@@ -932,7 +932,7 @@ function setUserName(){ proceedToUserPin(); }
 // Service Worker registered via sw.js when hosted on GitHub Pages
 
 if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./sw.js').catch(()=>{});
-const APP_VER='v66'; // single source of truth — shown in both admin + team headers
+const APP_VER='v67'; // single source of truth — shown in both admin + team headers
 document.addEventListener('DOMContentLoaded',()=>{
   document.querySelectorAll('.app-ver').forEach(e=>e.textContent=APP_VER);
   loadStorage();
@@ -2253,6 +2253,7 @@ function renderAdminReview(){
     const ds=d.toLocaleDateString('en-IN',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});
     const r=audit.report||{};
     const ghosts=r.ghosts?.length||0, extras=openExtras(audit).length, wrong=openWrongProduct(audit,scanIdx).length;
+    const stray=(audit.status!=='complete')?wrongHandledList(audit,scanIdx).length:0; // scanned-here-by-mistake, just needs removing
     const mm=ghosts+extras+wrong;
     const status=audit.status||'review';
     const sys=sysTotal(audit), accounted=accountedBarcodes(audit).length;
@@ -2273,7 +2274,7 @@ function renderAdminReview(){
         <div style="flex:1;min-width:0">
           <div style="font-weight:700;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${audit.product} · ${audit.color}</div>
           <div style="font-size:11px;color:var(--steel);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
-            <span style="color:var(--sage);font-weight:600">✓ ${accounted}/${sys}</span>${ghosts?` · <span style="color:var(--rose);font-weight:600">🔴 ${ghosts} missing</span>`:''}${extras?` · <span style="color:#c47f17">🟡 ${extras}</span>`:''}${wrong?` · <span style="color:var(--rose)">⚠️ ${wrong}</span>`:''} · ${audit.auditor}
+            <span style="color:var(--sage);font-weight:600">✓ ${accounted}/${sys}</span>${ghosts?` · <span style="color:var(--rose);font-weight:600">🔴 ${ghosts} missing</span>`:''}${extras?` · <span style="color:#c47f17">🟡 ${extras}</span>`:''}${wrong?` · <span style="color:var(--rose)">⚠️ ${wrong}</span>`:''}${stray?` · <span style="color:#a06800">🟡 ${stray} to remove</span>`:''} · ${audit.auditor}
           </div>
         </div>
         <span class="sp sp-${live?'scanning':status}" style="flex-shrink:0">${statusLbl}</span>
@@ -2285,7 +2286,8 @@ function renderAdminReview(){
           ${ghosts?'<span class="badge b-rose">🔴 '+ghosts+' missing</span>':''}
           ${extras?'<span class="badge b-gold">🟡 '+extras+' sys mismatch</span>':''}
           ${wrong?'<span class="badge b-rose">⚠️ '+wrong+' wrong label</span>':''}
-          ${!mm?'<span class="badge b-sage">✅ No mismatches</span>':''}
+          ${stray?'<span class="badge b-gold">🟡 '+stray+' to remove</span>':''}
+          ${(!mm&&!stray)?'<span class="badge b-sage">✅ No mismatches</span>':''}
         </div>
         <div class="rc-meta" style="font-size:11px;color:var(--steel);margin-bottom:6px">${ds} · <strong>${audit.auditor}</strong></div>
         ${live?`<div style="padding:2px 0 6px;font-size:12px;color:var(--sage);font-weight:600">🟢 Active now — ${audit.auditor} is ${status==='scanning'?'scanning':'updating'}, count updating live</div>`:''}
@@ -2315,16 +2317,16 @@ function renderAdminReview(){
       html+=`</div>`;
     }
 
-    // Wrong-label pieces already counted in their TRUE style → just delete the stray scan here.
+    // Wrong-label pieces already counted in their TRUE style → still an open action: delete the stray scan here.
     const handled=status!=='complete'?wrongHandledList(audit,scanIdx):[];
     if(handled.length){
-      html+=`<div class="rc-actions-section" style="border-color:var(--sage)">
-        <div style="font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--sage);margin-bottom:7px">✓ Already counted elsewhere — just remove from here</div>`;
+      html+=`<div class="rc-actions-section" style="border-color:var(--gold)">
+        <div style="font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#a06800;margin-bottom:7px">⚠️ Scanned here by mistake — remove from this style</div>`;
       for(const e of handled){
         const bc=String(e).split('__')[0]; const ts=wrongTrueStyle(e);
-        html+=`<div class="action-item" style="background:var(--sage-light)">
+        html+=`<div class="action-item" style="background:var(--gold-light)">
           <div class="ai-text"><strong>BC ${bc}</strong>
-            <div class="ai-sub">A <strong>${ts.product}${ts.color?' · '+ts.color:''}</strong> scanned here by mistake — already counted in ${ts.product}. Just remove it from ${audit.product}.</div>
+            <div class="ai-sub">A <strong>${ts.product}${ts.color?' · '+ts.color:''}</strong> scanned here by mistake — <span style="color:#2f5d2f">already counted in ${ts.product} ✓</span>. Just remove it from ${audit.product}.</div>
           </div>
           <button class="btn bo" style="font-size:11px;padding:6px 11px;flex-shrink:0;color:var(--rose);border-color:var(--rose)" onclick="removeScanFromAudit(${audit.id},'${bc}')">🗑 Remove</button>
         </div>`;
