@@ -1411,10 +1411,12 @@ function openScan(product,color){
   const rows=productMap[product]?.[color]||[];
   const sysInward=rows.filter(r=>r.status==='inward');
 
-  // Record first-touch time on the plan item
+  // Record first-touch on the plan item — or create one so a self-started audit shows in Plan (who's doing what).
   const todayItems=plans[todayStr()]||[];
   const planItem=todayItems.find(p=>p.product===product&&p.color===color&&(!p.assignee||p.assignee.toLowerCase()===name.toLowerCase()));
-  if(planItem&&!planItem.startedAt){ planItem.startedAt=new Date().toISOString(); savePlans(); syncPlanChange({op:'upsert',item:planItem}); }
+  if(planItem){ if(!planItem.startedAt){ planItem.startedAt=new Date().toISOString(); savePlans(); syncPlanChange({op:'upsert',item:planItem}); } }
+  else { const ni={id:Date.now(),product,color,plannedDate:todayStr(),assignee:name,addedAt:new Date().toISOString(),startedAt:new Date().toISOString()};
+    (plans[todayStr()]=plans[todayStr()]||[]).push(ni); savePlans(); syncPlanChange({op:'upsert',item:ni}); }
 
   currentScan={
     id:Date.now(), date:new Date().toISOString(), product, color,
@@ -2227,6 +2229,7 @@ function renderAdminReview(){
     }
 
     html+=`<div class="rc-footer">`;
+    if(isAdmin()) html+=`<button class="btn bo" title="Delete this audit" style="font-size:12px;padding:7px 9px;color:var(--rose);border-color:var(--rose);flex-shrink:0" onclick="deleteAudit(${audit.id})">🗑</button>`;
     if(status==='complete'){
       html+=`<div style="font-size:12px;color:var(--sage)">✅ Completed by <strong>${audit.completedBy||'Admin'}</strong> · ${audit.completedAt?new Date(audit.completedAt).toLocaleDateString('en-IN',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}):''}</div>`;
       html+=`<button class="btn bo" style="font-size:11px;padding:5px 9px;margin-left:auto" onclick="continueAudit(${audit.id})">➕ Add pieces</button>`;
@@ -2335,6 +2338,20 @@ function toggleAction(auditId,itemId,checked){
   if(checked&&!audit.checkedActions.includes(itemId)) audit.checkedActions.push(itemId);
   else if(!checked) audit.checkedActions=audit.checkedActions.filter(x=>x!==itemId);
   try{localStorage.setItem('jaey_audits',JSON.stringify(audits));}catch(e){console.warn('Storage full, audit in memory only');}
+}
+
+// Admin: permanently delete an audit (e.g. a test) from this device + the cloud.
+async function deleteAudit(id){
+  const a=audits.find(x=>x.id===id);
+  if(!confirm('Delete this audit'+(a?' for '+a.product+' · '+a.color:'')+'?\n\nIt is removed from every device and cannot be undone.')) return;
+  audits=audits.filter(x=>x.id!==id);
+  try{localStorage.setItem('jaey_audits',JSON.stringify(audits));}catch(e){}
+  try{const p=JSON.parse(localStorage.getItem('jaey_pending_sync')||'[]'); localStorage.setItem('jaey_pending_sync',JSON.stringify(p.filter(x=>x.id!==id)));}catch(e){}
+  if(sbCfg.url&&sbCfg.key&&navigator.onLine){
+    try{ await fetch(sbCfg.url+'/rest/v1/stock_audits?audit_id=eq.'+encodeURIComponent(String(id)),{method:'DELETE',headers:sbHeaders({'Prefer':'return=minimal'})}); }catch(e){}
+  }
+  toast('🗑 Audit deleted');
+  renderAdminReview(); renderResolve(); if(typeof renderAdminHistory==='function') renderAdminHistory();
 }
 
 function completeAudit(id){
