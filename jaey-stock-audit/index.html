@@ -932,7 +932,7 @@ function setUserName(){ proceedToUserPin(); }
 // Service Worker registered via sw.js when hosted on GitHub Pages
 
 if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./sw.js').catch(()=>{});
-const APP_VER='v63'; // single source of truth — shown in both admin + team headers
+const APP_VER='v64'; // single source of truth — shown in both admin + team headers
 document.addEventListener('DOMContentLoaded',()=>{
   document.querySelectorAll('.app-ver').forEach(e=>e.textContent=APP_VER);
   loadStorage();
@@ -2294,12 +2294,14 @@ function renderAdminReview(){
       html+=`<div class="rc-actions-section">
         <div style="font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--steel);margin-bottom:7px">Open items — resolve in the 🔧 Resolve tab</div>`;
       for(const ai of actionItems){
+        const isMissing=ai.bc&&ai.id&&ai.id.indexOf('g-')===0; // only the 🔴 missing pieces get a Found button
         html+=`<div class="action-item" style="align-items:flex-start">
           <div class="ai-text">
             <strong>${ai.label}</strong>${ai.sample?' <span style="background:#6b3fa0;color:#fff;font-size:9px;font-weight:700;padding:1px 6px;border-radius:20px;vertical-align:middle">🧷 SAMPLE</span>':''}
             <div class="ai-sub">${ai.detail}</div>
             ${ai.bc?`<a onclick="showBarcodeJourney('${ai.bc}')" style="font-size:11px;color:var(--sky);cursor:pointer;text-decoration:underline">📜 View movement history</a>`:''}
           </div>
+          ${isMissing?`<button class="btn bs" style="font-size:11px;padding:6px 11px;flex-shrink:0" onclick="resolveFound('${ai.bc}',${audit.id})">✓ Found</button>`:''}
         </div>`;
       }
       html+=`</div>`;
