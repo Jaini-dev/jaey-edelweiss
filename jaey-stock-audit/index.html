@@ -528,10 +528,11 @@ details.review-card[open]>.rc-summary{border-bottom:1px solid var(--border)}
   <!-- SCAN MODE -->
   <div id="ss-scan-mode" class="ss-body">
     <div class="bc-wrap">
-      <input type="text" id="bc-in" placeholder="Barcode..." inputmode="numeric" autocomplete="off"
+      <input type="text" id="bc-in" placeholder="Type / scan barcode..." inputmode="numeric" autocomplete="off"
              onkeydown="if(event.key==='Enter')addBC()">
       <button class="btn bp" style="padding:11px 14px" onclick="addBC()">Add</button>
     </div>
+    <button class="btn bo bb" onclick="openCamScan()" style="margin:8px 0 4px;font-size:14px;padding:12px">📷 Scan with camera</button>
     <div id="bc-fb" class="scan-fb"></div>
     <div id="scan-bulk-wrap" style="display:none">
       <div class="sep">or paste multiple</div>
@@ -1485,13 +1486,14 @@ function closeScanScreen(){
   updateDraftBanner();
 }
 
-function addBC(){
-  const input=document.getElementById('bc-in');
-  const raw=input.value.trim(); if(!raw) return;
+// Process one barcode string (from manual entry, camera, or OCR). Returns {bc,res,found}.
+function feedBarcode(raw){
+  if(!currentScan) return null;
+  raw=String(raw||'').trim(); if(!raw) return null;
   const bc=String(parseInt(raw,10)||0)!=='0'?String(parseInt(raw,10)):raw.toString();
   if(currentScan.scanned.some(e=>(e.split('__')[0])===bc)){
     showFB('warn','Already scanned','','');
-    input.value=''; return;
+    return {bc,res:'dup'};
   }
   const found=stockData.find(r=>r.barcode==bc);
   let res='match';
@@ -1511,11 +1513,95 @@ function addBC(){
       currentScan.scanned.push(bc); res='match';
     }
   }
-  input.value=''; input.focus();
   renderScanList();
   saveDraft();              // persist progress so a back-tap / reload never loses it
   liveHeartbeat({bc,type:res});
   liveSyncAudit();          // push the growing count to admin Review (debounced, non-blocking)
+  return {bc,res,found};
+}
+
+function addBC(){
+  const input=document.getElementById('bc-in');
+  feedBarcode(input.value);
+  input.value=''; input.focus();
+}
+
+// ── CAMERA + OCR SCANNER (feeds the same feedBarcode path) ──
+const CS_FMT=['code_128','ean_13','ean_8','upc_a','upc_e','code_39','itf','codabar','qr_code','data_matrix'];
+let csTrack=null,csTorchOn=false,csLast='',csLastT=0,csActx=null,csRunning=false,csOcrWorker=null,csOcrBusy=false,csZxing=null;
+function csBeep(){try{csActx=csActx||new(window.AudioContext||window.webkitAudioContext)();const o=csActx.createOscillator(),g=csActx.createGain();o.type='square';o.frequency.value=1200;g.gain.value=0.06;o.connect(g);g.connect(csActx.destination);o.start();o.stop(csActx.currentTime+0.055);}catch(e){}}
+function csVibrate(){try{navigator.vibrate&&navigator.vibrate(50);}catch(e){}}
+function csFlash(){const f=document.getElementById('cs-flash');if(!f)return;f.classList.add('on');setTimeout(()=>f.classList.remove('on'),85);}
+function csSetEngine(t){const e=document.getElementById('cs-engine');if(e)e.textContent='⚡ '+t;}
+function csLoadZXing(){return new Promise((res,rej)=>{if(window.ZXing)return res();const s=document.createElement('script');s.src='https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js';s.onload=res;s.onerror=rej;document.head.appendChild(s);});}
+function csLoadTesseract(){return new Promise((res,rej)=>{if(window.Tesseract)return res();const s=document.createElement('script');s.src='https://cdn.jsdelivr.net/npm/tesseract.js@5.1.0/dist/tesseract.min.js';s.onload=res;s.onerror=rej;document.head.appendChild(s);});}
+function csShowResult(bc,fmt,r){
+  const c=document.getElementById('cs-count'); if(c) c.textContent=(currentScan&&currentScan.scanned)?currentScan.scanned.length:0;
+  const el=document.getElementById('cs-last'); if(!el) return;
+  const via=fmt==='OCR#'?'🔢 read as number':(fmt==='manual'?'typed':fmt);
+  if(!r){ el.innerHTML='<span>BC '+bc+'</span>'; return; }
+  if(r.res==='match') el.innerHTML='<span style="color:#9fd08a;font-weight:700">✓ '+(r.found.product+' · '+r.found.color)+'</span>&nbsp;<span style="color:#888;font-size:12px">'+via+'</span>';
+  else if(r.res==='dup') el.innerHTML='<span style="color:#e8c07a">↺ Already scanned · BC '+bc+'</span>';
+  else if(r.res==='wrong') el.innerHTML='<span style="color:#ef9a9a;font-weight:700">⚠️ Wrong product · BC '+bc+'</span>';
+  else if(r.res==='outward') el.innerHTML='<span style="color:#e8c07a">⚠️ System says OUTWARD · BC '+bc+'</span>';
+  else el.innerHTML='<span style="color:#e8c07a">❌ Not in system · BC '+bc+'</span>';
+}
+function csAccept(raw,fmt){
+  const norm=String(parseInt((raw||'').replace(/\D/g,'')||'0',10));
+  if(!norm||norm==='0')return;
+  csLast=norm;csLastT=Date.now();
+  csBeep();csVibrate();csFlash();
+  const r=feedBarcode(norm);
+  csShowResult(norm,fmt,r);
+}
+function csOnDetected(raw,fmt){ const norm=String(parseInt((raw||'').replace(/\D/g,'')||'0',10)); if(norm===csLast&&Date.now()-csLastT<1500)return; csAccept(norm,fmt); }
+function csManualAdd(){ const inp=document.getElementById('cs-manual'); const v=(inp.value||'').trim(); if(!v)return; csAccept(v,'manual'); inp.value=''; inp.focus(); }
+function csPostStart(){ const caps=csTrack&&csTrack.getCapabilities?csTrack.getCapabilities():{}; const b=document.getElementById('cs-torch'); if(b&&(!caps||!caps.torch)) b.style.opacity='.4'; }
+async function csTorch(){ if(!csTrack)return; try{ csTorchOn=!csTorchOn; await csTrack.applyConstraints({advanced:[{torch:csTorchOn}]}); const b=document.getElementById('cs-torch'); b.style.background=csTorchOn?'var(--gold)':'#2a2a32'; b.style.color=csTorchOn?'#000':'#fff'; }catch(e){} }
+async function openCamScan(){
+  if(!currentScan){ toast('Start scanning a style first'); return; }
+  document.getElementById('cs-overlay').classList.add('on');
+  document.getElementById('cs-count').textContent=(currentScan.scanned||[]).length;
+  const v=document.getElementById('cs-cam');
+  try{
+    if('BarcodeDetector' in window){
+      const stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'},width:{ideal:1920},height:{ideal:1080}},audio:false});
+      v.srcObject=stream; await v.play(); csTrack=stream.getVideoTracks()[0]; csRunning=true;
+      const supp=await window.BarcodeDetector.getSupportedFormats();
+      const det=new window.BarcodeDetector({formats:CS_FMT.filter(f=>supp.includes(f))});
+      csSetEngine('Native'); csPostStart();
+      const loop=async()=>{ if(!csRunning)return; if(v.readyState>=2){ try{ const codes=await det.detect(v); if(codes&&codes.length) for(const c of codes) csOnDetected(c.rawValue,c.format); }catch(e){} } requestAnimationFrame(loop); }; loop();
+    } else {
+      await csLoadZXing(); const reader=new ZXing.BrowserMultiFormatReader(); csSetEngine('ZXing'); csRunning=true;
+      csZxing=await reader.decodeFromConstraints({video:{facingMode:{ideal:'environment'}},audio:false},v,(res)=>{ if(res&&csRunning) csOnDetected(res.getText(),'barcode'); });
+      csTrack=(v.srcObject&&v.srcObject.getVideoTracks)?v.srcObject.getVideoTracks()[0]:null; csPostStart();
+    }
+  }catch(e){ document.getElementById('cs-last').innerHTML='<span style="color:#ef9a9a">Camera unavailable: '+(e.message||e)+'. Use the manual box below.</span>'; }
+}
+function closeCamScan(){
+  csRunning=false;
+  try{ if(csZxing&&csZxing.stop) csZxing.stop(); }catch(e){}
+  try{ const v=document.getElementById('cs-cam'); if(v.srcObject){ v.srcObject.getTracks().forEach(t=>t.stop()); v.srcObject=null; } }catch(e){}
+  csTrack=null; csTorchOn=false; csLast='';
+  document.getElementById('cs-overlay').classList.remove('on');
+  renderScanList();
+  try{ document.getElementById('bc-in').focus(); }catch(e){}
+}
+async function csReadNumber(){
+  if(csOcrBusy)return; const v=document.getElementById('cs-cam'); if(!v||!v.videoWidth)return; csOcrBusy=true;
+  const el=document.getElementById('cs-last'); el.innerHTML='<span>🔢 Reading the number… hold steady</span>';
+  try{
+    await csLoadTesseract();
+    if(!csOcrWorker){ csOcrWorker=await Tesseract.createWorker('eng'); await csOcrWorker.setParameters({tessedit_char_whitelist:'0123456789'}); }
+    const vw=v.videoWidth,vh=v.videoHeight,cw=Math.round(vw*0.85),ch=Math.round(vh*0.32),cx=Math.round((vw-cw)/2),cy=Math.round(vh*0.22);
+    const cv=document.createElement('canvas'); cv.width=cw*2; cv.height=ch*2; const ctx=cv.getContext('2d'); ctx.drawImage(v,cx,cy,cw,ch,0,0,cv.width,cv.height);
+    const im=ctx.getImageData(0,0,cv.width,cv.height),d=im.data; for(let i=0;i<d.length;i+=4){ const g=0.3*d[i]+0.59*d[i+1]+0.11*d[i+2]; const t=g>128?255:0; d[i]=d[i+1]=d[i+2]=t; } ctx.putImageData(im,0,0);
+    const {data}=await csOcrWorker.recognize(cv);
+    const digits=((data.text||'').match(/\d{5,}/g)||[]).sort((a,b)=>b.length-a.length)[0]||'';
+    if(digits&&digits.length>=4) csAccept(digits,'OCR#');
+    else el.innerHTML='<span style="color:#ef9a9a">Couldn’t read it — fill the box with just the number, steady &amp; lit, then retry</span>';
+  }catch(e){ el.innerHTML='<span style="color:#ef9a9a">OCR error: '+(e.message||e)+'</span>'; }
+  csOcrBusy=false;
 }
 
 // Debounced, non-blocking push of the in-progress scan so admin Review sees the count grow live.
@@ -4130,5 +4216,53 @@ document.getElementById('modal-ov').addEventListener('click',function(e){if(e.ta
 let toastT;
 function toast(msg){const el=document.getElementById('toast');el.textContent=msg;el.classList.add('show');clearTimeout(toastT);toastT=setTimeout(()=>el.classList.remove('show'),2600);}
 </script>
+
+<!-- ── CAMERA SCAN OVERLAY ── -->
+<style>
+#cs-overlay{position:fixed;inset:0;z-index:3000;background:#000;display:none;flex-direction:column}
+#cs-overlay.on{display:flex}
+#cs-cam{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+#cs-flash{position:absolute;inset:0;background:#6b8e5a;opacity:0;pointer-events:none}
+#cs-flash.on{opacity:.4}
+.cs-reticle{position:absolute;top:32%;left:50%;transform:translate(-50%,-50%);width:78%;max-width:340px;aspect-ratio:1.6;z-index:2;pointer-events:none}
+.cs-reticle::before{content:'';position:absolute;inset:0;border:2px solid #ffffff55;border-radius:16px}
+.cs-cn{position:absolute;width:26px;height:26px;border:3px solid var(--gold)}
+.cs-c1{top:-2px;left:-2px;border-right:0;border-bottom:0;border-radius:16px 0 0 0}
+.cs-c2{top:-2px;right:-2px;border-left:0;border-bottom:0;border-radius:0 16px 0 0}
+.cs-c3{bottom:-2px;left:-2px;border-right:0;border-top:0;border-radius:0 0 0 16px}
+.cs-c4{bottom:-2px;right:-2px;border-left:0;border-top:0;border-radius:0 0 16px 0}
+.cs-laser{position:absolute;left:7%;right:7%;height:2px;background:var(--rose);box-shadow:0 0 9px 1px var(--rose);animation:cssweep 1.7s ease-in-out infinite}
+@keyframes cssweep{0%,100%{top:11%}50%{top:89%}}
+.cs-top{position:absolute;top:0;left:0;right:0;z-index:3;display:flex;align-items:center;gap:8px;padding:calc(env(safe-area-inset-top) + 10px) 14px 10px;background:linear-gradient(#000b,transparent);color:#fff}
+.cs-count{margin-left:auto;background:#ffffff22;border:1px solid #ffffff33;padding:4px 12px;border-radius:20px;font-weight:700;font-size:13px}
+.cs-x{background:#fff;color:#000;border:none;border-radius:20px;padding:7px 14px;font-weight:800;font-family:inherit;font-size:13px}
+.cs-sheet{position:absolute;left:0;right:0;bottom:0;z-index:3;background:#15151a;border-radius:16px 16px 0 0;padding:11px 13px calc(env(safe-area-inset-bottom) + 12px);box-shadow:0 -12px 30px #000a}
+.cs-last{background:#23232b;color:#fff;border-radius:11px;padding:11px 12px;margin-bottom:8px;min-height:48px;font-size:14px;display:flex;align-items:center}
+.cs-row{display:flex;gap:7px;margin-bottom:8px}
+.cs-row input{flex:1;padding:12px;border-radius:11px;border:1px solid #333;background:#0d0d0f;color:#fff;font-size:16px;font-family:inherit;outline:none}
+.cs-btn{padding:12px 14px;border-radius:11px;border:none;background:#2a2a32;color:#fff;font-weight:700;font-family:inherit;font-size:13px;flex:1}
+.cs-btn-g{background:var(--gold);color:#000}
+</style>
+<div id="cs-overlay">
+  <video id="cs-cam" playsinline muted autoplay></video>
+  <div id="cs-flash"></div>
+  <div class="cs-reticle"><div class="cs-cn cs-c1"></div><div class="cs-cn cs-c2"></div><div class="cs-cn cs-c3"></div><div class="cs-cn cs-c4"></div><div class="cs-laser"></div></div>
+  <div class="cs-top">
+    <span style="font-weight:700">📷 Camera scan</span><span id="cs-engine" style="font-size:10px;color:#bbb"></span>
+    <span class="cs-count" id="cs-count">0</span>
+    <button class="cs-x" onclick="closeCamScan()">✓ Done</button>
+  </div>
+  <div class="cs-sheet">
+    <div class="cs-last" id="cs-last"><span style="color:#9a9aa2">Point the camera at a barcode tag…</span></div>
+    <div class="cs-row">
+      <input id="cs-manual" placeholder="Or type the barcode…" inputmode="numeric" autocomplete="off" onkeydown="if(event.key==='Enter')csManualAdd()">
+      <button class="cs-btn" style="flex:0 0 auto" onclick="csManualAdd()">Add</button>
+    </div>
+    <div class="cs-row">
+      <button class="cs-btn" id="cs-torch" onclick="csTorch()">🔦 Torch</button>
+      <button class="cs-btn cs-btn-g" onclick="csReadNumber()">🔢 Read #</button>
+    </div>
+  </div>
+</div>
 </body>
 </html>
