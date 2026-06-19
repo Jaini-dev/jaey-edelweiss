@@ -446,7 +446,10 @@ details.review-card[open]>.rc-summary{border-bottom:1px solid var(--border)}
 
 <div id="shell-user">
   <div class="user-header">
-    <div class="logo">Jaey<span>.</span></div>
+    <div style="display:flex;align-items:center;gap:8px">
+      <div class="logo">Jaey<span>.</span></div>
+      <span class="app-ver" style="font-size:10px;color:#777"></span>
+    </div>
     <div class="hdr-r">
       <span id="u-pending" style="display:none;font-size:11px;color:var(--gold)">⏳ syncing</span>
       <div id="ob-u"></div>
@@ -592,7 +595,7 @@ details.review-card[open]>.rc-summary{border-bottom:1px solid var(--border)}
     <div style="display:flex;align-items:center;gap:10px">
       <div class="logo">Jaey<span>.</span></div>
       <span id="admin-name-hdr" style="font-size:12px;color:#aaa"></span>
-      <span id="app-ver" style="font-size:10px;color:#777">v61</span>
+      <span id="app-ver" class="app-ver" style="font-size:10px;color:#777"></span>
     </div>
     <div class="hdr-r">
       <span class="admin-badge-hdr">ADMIN</span>
@@ -923,7 +926,9 @@ function setUserName(){ proceedToUserPin(); }
 // Service Worker registered via sw.js when hosted on GitHub Pages
 
 if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./sw.js').catch(()=>{});
+const APP_VER='v62'; // single source of truth — shown in both admin + team headers
 document.addEventListener('DOMContentLoaded',()=>{
+  document.querySelectorAll('.app-ver').forEach(e=>e.textContent=APP_VER);
   loadStorage();
   fetchUsersFromSupabase(); // refresh roster cache so any device sees the latest team
   updateOnline();
