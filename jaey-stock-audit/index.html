@@ -917,6 +917,7 @@ let CATALOGUE_HIDDEN={"Color Block Straight Dress|||Green":1,"Color Block Straig
 // Shared backend baked in so every device connects automatically (anon key is public, protected by RLS).
 const SB_DEFAULT={url:'https://uicittlmjpkzxwabwihv.supabase.co',key:'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVpY2l0dGxtanBrenh3YWJ3aWh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE4MzM2OTIsImV4cCI6MjA5NzQwOTY5Mn0.uKfrn7PiwTTcAXOYo7Dz0TgzOSgSIQIp1ChTpRpKgjI'};
 let stockData=[], productMap={}, audits=[], plans={}, sbCfg={url:SB_DEFAULT.url,key:SB_DEFAULT.key};
+let _stockHasNoteTags; // learned at upload time: do the stock_data columns note/tags exist?
 let currentScan=null; // active scan session
 let foundBuffer=[], activeScanId=null;
 let selectedStyles=new Set(), assigneeRows=[{name:''}], planFilter='all', reviewFilter='review';
@@ -932,7 +933,7 @@ function setUserName(){ proceedToUserPin(); }
 // Service Worker registered via sw.js when hosted on GitHub Pages
 
 if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./sw.js').catch(()=>{});
-const APP_VER='v70'; // single source of truth — shown in both admin + team headers
+const APP_VER='v71'; // single source of truth — shown in both admin + team headers
 document.addEventListener('DOMContentLoaded',()=>{
   document.querySelectorAll('.app-ver').forEach(e=>e.textContent=APP_VER);
   loadStorage();
@@ -2303,12 +2304,14 @@ function renderAdminReview(){
       for(const ai of actionItems){
         const isMissing=ai.bc&&ai.id&&ai.id.indexOf('g-')===0; // 🔴 missing → Found button
         const isWrong=ai.bc&&ai.id&&ai.id.indexOf('w-')===0;   // ⚠️ wrong label → Fixed-on-system / Remove
+        const isExtra=ai.bc&&ai.id&&ai.id.indexOf('x-')===0;   // 🟡 system mismatch → Fixed-on-system
         let btns='';
         if(isMissing) btns=`<button class="btn bs" style="font-size:11px;padding:6px 11px;flex-shrink:0" onclick="resolveFound('${ai.bc}',${audit.id})">✓ Found</button>`;
         else if(isWrong) btns=`<div style="display:flex;flex-direction:column;gap:5px;flex-shrink:0">
             <button class="btn bs" style="font-size:11px;padding:6px 10px;white-space:nowrap" onclick="markFixedOnSystem('${ai.bc}',${audit.id})">✓ Fixed on system</button>
             <button class="btn bo" style="font-size:11px;padding:6px 10px;white-space:nowrap;color:var(--rose);border-color:var(--rose)" onclick="removeScanFromAudit(${audit.id},'${ai.bc}')">🗑 Not ours</button>
           </div>`;
+        else if(isExtra) btns=`<button class="btn bs" style="font-size:11px;padding:6px 10px;white-space:nowrap;flex-shrink:0" onclick="markFixedOnSystem('${ai.bc}',${audit.id})">✓ Fixed on system</button>`;
         html+=`<div class="action-item" style="align-items:flex-start">
           <div class="ai-text">
             <strong>${ai.label}</strong>${ai.sample?' <span style="background:#6b3fa0;color:#fff;font-size:9px;font-weight:700;padding:1px 6px;border-radius:20px;vertical-align:middle">🧷 SAMPLE</span>':''}
@@ -2346,7 +2349,7 @@ function renderAdminReview(){
       for(const p of pend){
         html+=`<div class="action-item" style="background:var(--sky-light)">
           <div class="ai-text"><strong>BC ${p.bc}</strong>
-            <div class="ai-sub">Will auto-confirm as a match the moment a stock CSV shows it under ${audit.product}. <a onclick="unmarkFixedOnSystem('${p.bc}',${audit.id})" style="color:var(--rose);cursor:pointer;text-decoration:underline">undo</a></div>
+            <div class="ai-sub">Will auto-confirm the moment a stock CSV shows BC ${p.bc} inward under ${audit.product}. <a onclick="unmarkFixedOnSystem('${p.bc}',${audit.id})" style="color:var(--rose);cursor:pointer;text-decoration:underline">undo</a></div>
           </div>
         </div>`;
       }
@@ -2443,7 +2446,9 @@ function wrongHandledList(audit, idx){
 // whether fixed here or in the main inventory system (after the next stock CSV upload). Backdated
 // inward corrections still clear, because we key on current status, not the event date.
 function openExtras(audit){
+  const pend=new Set(auditFixedPending(audit.id).map(p=>String(p.bc)));
   return (audit.report?.extras||[]).filter(bc=>{
+    if(pend.has(String(bc))) return false; // parked as "fixed on system"
     if((audit.systemUpdated||[]).includes(bc)) return false;
     const row=stockData.find(r=>r.barcode==bc);
     return !(row && row.status==='inward');   // cleared once the system shows inward
@@ -2459,7 +2464,7 @@ function buildActionItems(audit, idx){
     items.push({id:'g-'+bc, bc, sample:samp, label:'Mark BC '+bc+' as outward', detail:(row?row.sku+' · Size '+row.size+' — ':'')+'In system but not physically found'+(samp?' · likely in the sample rack':'')+(ctx?'<br>'+ctx:'')});
   }
   if((r.ghosts||[]).length>6) items.push({id:'g-more',label:'+'+(r.ghosts.length-6)+' more missing barcodes',detail:'See full detail'});
-  for(const bc of (r.extras||[])){
+  for(const bc of openExtras(audit)){
     const row=stockData.find(f=>f.barcode==bc);
     items.push({id:'x-'+bc, bc, label:'Mark BC '+bc+' as inward', detail:(row?'Size '+row.size+' — ':'')+'Present physically but system says outward'});
   }
@@ -4056,8 +4061,7 @@ async function uploadStockToSupabase(rows, fname){
     const BATCH=500;
     let uploaded=0;
     const ts=new Date().toISOString();
-    for(let i=0;i<rows.length;i+=BATCH){
-      const batch=rows.slice(i,i+BATCH).map(r=>({
+    const mkRow=(r,withNT)=>{ const o={
         barcode:String(r.barcode||''),
         product_name:String(r.product||''),
         color:String(r.color||''),
@@ -4066,12 +4070,18 @@ async function uploadStockToSupabase(rows, fname){
         sku:String(r.sku||''),
         purpose:String(r.purpose||''),
         uploaded_at:String(ts)
-      }));
-      const res=await fetch(sbCfg.url+'/rest/v1/stock_data',{
+      }; if(withNT){ o.note=String(r.note||''); o.tags=String(r.tags||''); } return o; };
+    for(let i=0;i<rows.length;i+=BATCH){
+      const slice=rows.slice(i,i+BATCH);
+      const post=withNT=>fetch(sbCfg.url+'/rest/v1/stock_data',{
         method:'POST',
         headers:{'Content-Type':'application/json','apikey':sbCfg.key,'Authorization':'Bearer '+sbCfg.key,'Prefer':'return=minimal'},
-        body:JSON.stringify(batch)
+        body:JSON.stringify(slice.map(r=>mkRow(r,withNT)))
       });
+      let res=await post(_stockHasNoteTags!==false); // try with note/tags unless we already learned the columns are missing
+      if(!res.ok && res.status===400 && _stockHasNoteTags!==false){ // columns not added yet → retry without, remember
+        _stockHasNoteTags=false; res=await post(false);
+      } else if(res.ok && _stockHasNoteTags===undefined){ _stockHasNoteTags=true; }
       if(!res.ok){
         const errBody=await res.text().catch(()=>'');
         console.error('Upload error:', res.status, errBody);
@@ -4102,11 +4112,16 @@ async function fetchStockFromSupabase(){
     
     // Fetch in pages (Supabase default limit is 1000)
     let allRows=[], from=0, pageSize=1000, maxUp='';
+    let cols='barcode,product_name,color,size,status,sku,purpose,uploaded_at,note,tags';
     while(true){
-      const res=await fetch(
-        sbCfg.url+'/rest/v1/stock_data?select=barcode,product_name,color,size,status,sku,purpose,uploaded_at&order=id&offset='+from+'&limit='+pageSize,
+      const get=()=>fetch(
+        sbCfg.url+'/rest/v1/stock_data?select='+cols+'&order=id&offset='+from+'&limit='+pageSize,
         {headers:{'apikey':sbCfg.key,'Authorization':'Bearer '+sbCfg.key,'Range-Unit':'items','Range':from+'-'+(from+pageSize-1),'Prefer':'count=none'}}
       );
+      let res=await get();
+      if(!res.ok && res.status===400 && cols.indexOf('note')>=0){ // note/tags columns not added yet → load without them
+        cols='barcode,product_name,color,size,status,sku,purpose,uploaded_at'; res=await get();
+      }
       if(!res.ok) throw new Error('HTTP '+res.status);
       const page=await res.json();
       if(!page.length) break;
@@ -4128,7 +4143,9 @@ async function fetchStockFromSupabase(){
       size:r.size,
       status:r.status,
       sku:r.sku||'',
-      purpose:r.purpose||''
+      purpose:r.purpose||'',
+      note:r.note||'',   // carry sample/damage/alteration context through the cloud
+      tags:r.tags||''
     }));
     buildMap();
     try{localStorage.setItem('jaey_stock',JSON.stringify(stockData));}catch(e){}
