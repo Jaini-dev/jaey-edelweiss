@@ -591,7 +591,7 @@ details.review-card[open]>.rc-summary{border-bottom:1px solid var(--border)}
     <div style="display:flex;align-items:center;gap:10px">
       <div class="logo">Jaey<span>.</span></div>
       <span id="admin-name-hdr" style="font-size:12px;color:#aaa"></span>
-      <span id="app-ver" style="font-size:10px;color:#777">v54</span>
+      <span id="app-ver" style="font-size:10px;color:#777">v55</span>
     </div>
     <div class="hdr-r">
       <span class="admin-badge-hdr">ADMIN</span>
@@ -2426,6 +2426,9 @@ function buildScanIndex(){
       const kind=e.includes('__WRONG:')?'misplaced':(String(e).endsWith('__UNKNOWN')?'unknown':'scanned');
       (idx[bc]=idx[bc]||[]).push({auditId:a.id,product:a.product,color:a.color,auditor:a.auditor,at:a.savedAt||a.date,kind});
     }
+    // Also index pieces found later via the update/resolve flow (followUps) so they count as accounted too.
+    for(const fu of (a.followUps||[])) for(const bc of (fu.foundBarcodes||[]))
+      (idx[String(bc)]=idx[String(bc)]||[]).push({auditId:a.id,product:a.product,color:a.color,auditor:fu.by||a.auditor,at:fu.at||a.savedAt||a.date,kind:'found'});
   }
   return idx;
 }
@@ -2530,7 +2533,7 @@ function renderResolve(){
       const mis=last.kind==='misplaced';
       auditedHtml+=`<div style="border:1px solid #90b890;border-left:3px solid var(--sage);background:var(--sage-light);border-radius:8px;padding:10px;margin-bottom:8px">
         <div style="font-weight:600;font-size:13px;color:#2f5d2f">✓ BC ${bc} — already audited</div>
-        <div style="font-size:12px;color:#3d6b3d;margin-top:2px">Scanned by <strong>${last.auditor}</strong> under <strong>${last.product} · ${last.color}</strong> · ${formatDateTime(last.at)}${mis?' <span style="color:#a06800">(scanned here, belongs to another style)</span>':''}</div>
+        <div style="font-size:12px;color:#3d6b3d;margin-top:2px">${last.kind==='found'?'Found in update by':'Scanned by'} <strong>${last.auditor}</strong> under <strong>${last.product} · ${last.color}</strong> · ${formatDateTime(last.at)}${mis?' <span style="color:#a06800">(scanned here, belongs to another style)</span>':''}</div>
       </div>`;
     }
   }
