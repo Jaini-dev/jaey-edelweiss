@@ -591,7 +591,7 @@ details.review-card[open]>.rc-summary{border-bottom:1px solid var(--border)}
     <div style="display:flex;align-items:center;gap:10px">
       <div class="logo">Jaey<span>.</span></div>
       <span id="admin-name-hdr" style="font-size:12px;color:#aaa"></span>
-      <span id="app-ver" style="font-size:10px;color:#777">v56</span>
+      <span id="app-ver" style="font-size:10px;color:#777">v57</span>
     </div>
     <div class="hdr-r">
       <span class="admin-badge-hdr">ADMIN</span>
@@ -1511,15 +1511,31 @@ function continueAudit(auditId){
   const rows=productMap[audit.product]?.[audit.color]||[];
   audit.systemBarcodes=rows;
   audit.systemInward=rows.filter(r=>r.status==='inward').map(r=>r.barcode);  // reconcile against the latest CSV
+  audit._priorStatus=audit.status||'review';   // restore on exit (so it doesn't become a draft)
+  audit._adding=true;
   audit.status='scanning';
   if(!audit.scanned) audit.scanned=[];
   currentScan=audit;
   clearDraft();              // this audit is the active session now
   _renderScanScreen();
-  toast('➕ Adding to '+audit.product+' · '+audit.color+' — scan new pieces');
+  toast('➕ Adding to '+audit.product+' · '+audit.color+' — scan new pcs, then just go Back (auto-saves)');
 }
 
 function closeScanScreen(){
+  // Topping up an existing audit (Add pieces): just save it and keep its status — no "draft" prompt.
+  if(currentScan && currentScan._adding){
+    currentScan.report=genReport(currentScan);
+    currentScan.status=(currentScan._priorStatus==='complete')?'complete':'updated';
+    currentScan.updatedAt=new Date().toISOString();
+    delete currentScan._adding; delete currentScan._priorStatus;
+    try{localStorage.setItem('jaey_audits',JSON.stringify(audits));}catch(e){}
+    saveAuditRemote(currentScan); clearDraft();
+    document.getElementById('scan-screen').classList.remove('active');
+    liveStop(); currentScan=null; updateDraftBanner();
+    if(typeof renderAdminReview==='function') renderAdminReview();
+    toast('✓ Saved');
+    return;
+  }
   if(currentScan&&currentScan.status==='scanning'&&currentScan.scanned.length>0){
     saveDraft(); // keep it safe — they can resume from the home screen
     if(!confirm('Leave this audit?\n\nYour '+currentScan.scanned.length+' scanned piece(s) are saved as a draft you can resume from the home screen.')) return;
@@ -1673,6 +1689,7 @@ function removeBC(entry){
 // ══════════════════
 function sendForReview(){
   if(!currentScan||!currentScan.scanned.length) return toast('Scan at least one barcode first');
+  delete currentScan._adding; delete currentScan._priorStatus;
   const report=genReport(currentScan);
   currentScan.report=report;
   currentScan.status='review';
