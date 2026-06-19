@@ -591,7 +591,7 @@ details.review-card[open]>.rc-summary{border-bottom:1px solid var(--border)}
     <div style="display:flex;align-items:center;gap:10px">
       <div class="logo">Jaey<span>.</span></div>
       <span id="admin-name-hdr" style="font-size:12px;color:#aaa"></span>
-      <span id="app-ver" style="font-size:10px;color:#777">v50</span>
+      <span id="app-ver" style="font-size:10px;color:#777">v51</span>
     </div>
     <div class="hdr-r">
       <span class="admin-badge-hdr">ADMIN</span>
@@ -652,6 +652,7 @@ details.review-card[open]>.rc-summary{border-bottom:1px solid var(--border)}
   <div id="apg-review" class="pg active">
     <div id="review-daily"></div>
     <div id="review-newarrivals"></div>
+    <div id="review-stockdelta"></div>
     <input type="text" id="review-search" placeholder="🔍 Search style or colour…" autocomplete="off" oninput="renderAdminReview()" style="width:100%;font-size:13px;padding:8px 11px;margin-bottom:9px">
     <div style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap">
       <button class="btn bo" id="rf-review" onclick="setReviewFilter('review')" style="font-size:11px;padding:5px 10px;border-color:var(--gold)">⏳ Needs Review</button>
@@ -791,6 +792,15 @@ details.review-card[open]>.rc-summary{border-bottom:1px solid var(--border)}
           <strong style="font-size:13px">Upload items catalogue CSV</strong>
           <div style="font-size:11px;color:var(--steel);margin-top:2px">jaey_items_catalogue_*.csv — refreshes style images (title · color_group · image_link)</div>
           <input type="file" id="catalogue-f" accept=".csv" onchange="handleCatalogueCSV(event)">
+        </div>
+      </div>
+      <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border)">
+        <div style="font-weight:600;font-size:13px">📦 Compare vs an earlier CSV <span style="font-size:11px;font-weight:400;color:var(--steel)">(what changed)</span></div>
+        <div style="font-size:11px;color:var(--steel);margin:2px 0 6px">Upload an older in/out CSV (e.g. yesterday's) → shows pcs added/removed vs current stock, listed in Review with one-tap Audit. Does NOT change live stock.</div>
+        <div class="uz" onclick="document.getElementById('compare-f').click()" style="padding:14px">
+          <div style="font-size:22px;margin-bottom:4px">📦</div>
+          <strong style="font-size:13px">Upload baseline CSV to compare</strong>
+          <input type="file" id="compare-f" accept=".csv" onchange="handleCompareCSV(event)">
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:8px;margin:11px 0;color:var(--steel);font-size:11px">
@@ -2156,6 +2166,7 @@ function renderAdminReview(){
       ${na.length>8?`<div style="color:var(--steel);margin-top:4px">+${na.length-8} more style${na.length-8>1?'s':''}</div>`:''}
     </div>`:'';
   }
+  renderReviewStockDelta();
   const q=(document.getElementById('review-search')?.value||'').trim().toLowerCase();
   const matchQ=(p,c)=>!q||((p||'').toLowerCase().includes(q))||((c||'').toLowerCase().includes(q));
 
@@ -2747,38 +2758,83 @@ function stockDeltaVsLast(rows){
   try{
     const curInward=rows.filter(r=>r.status==='inward');
     const curSet=new Set(curInward.map(r=>String(r.barcode)));
-    const styleOf={}; for(const r of curInward) styleOf[String(r.barcode)]=(r.product||'?')+' · '+(r.color||'?');
-    const byStyle=arr=>{const m={};arr.forEach(s=>m[s]=(m[s]||0)+1);return Object.entries(m).sort((a,b)=>b[1]-a[1]);};
+    const styleOf={}; for(const r of curInward) styleOf[String(r.barcode)]={p:r.product||'?',c:r.color||'?'};
     const prev=JSON.parse(localStorage.getItem('jaey_stock_last')||'null');
     if(prev && Array.isArray(prev.inward)){
       const prevSet=new Set(prev.inward), prevStyle=prev.style||{};
       const added=[], removed=[];
-      for(const bc of curSet) if(!prevSet.has(bc)) added.push(styleOf[bc]||'—');
-      for(const bc of prevSet) if(!curSet.has(bc)) removed.push(prevStyle[bc]||'—');
-      const delta={date:new Date().toISOString(), since:prev.date, added:added.length, removed:removed.length,
-        addedByStyle:byStyle(added), removedByStyle:byStyle(removed)};
-      try{localStorage.setItem('jaey_stock_delta',JSON.stringify(delta));}catch(e){}
-      if(added.length||removed.length) setTimeout(()=>toast('📦 +'+added.length+' added, '+removed.length+' left since last upload'),700);
+      for(const bc of curSet) if(!prevSet.has(bc)) added.push(styleOf[bc]||{p:'—',c:''});
+      for(const bc of prevSet) if(!curSet.has(bc)) removed.push(prevStyle[bc]||{p:'—',c:''});
+      saveStockDelta(prev.date, added, removed);
     } else { try{localStorage.removeItem('jaey_stock_delta');}catch(e){} }
-    // baseline for next time (store style per barcode so we can name removed pieces too)
     localStorage.setItem('jaey_stock_last', JSON.stringify({date:new Date().toISOString(), inward:[...curSet], style:styleOf}));
-    const hist=JSON.parse(localStorage.getItem('jaey_stock_hist')||'[]');
-    hist.push({date:new Date().toISOString(), total:curSet.size});
+    const hist=JSON.parse(localStorage.getItem('jaey_stock_hist')||'[]'); hist.push({date:new Date().toISOString(), total:curSet.size});
     localStorage.setItem('jaey_stock_hist', JSON.stringify(hist.slice(-120)));
-    renderStockDelta();
+    renderStockDelta(); if(typeof renderAdminReview==='function') renderAdminReview();
   }catch(e){ console.warn('stockDelta',e); }
 }
-// Render the last upload's "added / removed since last upload" with per-style breakdowns (persists across reloads).
+// Compare an EARLIER csv (e.g. yesterday's) against the current stock, WITHOUT changing live stock.
+function handleCompareCSV(e){
+  const f=e.target.files[0]; if(!f) return;
+  if(!stockData.length){ toast('Load current stock first, then compare'); e.target.value=''; return; }
+  const r=new FileReader();
+  r.onload=ev=>{
+    try{
+      const recs=parseCSVRecords(ev.target.result);
+      const head=recs[0].map(h=>h.trim().replace(/^﻿/,'')); const idx={}; head.forEach((h,i)=>idx[h]=i);
+      if(idx['Barcode']===undefined||idx['Status']===undefined) throw new Error('Need Barcode + Status columns');
+      const baseInward=new Set(), baseStyle={};
+      for(let i=1;i<recs.length;i++){ const c=recs[i]; if(c.length<3) continue;
+        if((c[idx['Status']]||'').trim().toLowerCase()!=='inward') continue;
+        const bc=String(parseInt((c[idx['Barcode']]||'0').trim(),10)); if(!bc||bc==='0') continue;
+        baseInward.add(bc); baseStyle[bc]={p:(c[idx['Product Name']]||'').trim(),c:(c[idx['Color']]||'').trim()};
+      }
+      const curInward=stockData.filter(x=>x.status==='inward'); const curSet=new Set(curInward.map(x=>String(x.barcode)));
+      const curStyle={}; for(const x of curInward) curStyle[String(x.barcode)]={p:x.product||'?',c:x.color||'?'};
+      const added=[], removed=[];
+      for(const bc of curSet) if(!baseInward.has(bc)) added.push(curStyle[bc]);
+      for(const bc of baseInward) if(!curSet.has(bc)) removed.push(baseStyle[bc]);
+      saveStockDelta('baseline '+f.name, added, removed);
+      renderStockDelta(); if(typeof renderAdminReview==='function') renderAdminReview();
+    }catch(err){ toast('❌ '+err.message); }
+    e.target.value='';
+  };
+  r.readAsText(f);
+}
+function saveStockDelta(since, added, removed){
+  const grp=arr=>{const m={};for(const x of arr){const k=x.p+'|||'+x.c;(m[k]=m[k]||{product:x.p,color:x.c,n:0}).n++;}return Object.values(m).sort((a,b)=>b.n-a.n);};
+  const delta={date:new Date().toISOString(), since, added:added.length, removed:removed.length, addedStyles:grp(added), removedStyles:grp(removed)};
+  try{localStorage.setItem('jaey_stock_delta',JSON.stringify(delta));}catch(e){}
+  if(added.length||removed.length) setTimeout(()=>toast('📦 +'+added.length+' added, '+removed.length+' left'),700);
+}
+function _deltaRows(styles, btn){
+  return (styles||[]).map(s=>`<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;padding:4px 0;border-bottom:1px solid var(--border)">
+    <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px">${s.product} · ${s.color}</span>
+    <span style="display:flex;align-items:center;gap:7px;flex-shrink:0"><span style="font-weight:700;color:var(--sage)">+${s.n}</span>${btn?`<button class="btn bs" style="font-size:10px;padding:3px 9px" onclick="auditStyle('${esc(s.product)}','${esc(s.color)}')">Audit →</button>`:''}</span></div>`).join('');
+}
 function renderStockDelta(){
   const el=document.getElementById('stock-delta'); if(!el) return;
   let d=null; try{ d=JSON.parse(localStorage.getItem('jaey_stock_delta')||'null'); }catch(e){}
   if(!d){ el.innerHTML='<span style="color:var(--steel)">The next upload will show “+added / −left since last upload”.</span>'; return; }
-  const since=d.since?formatDateTime(d.since):'last upload';
-  const list=arr=>(arr||[]).map(([s,n])=>`<div style="display:flex;justify-content:space-between;gap:8px;padding:3px 0;border-bottom:1px solid var(--border)"><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${s}</span><span style="font-weight:700;flex-shrink:0">${n}</span></div>`).join('');
+  let since=d.since||'last upload'; if(/^\d{4}-\d{2}-\d{2}T/.test(since)) since=formatDateTime(since);
   el.innerHTML=`📦 <strong style="color:var(--sage)">+${d.added} added</strong> · <strong style="color:var(--rose)">−${d.removed} left</strong> <span style="color:var(--steel)">since ${since}</span>`
-    + ((d.addedByStyle||[]).length?`<details style="margin-top:6px"><summary style="cursor:pointer;font-size:12px;color:var(--sky)">▸ ${d.added} added — which styles</summary><div style="margin-top:5px;font-size:12px">${list(d.addedByStyle)}</div></details>`:'')
-    + ((d.removedByStyle||[]).length?`<details style="margin-top:4px"><summary style="cursor:pointer;font-size:12px;color:var(--steel)">▸ ${d.removed} left — which styles</summary><div style="margin-top:5px;font-size:12px;color:var(--steel)">${list(d.removedByStyle)}</div></details>`:'');
+    + ((d.addedStyles||[]).length?`<details style="margin-top:6px"><summary style="cursor:pointer;font-size:12px;color:var(--sky)">▸ ${d.added} added — which styles</summary><div style="margin-top:5px">${_deltaRows(d.addedStyles,false)}</div></details>`:'')
+    + ((d.removedStyles||[]).length?`<details style="margin-top:4px"><summary style="cursor:pointer;font-size:12px;color:var(--steel)">▸ ${d.removed} left — which styles</summary><div style="margin-top:5px;color:var(--steel)">${(d.removedStyles||[]).map(s=>`<div style="display:flex;justify-content:space-between;padding:3px 0;font-size:12px"><span>${s.product} · ${s.color}</span><span>${s.n}</span></div>`).join('')}</div></details>`:'');
 }
+// Review panel so the team sees today's newly-added pieces and can scan each style.
+function renderReviewStockDelta(){
+  const el=document.getElementById('review-stockdelta'); if(!el) return;
+  let d=null; try{ d=JSON.parse(localStorage.getItem('jaey_stock_delta')||'null'); }catch(e){}
+  if(!d || !(d.addedStyles||[]).length){ el.innerHTML=''; return; }
+  let since=d.since||'last upload'; if(/^\d{4}-\d{2}-\d{2}T/.test(since)) since=formatDateTime(since);
+  el.innerHTML=`<div style="background:var(--sage-light);border:1px solid var(--sage);border-radius:10px;padding:10px 12px;margin-bottom:10px;font-size:12px">
+    <div style="font-weight:700;color:#3d6b3d;margin-bottom:6px">📦 ${d.added} new piece${d.added>1?'s':''} added since ${since} — scan these styles:</div>
+    ${_deltaRows(d.addedStyles, true)}
+    <button class="btn bo" style="font-size:11px;padding:4px 9px;margin-top:8px" onclick="dismissStockDelta()">Dismiss</button>
+  </div>`;
+}
+function dismissStockDelta(){ try{localStorage.removeItem('jaey_stock_delta');}catch(e){} renderStockDelta(); if(typeof renderAdminReview==='function') renderAdminReview(); }
+function auditStyle(product,color){ if(!stockData.length){ toast('Load stock first'); return; } openScan(product,color); }
 
 function recoveryCheck(rows){
   const log=getLostLog(); if(!log.length) return;
