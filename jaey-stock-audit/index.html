@@ -591,7 +591,7 @@ details.review-card[open]>.rc-summary{border-bottom:1px solid var(--border)}
     <div style="display:flex;align-items:center;gap:10px">
       <div class="logo">Jaey<span>.</span></div>
       <span id="admin-name-hdr" style="font-size:12px;color:#aaa"></span>
-      <span id="app-ver" style="font-size:10px;color:#777">v55</span>
+      <span id="app-ver" style="font-size:10px;color:#777">v56</span>
     </div>
     <div class="hdr-r">
       <span class="admin-badge-hdr">ADMIN</span>
@@ -2837,7 +2837,8 @@ function renderReviewStockDelta(){
   for(const s of (d.addedStyles||[])){
     const a=latest[s.product+'|||'+s.color]; if(!a) continue;
     const scanned=new Set((a.scanned||[]).map(e=>String(e).split('__')[0]));
-    const rem=(s.barcodes&&s.barcodes.length)? s.barcodes.filter(bc=>!scanned.has(String(bc))).length : s.n; // drop once new pcs are scanned
+    for(const fu of (a.followUps||[])) for(const bc of (fu.foundBarcodes||[])) scanned.add(String(bc)); // count found-in-update too
+    const rem=(s.barcodes&&s.barcodes.length)? s.barcodes.filter(bc=>!scanned.has(String(bc))).length : s.n; // drop once new pcs are scanned/found
     if(rem>0) rows.push({product:s.product, color:s.color, n:rem, audit:a});
   }
   if(!rows.length){ el.innerHTML=''; return; }
