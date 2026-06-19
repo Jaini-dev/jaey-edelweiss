@@ -704,6 +704,7 @@ details.review-card[open]>.rc-summary{border-bottom:1px solid var(--border)}
 
   <!-- HISTORY -->
   <div id="apg-a-history" class="pg">
+    <div id="daily-summary"></div>
     <div class="card">
       <div class="ct">🕒 Full Audit History</div>
       <input type="text" id="a-hist-search" placeholder="Search product, color, person..." oninput="renderAdminHistory()" style="font-size:13px;padding:8px 11px;margin-bottom:8px">
@@ -2107,7 +2108,7 @@ function renderAdminReview(){
       <span>📊 <strong>Today</strong></span>
       <span><strong style="font-size:17px;font-family:'DM Serif Display',serif">${_today.length}</strong> style${_today.length>1?'s':''} audited</span>
       <span style="color:var(--border)">|</span>
-      <span><strong style="font-size:17px;font-family:'DM Serif Display',serif">${_pcs.toLocaleString()}</strong> pcs found</span>
+      <span><strong style="font-size:17px;font-family:'DM Serif Display',serif">${_pcs.toLocaleString()}</strong> pcs scanned</span>
     </div>`:'';
   }
   // New-arrivals heads-up — audited styles that gained pieces since (one-tap Add pieces each).
@@ -2774,7 +2775,31 @@ function showFullDetail(id){
 // ══════════════════
 // ADMIN: HISTORY
 // ══════════════════
+// Per-day rollup: audits done, pieces scanned (counted), accounted (matched), still missing.
+function renderDailySummary(){
+  const el=document.getElementById('daily-summary'); if(!el) return;
+  const byDay={};
+  for(const a of audits){
+    const d=(a.savedAt||a.date||'').slice(0,10); if(!d) continue;
+    const v=(byDay[d]=byDay[d]||{audits:0,scanned:0,accounted:0,missing:0});
+    const r=a.report||{};
+    v.audits++; v.scanned+=(r.totalScanned||0); v.accounted+=(r.matched||0); v.missing+=(r.ghosts?.length||0);
+  }
+  const days=Object.keys(byDay).sort((a,b)=>b.localeCompare(a)); // newest first
+  if(!days.length){ el.innerHTML=''; return; }
+  let html='<div class="card"><div class="ct">📅 Daily summary</div>'
+    +'<div style="font-size:11px;color:var(--steel);margin-bottom:8px">Scanned = barcodes physically counted that day · ✓ = accounted (correctly matched) · 🔴 = still missing</div>'
+    +'<table style="width:100%;border-collapse:collapse;font-size:13px">'
+    +'<tr style="color:var(--steel);font-size:10px;letter-spacing:.04em;text-transform:uppercase;text-align:right"><th style="text-align:left;padding:4px 0">Date</th><th>Audits</th><th>Scanned</th><th>✓ Acc.</th><th>🔴 Miss</th></tr>';
+  for(const d of days){ const v=byDay[d];
+    html+=`<tr style="border-top:1px solid var(--border);text-align:right"><td style="text-align:left;padding:7px 0;font-weight:600">${formatDate(d)}</td><td>${v.audits}</td><td>${v.scanned.toLocaleString()}</td><td style="color:var(--sage)">${v.accounted.toLocaleString()}</td><td style="color:var(--rose)">${v.missing}</td></tr>`;
+  }
+  html+='</table></div>';
+  el.innerHTML=html;
+}
+
 function renderAdminHistory(){
+  renderDailySummary();
   const el=document.getElementById('a-hist-list'); if(!el) return;
   const q=(document.getElementById('a-hist-search')?.value||'').toLowerCase();
   const personSel=document.getElementById('a-hist-person');
