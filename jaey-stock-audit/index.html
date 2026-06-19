@@ -932,7 +932,7 @@ function setUserName(){ proceedToUserPin(); }
 // Service Worker registered via sw.js when hosted on GitHub Pages
 
 if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./sw.js').catch(()=>{});
-const APP_VER='v64'; // single source of truth — shown in both admin + team headers
+const APP_VER='v65'; // single source of truth — shown in both admin + team headers
 document.addEventListener('DOMContentLoaded',()=>{
   document.querySelectorAll('.app-ver').forEach(e=>e.textContent=APP_VER);
   loadStorage();
@@ -2987,20 +2987,65 @@ function showScannedBarcodes(id){
   const acc=accountedBarcodes(a);
   const found=new Set(); (a.followUps||[]).forEach(f=>(f.foundBarcodes||[]).forEach(b=>found.add(String(b))));
   document.getElementById('modal-title').textContent='✅ Accounted · '+a.product+' · '+a.color;
+  const rmBtn=bc=>`<button onclick="removeScanFromAudit(${a.id},'${bc}')" title="Remove — scanned here by mistake" style="background:none;border:none;color:var(--rose);cursor:pointer;font-size:15px;line-height:1;padding:0 2px;flex-shrink:0">🗑</button>`;
   let html='<div style="font-size:12px;color:var(--steel);margin-bottom:8px">'+acc.length+' of '+sysTotal(a)+' in system physically accounted for'+(found.size?' ('+found.size+' found after the first scan)':'')+'</div>';
+  html+='<div style="font-size:11px;color:var(--steel);margin-bottom:8px">Tap 🗑 to remove a piece scanned here by mistake — it’s treated as never scanned.</div>';
   if(!acc.length) html+='<div style="color:var(--steel);font-size:13px">None accounted yet.</div>';
   for(const bc of acc){
     const f=stockData.find(x=>x.barcode==bc);
     const isFound=found.has(String(bc));
-    html+=`<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 9px;background:var(--sage-light);border-radius:5px;margin-bottom:4px;font-size:13px">
+    html+=`<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 9px;background:var(--sage-light);border-radius:5px;margin-bottom:4px;font-size:13px">
       <span style="font-family:monospace">BC ${bc}${f?' · '+f.size:''}</span>
-      <span style="font-size:11px;color:${isFound?'var(--sky)':'var(--sage)'}">${isFound?'🔄 found in update':'✓ scanned'}</span></div>`;
+      <span style="display:flex;align-items:center;gap:8px;flex-shrink:0"><span style="font-size:11px;color:${isFound?'var(--sky)':'var(--sage)'}">${isFound?'🔄 found in update':'✓ scanned'}</span>${rmBtn(bc)}</span></div>`;
   }
   const extras=(a.report?.extras)||[];
   if(extras.length){ html+='<div style="font-weight:600;margin:10px 0 5px;font-size:13px">🟡 Also in hand (system says outward): '+extras.length+'</div>';
-    for(const bc of extras){ const f=stockData.find(x=>x.barcode==bc); html+=`<div style="padding:5px 9px;background:var(--gold-light);border-radius:5px;margin-bottom:4px;font-size:13px;font-family:monospace">BC ${bc}${f?' · '+f.size:''}</div>`; } }
+    for(const bc of extras){ const f=stockData.find(x=>x.barcode==bc); html+=`<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:5px 9px;background:var(--gold-light);border-radius:5px;margin-bottom:4px;font-size:13px"><span style="font-family:monospace">BC ${bc}${f?' · '+f.size:''}</span>${rmBtn(bc)}</div>`; } }
+  const wrong=(a.report?.wrongProduct)||[];
+  if(wrong.length){ html+='<div style="font-weight:600;margin:10px 0 5px;font-size:13px">⚠️ Wrong label (belongs to another style): '+wrong.length+'</div>';
+    for(const e of wrong){ const bc=String(e).split('__')[0]; const belongs=String(e).split('__WRONG:')[1]?.split('|||')[0]||''; html+=`<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:5px 9px;background:var(--rose-light);border-radius:5px;margin-bottom:4px;font-size:13px"><span style="font-family:monospace">BC ${bc}${belongs?' · → '+belongs:''}</span>${rmBtn(bc)}</div>`; } }
+  const unknown=(a.report?.unknown)||[];
+  if(unknown.length){ html+='<div style="font-weight:600;margin:10px 0 5px;font-size:13px">❓ Unknown / not in catalogue: '+unknown.length+'</div>';
+    for(const e of unknown){ const bc=String(e).split('__')[0]; html+=`<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:5px 9px;background:var(--cream);border-radius:5px;margin-bottom:4px;font-size:13px"><span style="font-family:monospace">BC ${bc}</span>${rmBtn(bc)}</div>`; } }
   document.getElementById('modal-body').innerHTML=html;
   document.getElementById('modal-ov').classList.add('show');
+}
+
+// Re-derive a report from the raw scans, preserving found-in-update resolutions.
+function recomputeAuditReport(a){
+  if(!Array.isArray(a.scanned)||!Array.isArray(a.systemInward)) return false;
+  const rep=genReport(a);
+  const found=new Set(); (a.followUps||[]).forEach(f=>(f.foundBarcodes||[]).forEach(b=>found.add(String(b))));
+  if(found.size){ // pieces found after the first scan live in followUps, not scanned — keep them accounted
+    rep.ghosts=(rep.ghosts||[]).filter(b=>{ if(found.has(String(b))){ rep.matched=(rep.matched||0)+1; return false; } return true; });
+  }
+  a.report=rep;
+  return true;
+}
+// Admin: drop a barcode that a team member scanned here by mistake (any size/WRONG/UNKNOWN variant).
+function removeScanFromAudit(auditId, bc){
+  const a=audits.find(x=>x.id===auditId); if(!a) return;
+  bc=String(bc);
+  if(!confirm('Remove scanned BC '+bc+' from this audit?\n\nUse this only for a barcode scanned here by mistake. It will be treated as never scanned for '+a.product+' · '+a.color+(a.systemInward&&a.systemInward.map(String).includes(bc)?'\n\n(The system expects this piece, so it will move to 🔴 missing.)':'')+'.')) return;
+  a.scanned=(a.scanned||[]).filter(e=>String(e).split('__')[0]!==bc);
+  a.followUps=(a.followUps||[]).map(f=>({...f,foundBarcodes:(f.foundBarcodes||[]).filter(b=>String(b)!==bc)})).filter(f=>(f.foundBarcodes||[]).length);
+  if(a.systemUpdated) a.systemUpdated=a.systemUpdated.filter(b=>String(b)!==bc);
+  if(!recomputeAuditReport(a)){ // fallback for legacy audits missing the raw arrays
+    const r=a.report=a.report||{};
+    r.extras=(r.extras||[]).filter(b=>String(b)!==bc);
+    r.wrongProduct=(r.wrongProduct||[]).filter(e=>String(e).split('__')[0]!==bc);
+    r.unknown=(r.unknown||[]).filter(e=>String(e).split('__')[0]!==bc);
+    if((a.systemInward||[]).map(String).includes(bc) && !(r.ghosts||[]).map(String).includes(bc)){ (r.ghosts=r.ghosts||[]).push(bc); if(r.matched>0) r.matched--; }
+    if(r.totalScanned>0) r.totalScanned--;
+  }
+  a.updatedAt=new Date().toISOString();
+  (a.trail=a.trail||[]).push({at:a.updatedAt, by:localStorage.getItem('jaey_admin_name')||'Admin', action:'removed mis-scan BC '+bc, note:''});
+  try{localStorage.setItem('jaey_audits',JSON.stringify(audits));}catch(e){}
+  saveAuditRemote(a);
+  toast('🗑 BC '+bc+' removed from audit');
+  renderAdminReview();
+  if(typeof renderResolve==='function') renderResolve();
+  showScannedBarcodes(auditId); // refresh the open modal
 }
 
 function showFullDetail(id){
