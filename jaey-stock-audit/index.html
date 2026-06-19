@@ -1073,9 +1073,12 @@ function updateLoginDots(type){
   for(let i=0;i<4;i++) document.getElementById(prefix+i).className='login-pin-dot'+(i<buf.length?' on':'');
 }
 
+// Never let a slow/unreachable cloud block login — proceed with cached users after a short wait.
+function _raceTimeout(p,ms){ return Promise.race([Promise.resolve(p).catch(()=>{}), new Promise(res=>setTimeout(res,ms))]); }
+
 async function verifyUserPin(){
   // Pull the latest roster from the cloud so newly-added members work on any device.
-  if(navigator.onLine) await fetchUsersFromSupabase();
+  if(navigator.onLine) await _raceTimeout(fetchUsersFromSupabase(), 2000);
   const users=getUsers();
   const user=users.find(u=>u.name.toLowerCase()===pendingLoginName.toLowerCase());
   if(!user){
@@ -1100,7 +1103,7 @@ async function verifyUserPin(){
 }
 
 async function verifyAdminPin(){
-  if(navigator.onLine) await fetchUsersFromSupabase();
+  if(navigator.onLine) await _raceTimeout(fetchUsersFromSupabase(), 2000);
   const admins=getUsers().filter(u=>u.role==='admin');
   // Try matching against admin users first
   let matched=admins.find(u=>loginPinBuf.a===u.pin);
