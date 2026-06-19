@@ -591,7 +591,7 @@ details.review-card[open]>.rc-summary{border-bottom:1px solid var(--border)}
     <div style="display:flex;align-items:center;gap:10px">
       <div class="logo">Jaey<span>.</span></div>
       <span id="admin-name-hdr" style="font-size:12px;color:#aaa"></span>
-      <span id="app-ver" style="font-size:10px;color:#777">v48</span>
+      <span id="app-ver" style="font-size:10px;color:#777">v49</span>
     </div>
     <div class="hdr-r">
       <span class="admin-badge-hdr">ADMIN</span>
@@ -758,6 +758,7 @@ details.review-card[open]>.rc-summary{border-bottom:1px solid var(--border)}
     <div class="card">
       <div class="ct">📂 Stock Data</div>
       <div id="data-status" class="ds none">No data loaded</div>
+      <div id="stock-delta" style="font-size:12px;margin-top:6px"></div>
       <div id="stock-composition" style="display:none;font-size:12px;line-height:1.6;background:var(--cream);border-radius:8px;padding:9px 11px;margin-bottom:10px"></div>
     <button class="btn bo" onclick="fetchStockFromSupabase()" style="font-size:12px;padding:6px 11px;margin-bottom:10px;width:100%" id="fetch-stock-btn">☁️ Fetch latest from Supabase</button>
       <div class="uz" onclick="document.getElementById('csv-f').click()">
@@ -2740,6 +2741,34 @@ function exportLostCSV(){
 
 // After a fresh stock CSV loads, flag any previously-Lost barcode that is now inward again
 // → "recovered" (reverse the loss). Drives net shrinkage over time.
+// Compare this upload's inward set to the previous upload's → how many pieces were added / removed.
+// Stores a per-upload snapshot locally (the app never kept history before), so it works going forward.
+function stockDeltaVsLast(rows){
+  const el=document.getElementById('stock-delta');
+  try{
+    const curInward=rows.filter(r=>r.status==='inward').map(r=>String(r.barcode));
+    const curSet=new Set(curInward);
+    const prev=JSON.parse(localStorage.getItem('jaey_stock_last')||'null');
+    if(prev && Array.isArray(prev.inward)){
+      const prevSet=new Set(prev.inward);
+      let added=0, removed=0;
+      for(const bc of curSet) if(!prevSet.has(bc)) added++;
+      for(const bc of prevSet) if(!curSet.has(bc)) removed++;
+      const since=prev.date?formatDateTime(prev.date):'last upload';
+      if(el){
+        el.innerHTML = (added||removed)
+          ? '📦 '+(added?'<strong style="color:var(--sage)">+'+added+' added</strong>':'')+(added&&removed?' · ':'')+(removed?'<strong style="color:var(--rose)">−'+removed+' left</strong>':'')+' <span style="color:var(--steel)">since '+since+'</span>'
+          : '<span style="color:var(--steel)">No change since '+since+'</span>';
+      }
+      if(added||removed) setTimeout(()=>toast('📦 '+(added?'+'+added+' added':'')+(added&&removed?', ':'')+(removed?removed+' left':'')+' vs last upload'),700);
+    } else if(el){ el.innerHTML='<span style="color:var(--steel)">First upload — added/removed will show from next time.</span>'; }
+    localStorage.setItem('jaey_stock_last', JSON.stringify({date:new Date().toISOString(), inward:curInward}));
+    const hist=JSON.parse(localStorage.getItem('jaey_stock_hist')||'[]');
+    hist.push({date:new Date().toISOString(), total:curSet.size});
+    localStorage.setItem('jaey_stock_hist', JSON.stringify(hist.slice(-120)));
+  }catch(e){ console.warn('stockDelta',e); }
+}
+
 function recoveryCheck(rows){
   const log=getLostLog(); if(!log.length) return;
   const inward=new Set(rows.filter(r=>r.status==='inward').map(r=>String(r.barcode)));
@@ -3607,6 +3636,7 @@ function parseCSV(text,fname){
     }
     if(!rows.length)throw new Error('No valid rows found');
     stockData=rows;buildMap();
+    stockDeltaVsLast(rows);  // compare to the previous upload → "+X added / −Y left since <date>"
     recoveryCheck(rows);   // flag any previously-Lost barcode that is now inward again
     try{ const _na=newArrivalsByStyle(); const _tot=_na.reduce((n,s)=>n+s.count,0); if(_tot) setTimeout(()=>toast('🆕 '+_tot+' new piece'+(_tot>1?'s':'')+' arrived for '+_na.length+' audited style'+(_na.length>1?'s':'')+' — see Review'),900); }catch(e){}
     try{localStorage.setItem('jaey_stock',JSON.stringify(stockData));}catch(e){}
