@@ -592,7 +592,7 @@ details.review-card[open]>.rc-summary{border-bottom:1px solid var(--border)}
     <div style="display:flex;align-items:center;gap:10px">
       <div class="logo">Jaey<span>.</span></div>
       <span id="admin-name-hdr" style="font-size:12px;color:#aaa"></span>
-      <span id="app-ver" style="font-size:10px;color:#777">v60</span>
+      <span id="app-ver" style="font-size:10px;color:#777">v61</span>
     </div>
     <div class="hdr-r">
       <span class="admin-badge-hdr">ADMIN</span>
@@ -3855,6 +3855,7 @@ async function uploadStockToSupabase(rows, fname){
     }
 
     localStorage.setItem('jaey_stock_uploaded',JSON.stringify({at:ts,fname,count:rows.length}));
+    try{localStorage.setItem('jaey_stock_synced_at', ts);}catch(e){} // this device already holds the newest upload
     statusEl.innerHTML=`✓ <strong>${rows.length.toLocaleString()} barcodes</strong> · ${fname} <span style="color:var(--sage)">☁️ Synced ✓</span>`;
     toast('☁️ Synced to Supabase — all devices will auto-load');
   }catch(err){
@@ -3873,22 +3874,24 @@ async function fetchStockFromSupabase(){
     statusEl.innerHTML='☁️ Loading stock data from Supabase...';
     
     // Fetch in pages (Supabase default limit is 1000)
-    let allRows=[], from=0, pageSize=1000;
+    let allRows=[], from=0, pageSize=1000, maxUp='';
     while(true){
       const res=await fetch(
-        sbCfg.url+'/rest/v1/stock_data?select=barcode,product_name,color,size,status,sku,purpose&order=id&offset='+from+'&limit='+pageSize,
+        sbCfg.url+'/rest/v1/stock_data?select=barcode,product_name,color,size,status,sku,purpose,uploaded_at&order=id&offset='+from+'&limit='+pageSize,
         {headers:{'apikey':sbCfg.key,'Authorization':'Bearer '+sbCfg.key,'Range-Unit':'items','Range':from+'-'+(from+pageSize-1),'Prefer':'count=none'}}
       );
       if(!res.ok) throw new Error('HTTP '+res.status);
       const page=await res.json();
       if(!page.length) break;
+      for(const r of page){ if(r.uploaded_at && r.uploaded_at>maxUp) maxUp=r.uploaded_at; }
       allRows=allRows.concat(page);
       from+=pageSize;
       if(page.length<pageSize) break;
       statusEl.innerHTML='☁️ Loading... '+allRows.length.toLocaleString()+' rows';
     }
-    
+
     if(!allRows.length) return false;
+    if(maxUp) try{localStorage.setItem('jaey_stock_synced_at', maxUp);}catch(e){} // remember which upload we're holding
     
     // Map to internal format
     stockData=allRows.map(r=>({
@@ -4420,10 +4423,31 @@ function loadStorage(){
 
 // Called after login when we know who's logged in — try to fetch stock if not cached
 async function ensureStockLoaded(){
-  if(stockData.length>0) return; // already have it
+  if(stockData.length>0){ refreshStockIfStale(); return; } // have a cache — but check it's the latest upload
   if(!navigator.onLine) return;  // offline — can't fetch
   if(!sbCfg.url||!sbCfg.key) return; // no supabase config
   await fetchStockFromSupabase();
+}
+// A cached device must notice a newer CSV upload and silently refresh — otherwise the team
+// scans against yesterday's (e.g. wrong-size) data. Cheap: one row to read the latest upload time.
+async function refreshStockIfStale(){
+  if(!sbCfg.url||!sbCfg.key||!navigator.onLine) return;
+  try{
+    const res=await fetch(sbCfg.url+'/rest/v1/stock_data?select=uploaded_at&order=uploaded_at.desc&limit=1',{headers:sbHeaders()});
+    if(!res.ok) return;
+    const rows=await res.json();
+    const cloudAt=rows&&rows[0]&&rows[0].uploaded_at;
+    if(!cloudAt) return;
+    const localAt=localStorage.getItem('jaey_stock_synced_at')||'';
+    if(localAt && new Date(cloudAt)<=new Date(localAt)) return; // already on the newest upload
+    const ok=await fetchStockFromSupabase(); // pulls fresh rows + stores the new synced_at
+    if(ok){
+      if(typeof renderUserTasks==='function') renderUserTasks();
+      if(typeof updateStockComposition==='function') updateStockComposition();
+      if(typeof renderAdminReview==='function') renderAdminReview();
+      toast('🔄 Stock updated to the latest upload');
+    }
+  }catch(e){}
 }
 function todayStr(){const d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');}
 function formatDate(ds){const d=new Date(ds+'T00:00:00');return d.toLocaleDateString('en-IN',{weekday:'short',day:'numeric',month:'short'});}
