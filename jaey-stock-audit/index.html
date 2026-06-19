@@ -591,7 +591,7 @@ details.review-card[open]>.rc-summary{border-bottom:1px solid var(--border)}
     <div style="display:flex;align-items:center;gap:10px">
       <div class="logo">Jaey<span>.</span></div>
       <span id="admin-name-hdr" style="font-size:12px;color:#aaa"></span>
-      <span id="app-ver" style="font-size:10px;color:#777">v53</span>
+      <span id="app-ver" style="font-size:10px;color:#777">v54</span>
     </div>
     <div class="hdr-r">
       <span class="admin-badge-hdr">ADMIN</span>
@@ -2763,8 +2763,8 @@ function stockDeltaVsLast(rows){
     if(prev && Array.isArray(prev.inward)){
       const prevSet=new Set(prev.inward), prevStyle=prev.style||{};
       const added=[], removed=[];
-      for(const bc of curSet) if(!prevSet.has(bc)) added.push(styleOf[bc]||{p:'—',c:''});
-      for(const bc of prevSet) if(!curSet.has(bc)) removed.push(prevStyle[bc]||{p:'—',c:''});
+      for(const bc of curSet) if(!prevSet.has(bc)) added.push({...(styleOf[bc]||{p:'?',c:'?'}), bc});
+      for(const bc of prevSet) if(!curSet.has(bc)) removed.push({...(prevStyle[bc]||{p:'?',c:'?'}), bc});
       saveStockDelta(prev.date, added, removed);
     } else { try{localStorage.removeItem('jaey_stock_delta');}catch(e){} }
     localStorage.setItem('jaey_stock_last', JSON.stringify({date:new Date().toISOString(), inward:[...curSet], style:styleOf}));
@@ -2792,8 +2792,8 @@ function handleCompareCSV(e){
       const curInward=stockData.filter(x=>x.status==='inward'); const curSet=new Set(curInward.map(x=>String(x.barcode)));
       const curStyle={}; for(const x of curInward) curStyle[String(x.barcode)]={p:x.product||'?',c:x.color||'?'};
       const added=[], removed=[];
-      for(const bc of curSet) if(!baseInward.has(bc)) added.push(curStyle[bc]);
-      for(const bc of baseInward) if(!curSet.has(bc)) removed.push(baseStyle[bc]);
+      for(const bc of curSet) if(!baseInward.has(bc)) added.push({...(curStyle[bc]||{p:'?',c:'?'}), bc});
+      for(const bc of baseInward) if(!curSet.has(bc)) removed.push({...(baseStyle[bc]||{p:'?',c:'?'}), bc});
       saveStockDelta(f.name+' ('+baseInward.size+' inward) → current ('+curSet.size+' inward)', added, removed);
       renderStockDelta(); if(typeof renderAdminReview==='function') renderAdminReview();
       setTimeout(()=>toast('📦 '+f.name+': baseline '+baseInward.size+' vs current '+curSet.size+' inward → +'+added.length+' added, '+removed.length+' left'),300);
@@ -2803,7 +2803,7 @@ function handleCompareCSV(e){
   r.readAsText(f);
 }
 function saveStockDelta(since, added, removed){
-  const grp=arr=>{const m={};for(const x of arr){const k=x.p+'|||'+x.c;(m[k]=m[k]||{product:x.p,color:x.c,n:0}).n++;}return Object.values(m).sort((a,b)=>b.n-a.n);};
+  const grp=arr=>{const m={};for(const x of arr){const k=x.p+'|||'+x.c;const e=(m[k]=m[k]||{product:x.p,color:x.c,n:0,barcodes:[]});e.n++;if(x.bc)e.barcodes.push(String(x.bc));}return Object.values(m).sort((a,b)=>b.n-a.n);};
   const delta={date:new Date().toISOString(), since, added:added.length, removed:removed.length, addedStyles:grp(added), removedStyles:grp(removed)};
   try{localStorage.setItem('jaey_stock_delta',JSON.stringify(delta));}catch(e){}
   if(added.length||removed.length) setTimeout(()=>toast('📦 +'+added.length+' added, '+removed.length+' left'),700);
@@ -2827,10 +2827,16 @@ function renderReviewStockDelta(){
   const el=document.getElementById('review-stockdelta'); if(!el) return;
   let d=null; try{ d=JSON.parse(localStorage.getItem('jaey_stock_delta')||'null'); }catch(e){}
   if(!d || !(d.addedStyles||[]).length){ el.innerHTML=''; return; }
-  // Only surface added styles that are ALREADY audited (so you can top them up). Un-audited ones get audited directly.
+  // Only surface added styles that are ALREADY audited and still have new pieces NOT yet scanned.
   const latest={};
   for(const a of audits){ const k=a.product+'|||'+a.color; if(!latest[k]||new Date(a.savedAt||a.date||0)>new Date(latest[k].savedAt||latest[k].date||0)) latest[k]=a; }
-  const rows=(d.addedStyles||[]).map(s=>({...s, audit:latest[s.product+'|||'+s.color]})).filter(s=>s.audit);
+  const rows=[];
+  for(const s of (d.addedStyles||[])){
+    const a=latest[s.product+'|||'+s.color]; if(!a) continue;
+    const scanned=new Set((a.scanned||[]).map(e=>String(e).split('__')[0]));
+    const rem=(s.barcodes&&s.barcodes.length)? s.barcodes.filter(bc=>!scanned.has(String(bc))).length : s.n; // drop once new pcs are scanned
+    if(rem>0) rows.push({product:s.product, color:s.color, n:rem, audit:a});
+  }
   if(!rows.length){ el.innerHTML=''; return; }
   const totalNew=rows.reduce((n,s)=>n+s.n,0);
   el.innerHTML=`<div style="background:var(--sage-light);border:1px solid var(--sage);border-radius:10px;padding:10px 12px;margin-bottom:10px;font-size:12px">
