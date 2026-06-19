@@ -933,7 +933,7 @@ function setUserName(){ proceedToUserPin(); }
 // Service Worker registered via sw.js when hosted on GitHub Pages
 
 if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./sw.js').catch(()=>{});
-const APP_VER='v72'; // single source of truth — shown in both admin + team headers
+const APP_VER='v73'; // single source of truth — shown in both admin + team headers
 document.addEventListener('DOMContentLoaded',()=>{
   document.querySelectorAll('.app-ver').forEach(e=>e.textContent=APP_VER);
   loadStorage();
@@ -2253,7 +2253,8 @@ function renderAdminReview(){
     const d=new Date(audit.savedAt||audit.date);
     const ds=d.toLocaleDateString('en-IN',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});
     const r=audit.report||{};
-    const ghosts=r.ghosts?.length||0, extras=openExtras(audit).length, wrong=openWrongProduct(audit,scanIdx).length;
+    const parkedC=new Set(auditFixedPending(audit.id).map(p=>String(p.bc)));
+    const ghosts=(r.ghosts||[]).filter(b=>!parkedC.has(String(b))).length, extras=openExtras(audit).length, wrong=openWrongProduct(audit,scanIdx).length;
     const stray=(audit.status!=='complete')?wrongHandledList(audit,scanIdx).length:0; // scanned-here-by-mistake, just needs removing
     const mm=ghosts+extras+wrong;
     const status=audit.status||'review';
@@ -2347,9 +2348,12 @@ function renderAdminReview(){
       html+=`<div class="rc-actions-section" style="border-color:var(--sky)">
         <div style="font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--sky);margin-bottom:7px">🔧 Fixed on system — awaiting next stock CSV</div>`;
       for(const p of pend){
+        const msg=(p.kind==='missing')
+          ? `Will auto-clear when a stock CSV shows BC ${p.bc} outward / gone.`
+          : `Will auto-confirm when a stock CSV shows BC ${p.bc} inward under ${audit.product}.`;
         html+=`<div class="action-item" style="background:var(--sky-light)">
           <div class="ai-text"><strong>BC ${p.bc}</strong>
-            <div class="ai-sub">Will auto-confirm the moment a stock CSV shows BC ${p.bc} inward under ${audit.product}. <a onclick="unmarkFixedOnSystem('${p.bc}',${audit.id})" style="color:var(--rose);cursor:pointer;text-decoration:underline">undo</a></div>
+            <div class="ai-sub">${msg} <a onclick="unmarkFixedOnSystem('${p.bc}',${audit.id})" style="color:var(--rose);cursor:pointer;text-decoration:underline">undo</a></div>
           </div>
         </div>`;
       }
@@ -2457,21 +2461,24 @@ function openExtras(audit){
 
 function buildActionItems(audit, idx){
   const items=[], r=audit.report||{};
-  for(const bc of (r.ghosts||[]).slice(0,6)){
-    const row=stockData.find(f=>f.barcode==bc);
-    const samp=isSample(row);
-    const ctx=row?[row.tags?'🏷️ '+row.tags:'', row.note?'📝 '+row.note:''].filter(Boolean).join(' · '):'';
-    items.push({id:'g-'+bc, bc, sample:samp, label:'Mark BC '+bc+' as outward', detail:(row?row.sku+' · Size '+row.size+' — ':'')+'In system but not physically found'+(samp?' · likely in the sample rack':'')+(ctx?'<br>'+ctx:'')});
-  }
-  if((r.ghosts||[]).length>6) items.push({id:'g-more',label:'+'+(r.ghosts.length-6)+' more missing barcodes',detail:'See full detail'});
+  const parked=new Set(auditFixedPending(audit.id).map(p=>String(p.bc)));
+  // Mismatches first — system mismatch (mark inward), then wrong label …
   for(const bc of openExtras(audit)){
     const row=stockData.find(f=>f.barcode==bc);
     items.push({id:'x-'+bc, bc, label:'Mark BC '+bc+' as inward', detail:(row?'Size '+row.size+' — ':'')+'Present physically but system says outward'});
   }
-  for(const entry of openWrongProduct(audit, idx)){  // accounted-elsewhere wrong-labels auto-clear
+  for(const entry of openWrongProduct(audit, idx)){
     const bc=entry.split('__')[0];
     const parts=entry.split('__WRONG:')[1]?.split('|||')||[];
     items.push({id:'w-'+bc, bc, label:'Fix label on BC '+bc, detail:'Found in '+audit.product+' but belongs to: '+parts[0]});
+  }
+  // … then every missing piece (no 6-cap), parked ones excluded.
+  for(const bc of (r.ghosts||[])){
+    if(parked.has(String(bc))) continue;
+    const row=stockData.find(f=>f.barcode==bc);
+    const samp=isSample(row);
+    const ctx=row?[row.tags?'🏷️ '+row.tags:'', row.note?'📝 '+row.note:''].filter(Boolean).join(' · '):'';
+    items.push({id:'g-'+bc, bc, sample:samp, label:'Mark BC '+bc+' as outward', detail:(row?row.sku+' · Size '+row.size+' — ':'')+'In system but not physically found'+(samp?' · likely in the sample rack':'')+(ctx?'<br>'+ctx:'')});
   }
   return items;
 }
@@ -2556,8 +2563,10 @@ function collectMissing(){
   const seen={};
   for(const a of audits){
     const updated=a.systemUpdated||[];
+    const parked=new Set(auditFixedPending(a.id).map(p=>String(p.bc)));
     for(const bc of (a.report?.ghosts||[])){
       if(updated.includes(bc)) continue;
+      if(parked.has(String(bc))) continue; // parked as "fixed on system"
       const at=a.savedAt||a.date;
       if(seen[bc] && new Date(seen[bc].at)>=new Date(at)) continue; // keep most recent flag
       const row=stockData.find(r=>r.barcode==bc);
@@ -2574,6 +2583,17 @@ function collectMissing(){
     }
   }
   return Object.values(seen);
+}
+
+// Every open mismatch across non-complete audits: system-mismatch (extra) + wrong-label.
+function collectMismatches(){
+  const out=[];
+  for(const a of audits){
+    if((a.status||'')==='complete') continue;
+    for(const bc of openExtras(a)){ const row=stockData.find(r=>String(r.barcode)===String(bc)); out.push({kind:'extra', bc:String(bc), auditId:a.id, product:a.product, color:a.color, size:row?.size||'', at:a.savedAt||a.date}); }
+    for(const e of openWrongProduct(a)){ const bc=String(e).split('__')[0]; const ts=wrongTrueStyle(e); const row=stockData.find(r=>String(r.barcode)===String(bc)); out.push({kind:'wrong', bc, auditId:a.id, product:a.product, color:a.color, size:row?.size||'', belongsP:ts.product, belongsC:ts.color, at:a.savedAt||a.date}); }
+  }
+  return out.sort((x,y)=>new Date(x.at)-new Date(y.at));
 }
 
 // Already-audited styles that have gained pieces since: a barcode currently inward, inwarded AFTER the
@@ -2633,6 +2653,8 @@ function renderResolve(){
   // worklist
   const q=(document.getElementById('resolve-search')?.value||'').trim().toLowerCase();
   const missingBcSet=new Set(missing.map(m=>String(m.bc)));   // all open missing (before the search filter)
+  const mismAll=collectMismatches();                           // open system-mismatch + wrong-label, resolvable here too
+  const mismBcSet=new Set(mismAll.map(m=>String(m.bc)));
   if(q) missing=missing.filter(m=>String(m.bc).includes(q)||(m.product||'').toLowerCase().includes(q)||(m.color||'').toLowerCase().includes(q)||(m.sku||'').toLowerCase().includes(q));
   const sort=document.getElementById('resolve-sort')?.value||'age';
   if(sort==='style') missing.sort((a,b)=>(a.product+a.color).localeCompare(b.product+b.color));
@@ -2643,7 +2665,7 @@ function renderResolve(){
   let auditedHtml='';
   if(q){
     const idx=buildScanIndex();
-    const hits=Object.keys(idx).filter(bc=>bc.includes(q)&&!missingBcSet.has(bc)).slice(0,25);
+    const hits=Object.keys(idx).filter(bc=>bc.includes(q)&&!missingBcSet.has(bc)&&!mismBcSet.has(bc)).slice(0,25);
     for(const bc of hits){
       const last=(idx[bc]||[]).slice().sort((x,y)=>new Date(y.at)-new Date(x.at))[0];
       if(!last) continue;
@@ -2668,8 +2690,23 @@ function renderResolve(){
         <button class="btn bo" style="font-size:11px;padding:5px 9px;color:var(--rose);border-color:var(--rose)" onclick="bulkMarkUnknown()">🔴 Mark Unknown</button>
       </span>
     </div>`:'';
-  let html=auditedHtml+bulkBar;
-  if(!missing.length&&!auditedHtml) html='<div class="empty"><div class="ei">'+(q?'🔍':'✅')+'</div><div>'+(q?'No missing pieces match “'+q+'”.':'No unresolved missing pieces.')+'</div></div>';
+  // Mismatch cards (system-mismatch + wrong-label) — resolvable right here, searchable like missing.
+  let mism=mismAll;
+  if(q) mism=mism.filter(m=>String(m.bc).includes(q)||(m.product||'').toLowerCase().includes(q)||(m.color||'').toLowerCase().includes(q));
+  let mismatchHtml='';
+  for(const m of mism){
+    const isX=m.kind==='extra';
+    mismatchHtml+=`<div style="border:1px solid ${isX?'var(--gold)':'var(--rose)'};border-left:3px solid ${isX?'var(--gold)':'var(--rose)'};background:${isX?'var(--gold-light)':'var(--rose-light)'};border-radius:8px;padding:10px;margin-bottom:8px">
+      <div style="font-weight:600;font-size:13px">BC ${m.bc}${m.size?' · Size '+m.size:''} <span style="font-size:11px;color:${isX?'#a06800':'var(--rose)'}">${isX?'🟡 system says outward':'⚠️ wrong label'}</span></div>
+      <div style="font-size:12px;color:var(--steel)">${isX?(m.product+' · '+m.color+' — present physically but system says outward'):('Scanned in '+m.product+' · '+m.color+' — system says it belongs to '+m.belongsP+(m.belongsC?' · '+m.belongsC:''))}</div>
+      <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">
+        <button class="btn bs" style="font-size:11px;padding:6px 10px" onclick="markFixedOnSystem('${m.bc}',${m.auditId})">✓ Fixed on system</button>
+        ${journeyBtn(m.bc)}
+        <button class="btn bo" style="font-size:11px;padding:6px 10px;color:var(--rose);border-color:var(--rose)" onclick="removeScanFromAudit(${m.auditId},'${m.bc}')">🗑 ${isX?'Remove':'Not ours'}</button>
+      </div></div>`;
+  }
+  let html=auditedHtml+mismatchHtml+bulkBar;
+  if(!missing.length&&!auditedHtml&&!mism.length) html='<div class="empty"><div class="ei">'+(q?'🔍':'✅')+'</div><div>'+(q?'No pieces match “'+q+'”.':'No unresolved pieces.')+'</div></div>';
   for(const m of missing){
     const days=Math.floor((Date.now()-new Date(m.at))/86400000);
     const ageTxt=days<=0?'today':days+'d ago';
@@ -2998,25 +3035,27 @@ function auditFixedPending(auditId){ return getFixedPending().filter(p=>p.auditI
 function syncFixedPending(){
   fetchAppState('fixed_pending').then(arr=>{ if(Array.isArray(arr)){ try{localStorage.setItem('jaey_fixed_pending',JSON.stringify(arr));}catch(e){} if(typeof renderAdminReview==='function') renderAdminReview(); } });
 }
-function markFixedOnSystem(bc, auditId){
+// kind: 'inward' (wrong-label/sys-mismatch → confirm when CSV shows it inward under the style)
+//        'missing' (ghost → confirm when CSV shows it outward/gone)
+function markFixedOnSystem(bc, auditId, kind){
   const a=audits.find(x=>x.id===auditId); if(!a) return;
-  bc=String(bc);
+  bc=String(bc); kind=kind||'inward';
   const arr=getFixedPending();
   if(!arr.some(p=>String(p.bc)===bc && p.auditId===auditId)){
-    arr.push({bc, auditId, product:a.product, color:a.color, at:new Date().toISOString(), by:localStorage.getItem('jaey_admin_name')||'Admin'});
+    arr.push({bc, auditId, product:a.product, color:a.color, kind, at:new Date().toISOString(), by:localStorage.getItem('jaey_admin_name')||'Admin'});
     saveFixedPending(arr);
   }
   (a.trail=a.trail||[]).push({at:new Date().toISOString(), by:localStorage.getItem('jaey_admin_name')||'Admin', action:'marked BC '+bc+' fixed on system (awaiting CSV)', note:''});
   try{localStorage.setItem('jaey_audits',JSON.stringify(audits));}catch(e){}
   saveAuditRemote(a);
-  toast('🔧 BC '+bc+' parked — auto-confirms when the next stock CSV shows it under '+a.product);
-  renderAdminReview();
+  toast('🔧 BC '+bc+' parked — auto-confirms on the next stock CSV');
+  renderAdminReview(); if(typeof renderResolve==='function') renderResolve();
 }
 function unmarkFixedOnSystem(bc, auditId){
   bc=String(bc);
   saveFixedPending(getFixedPending().filter(p=>!(String(p.bc)===bc && p.auditId===auditId)));
-  toast('↩︎ BC '+bc+' moved back to wrong-label');
-  renderAdminReview();
+  toast('↩︎ BC '+bc+' un-parked');
+  renderAdminReview(); if(typeof renderResolve==='function') renderResolve();
 }
 // Strip the __WRONG marker so a system-corrected piece counts as a clean match.
 function confirmFixOnAudit(a, bc){
@@ -3028,18 +3067,35 @@ function confirmFixOnAudit(a, bc){
   try{localStorage.setItem('jaey_audits',JSON.stringify(audits));}catch(e){}
   saveAuditRemote(a);
 }
+// Confirm a parked missing piece: the system now agrees it's gone, so the ghost is resolved.
+function confirmMissingFixedOnAudit(a, bc){
+  bc=String(bc);
+  if(a.report) a.report.ghosts=(a.report.ghosts||[]).filter(b=>String(b)!==bc);
+  (a.systemUpdated=a.systemUpdated||[]).push(bc);
+  a.updatedAt=new Date().toISOString();
+  (a.trail=a.trail||[]).push({at:a.updatedAt, by:'System', action:'BC '+bc+' confirmed fixed on system — now outward/gone', note:''});
+  try{localStorage.setItem('jaey_audits',JSON.stringify(audits));}catch(e){}
+  saveAuditRemote(a);
+}
 // Run after any fresh stock load: confirm parked fixes that the new CSV now backs up.
 function checkFixedPending(){
-  let arr=getFixedPending(); if(!arr.length) return;
+  let arr=getFixedPending(); if(!arr.length || !stockData.length) return; // need stock loaded to judge
   const remain=[]; let confirmed=0;
   for(const p of arr){
     const a=audits.find(x=>x.id===p.auditId);
     const row=stockData.find(r=>String(r.barcode)===String(p.bc));
-    if(a && row && row.product===a.product && row.color===a.color && row.status==='inward'){
-      confirmFixOnAudit(a, String(p.bc)); confirmed++;
-    } else remain.push(p);
+    if(!a){ remain.push(p); continue; }
+    if((p.kind||'inward')==='missing'){
+      // resolved once the system no longer lists it inward (admin marked it outward/gone)
+      if(!row || row.status!=='inward'){ confirmMissingFixedOnAudit(a, String(p.bc)); confirmed++; }
+      else remain.push(p);
+    } else {
+      // resolved once the system lists it inward under the audited style
+      if(row && row.product===a.product && row.color===a.color && row.status==='inward'){ confirmFixOnAudit(a, String(p.bc)); confirmed++; }
+      else remain.push(p);
+    }
   }
-  if(confirmed){ saveFixedPending(remain); setTimeout(()=>toast('✅ '+confirmed+' system-fixed piece'+(confirmed>1?'s':'')+' auto-confirmed from the new stock'),1200); if(typeof renderAdminReview==='function') renderAdminReview(); }
+  if(confirmed){ saveFixedPending(remain); setTimeout(()=>toast('✅ '+confirmed+' system-fixed piece'+(confirmed>1?'s':'')+' auto-confirmed from the new stock'),1200); if(typeof renderAdminReview==='function') renderAdminReview(); if(typeof renderResolve==='function') renderResolve(); }
 }
 // Is a wrong-label piece already accounted (scanned or found) in its TRUE style?
 function wrongTrueStyle(entry){
@@ -3197,7 +3253,7 @@ function removeScanFromAudit(auditId, bc){
   toast('🗑 BC '+bc+' removed from audit');
   renderAdminReview();
   if(typeof renderResolve==='function') renderResolve();
-  showScannedBarcodes(auditId); // refresh the open modal
+  if(document.getElementById('modal-ov').classList.contains('show')) showScannedBarcodes(auditId); // refresh only if the modal is open
 }
 
 function showFullDetail(id){
