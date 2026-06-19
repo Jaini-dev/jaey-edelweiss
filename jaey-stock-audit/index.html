@@ -932,7 +932,7 @@ function setUserName(){ proceedToUserPin(); }
 // Service Worker registered via sw.js when hosted on GitHub Pages
 
 if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./sw.js').catch(()=>{});
-const APP_VER='v69'; // single source of truth — shown in both admin + team headers
+const APP_VER='v70'; // single source of truth — shown in both admin + team headers
 document.addEventListener('DOMContentLoaded',()=>{
   document.querySelectorAll('.app-ver').forEach(e=>e.textContent=APP_VER);
   loadStorage();
@@ -2880,7 +2880,7 @@ function stockDeltaVsLast(rows){
       const added=[], removed=[];
       for(const bc of curSet) if(!prevSet.has(bc)) added.push({...(styleOf[bc]||{p:'?',c:'?'}), bc});
       for(const bc of prevSet) if(!curSet.has(bc)) removed.push({...(prevStyle[bc]||{p:'?',c:'?'}), bc});
-      saveStockDelta(prev.date, added, removed);
+      saveStockDelta(prev.date, added, removed, true); // daily upload → cumulative (carry over un-topped pieces)
     } else { try{localStorage.removeItem('jaey_stock_delta');}catch(e){} }
     localStorage.setItem('jaey_stock_last', JSON.stringify({date:new Date().toISOString(), inward:[...curSet], style:styleOf}));
     const hist=JSON.parse(localStorage.getItem('jaey_stock_hist')||'[]'); hist.push({date:new Date().toISOString(), total:curSet.size});
@@ -2917,12 +2917,30 @@ function handleCompareCSV(e){
   };
   r.readAsText(f);
 }
-function saveStockDelta(since, added, removed){
+function saveStockDelta(since, added, removed, cumulative){
   const grp=arr=>{const m={};for(const x of arr){const k=x.p+'|||'+x.c;const e=(m[k]=m[k]||{product:x.p,color:x.c,n:0,barcodes:[]});e.n++;if(x.bc)e.barcodes.push(String(x.bc));}return Object.values(m).sort((a,b)=>b.n-a.n);};
-  const delta={date:new Date().toISOString(), since, added:added.length, removed:removed.length, addedStyles:grp(added), removedStyles:grp(removed)};
+  // Cumulative (daily uploads): carry over still-pending added pieces so a day's un-topped-up
+  // pieces are never forgotten. Standalone (manual Compare): just show this comparison.
+  const styleMap={};
+  const seed=(styles)=>{ for(const st of (styles||[])){ const k=st.product+'|||'+st.color; const e=(styleMap[k]=styleMap[k]||{product:st.product,color:st.color,barcodes:new Set()}); for(const bc of (st.barcodes||[])) e.barcodes.add(String(bc)); } };
+  if(cumulative){ let prevDelta=null; try{prevDelta=JSON.parse(localStorage.getItem('jaey_stock_delta')||'null');}catch(e){} if(prevDelta) seed(prevDelta.addedStyles); }
+  seed(grp(added)); // this upload's new pieces
+  // Prune pieces that left stock, or are now accounted in that style's latest audit.
+  const removedSet=new Set(removed.map(x=>String(x.bc)));
+  const latest={}; for(const a of audits){ const k=a.product+'|||'+a.color; if(!latest[k]||new Date(a.savedAt||a.date||0)>new Date(latest[k].savedAt||latest[k].date||0)) latest[k]=a; }
+  const addedStyles=[];
+  for(const k of Object.keys(styleMap)){
+    const e=styleMap[k], a=latest[k], acc=new Set();
+    if(a){ for(const s of (a.scanned||[])) acc.add(String(s).split('__')[0]); for(const fu of (a.followUps||[])) for(const bc of (fu.foundBarcodes||[])) acc.add(String(bc)); }
+    const bcs=[...e.barcodes].filter(bc=>!removedSet.has(bc) && !acc.has(bc));
+    if(bcs.length) addedStyles.push({product:e.product, color:e.color, n:bcs.length, barcodes:bcs});
+  }
+  addedStyles.sort((a,b)=>b.n-a.n);
+  const addedTotal=addedStyles.reduce((n,s)=>n+s.n,0);
+  const delta={date:new Date().toISOString(), since, added:addedTotal, removed:removed.length, addedStyles, removedStyles:grp(removed)};
   try{localStorage.setItem('jaey_stock_delta',JSON.stringify(delta));}catch(e){}
   pushStockDeltaCloud(delta); // share the "pcs added" panel with every admin + the team
-  if(added.length||removed.length) setTimeout(()=>toast('📦 +'+added.length+' added, '+removed.length+' left'),700);
+  if(added.length||removed.length) setTimeout(()=>toast('📦 +'+added.length+' added, '+removed.length+' left'+(cumulative&&addedTotal>added.length?' · '+addedTotal+' still to top up':'')),700);
 }
 // ── STOCK-DELTA CLOUD SYNC (one tiny app_state key so all devices see the same "pcs added") ──
 function pushStockDeltaCloud(delta){
