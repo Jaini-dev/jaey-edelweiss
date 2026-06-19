@@ -591,7 +591,7 @@ details.review-card[open]>.rc-summary{border-bottom:1px solid var(--border)}
     <div style="display:flex;align-items:center;gap:10px">
       <div class="logo">Jaey<span>.</span></div>
       <span id="admin-name-hdr" style="font-size:12px;color:#aaa"></span>
-      <span id="app-ver" style="font-size:10px;color:#777">v49</span>
+      <span id="app-ver" style="font-size:10px;color:#777">v50</span>
     </div>
     <div class="hdr-r">
       <span class="admin-badge-hdr">ADMIN</span>
@@ -2744,29 +2744,40 @@ function exportLostCSV(){
 // Compare this upload's inward set to the previous upload's → how many pieces were added / removed.
 // Stores a per-upload snapshot locally (the app never kept history before), so it works going forward.
 function stockDeltaVsLast(rows){
-  const el=document.getElementById('stock-delta');
   try{
-    const curInward=rows.filter(r=>r.status==='inward').map(r=>String(r.barcode));
-    const curSet=new Set(curInward);
+    const curInward=rows.filter(r=>r.status==='inward');
+    const curSet=new Set(curInward.map(r=>String(r.barcode)));
+    const styleOf={}; for(const r of curInward) styleOf[String(r.barcode)]=(r.product||'?')+' · '+(r.color||'?');
+    const byStyle=arr=>{const m={};arr.forEach(s=>m[s]=(m[s]||0)+1);return Object.entries(m).sort((a,b)=>b[1]-a[1]);};
     const prev=JSON.parse(localStorage.getItem('jaey_stock_last')||'null');
     if(prev && Array.isArray(prev.inward)){
-      const prevSet=new Set(prev.inward);
-      let added=0, removed=0;
-      for(const bc of curSet) if(!prevSet.has(bc)) added++;
-      for(const bc of prevSet) if(!curSet.has(bc)) removed++;
-      const since=prev.date?formatDateTime(prev.date):'last upload';
-      if(el){
-        el.innerHTML = (added||removed)
-          ? '📦 '+(added?'<strong style="color:var(--sage)">+'+added+' added</strong>':'')+(added&&removed?' · ':'')+(removed?'<strong style="color:var(--rose)">−'+removed+' left</strong>':'')+' <span style="color:var(--steel)">since '+since+'</span>'
-          : '<span style="color:var(--steel)">No change since '+since+'</span>';
-      }
-      if(added||removed) setTimeout(()=>toast('📦 '+(added?'+'+added+' added':'')+(added&&removed?', ':'')+(removed?removed+' left':'')+' vs last upload'),700);
-    } else if(el){ el.innerHTML='<span style="color:var(--steel)">First upload — added/removed will show from next time.</span>'; }
-    localStorage.setItem('jaey_stock_last', JSON.stringify({date:new Date().toISOString(), inward:curInward}));
+      const prevSet=new Set(prev.inward), prevStyle=prev.style||{};
+      const added=[], removed=[];
+      for(const bc of curSet) if(!prevSet.has(bc)) added.push(styleOf[bc]||'—');
+      for(const bc of prevSet) if(!curSet.has(bc)) removed.push(prevStyle[bc]||'—');
+      const delta={date:new Date().toISOString(), since:prev.date, added:added.length, removed:removed.length,
+        addedByStyle:byStyle(added), removedByStyle:byStyle(removed)};
+      try{localStorage.setItem('jaey_stock_delta',JSON.stringify(delta));}catch(e){}
+      if(added.length||removed.length) setTimeout(()=>toast('📦 +'+added.length+' added, '+removed.length+' left since last upload'),700);
+    } else { try{localStorage.removeItem('jaey_stock_delta');}catch(e){} }
+    // baseline for next time (store style per barcode so we can name removed pieces too)
+    localStorage.setItem('jaey_stock_last', JSON.stringify({date:new Date().toISOString(), inward:[...curSet], style:styleOf}));
     const hist=JSON.parse(localStorage.getItem('jaey_stock_hist')||'[]');
     hist.push({date:new Date().toISOString(), total:curSet.size});
     localStorage.setItem('jaey_stock_hist', JSON.stringify(hist.slice(-120)));
+    renderStockDelta();
   }catch(e){ console.warn('stockDelta',e); }
+}
+// Render the last upload's "added / removed since last upload" with per-style breakdowns (persists across reloads).
+function renderStockDelta(){
+  const el=document.getElementById('stock-delta'); if(!el) return;
+  let d=null; try{ d=JSON.parse(localStorage.getItem('jaey_stock_delta')||'null'); }catch(e){}
+  if(!d){ el.innerHTML='<span style="color:var(--steel)">The next upload will show “+added / −left since last upload”.</span>'; return; }
+  const since=d.since?formatDateTime(d.since):'last upload';
+  const list=arr=>(arr||[]).map(([s,n])=>`<div style="display:flex;justify-content:space-between;gap:8px;padding:3px 0;border-bottom:1px solid var(--border)"><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${s}</span><span style="font-weight:700;flex-shrink:0">${n}</span></div>`).join('');
+  el.innerHTML=`📦 <strong style="color:var(--sage)">+${d.added} added</strong> · <strong style="color:var(--rose)">−${d.removed} left</strong> <span style="color:var(--steel)">since ${since}</span>`
+    + ((d.addedByStyle||[]).length?`<details style="margin-top:6px"><summary style="cursor:pointer;font-size:12px;color:var(--sky)">▸ ${d.added} added — which styles</summary><div style="margin-top:5px;font-size:12px">${list(d.addedByStyle)}</div></details>`:'')
+    + ((d.removedByStyle||[]).length?`<details style="margin-top:4px"><summary style="cursor:pointer;font-size:12px;color:var(--steel)">▸ ${d.removed} left — which styles</summary><div style="margin-top:5px;font-size:12px;color:var(--steel)">${list(d.removedByStyle)}</div></details>`:'');
 }
 
 function recoveryCheck(rows){
@@ -4231,6 +4242,7 @@ function loadStorage(){
   applySavedTiers(); // restore A/B/C tiers cached from the last recompute
   try{ const u=JSON.parse(localStorage.getItem('jaey_catalogue_images')||'null'); if(u&&typeof u==='object') Object.assign(CATALOGUE_IMAGES,u); }catch(e){} // merge any uploaded catalogue images
   try{ const hd=JSON.parse(localStorage.getItem('jaey_catalogue_hidden')||'null'); if(hd&&typeof hd==='object') CATALOGUE_HIDDEN=hd; }catch(e){} // uploaded hidden/discontinued set
+  try{ renderStockDelta(); }catch(e){} // show last upload's +added / −left summary
   // Ensure Jaini is always present as admin (upsert - safe to run every load)
   try {
     const _users = JSON.parse(localStorage.getItem('jaey_users')||'[]');
