@@ -933,7 +933,7 @@ function setUserName(){ proceedToUserPin(); }
 // Service Worker registered via sw.js when hosted on GitHub Pages
 
 if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./sw.js').catch(()=>{});
-const APP_VER='v71'; // single source of truth — shown in both admin + team headers
+const APP_VER='v72'; // single source of truth — shown in both admin + team headers
 document.addEventListener('DOMContentLoaded',()=>{
   document.querySelectorAll('.app-ver').forEach(e=>e.textContent=APP_VER);
   loadStorage();
@@ -2648,8 +2648,10 @@ function renderResolve(){
       const last=(idx[bc]||[]).slice().sort((x,y)=>new Date(y.at)-new Date(x.at))[0];
       if(!last) continue;
       const mis=last.kind==='misplaced';
+      const srow=stockData.find(x=>String(x.barcode)===String(bc));
+      const sz=srow&&srow.size?' · Size '+srow.size:'';
       auditedHtml+=`<div style="border:1px solid #90b890;border-left:3px solid var(--sage);background:var(--sage-light);border-radius:8px;padding:10px;margin-bottom:8px">
-        <div style="font-weight:600;font-size:13px;color:#2f5d2f">✓ BC ${bc} — already audited</div>
+        <div style="font-weight:600;font-size:13px;color:#2f5d2f">✓ BC ${bc} — already audited${sz}</div>
         <div style="font-size:12px;color:#3d6b3d;margin-top:2px">${last.kind==='found'?'Found in update by':'Scanned by'} <strong>${last.auditor}</strong> under <strong>${last.product} · ${last.color}</strong> · ${formatDateTime(last.at)}${mis?' <span style="color:#a06800">(scanned here, belongs to another style)</span>':''}</div>
       </div>`;
     }
