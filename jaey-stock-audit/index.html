@@ -933,7 +933,7 @@ function setUserName(){ proceedToUserPin(); }
 // Service Worker registered via sw.js when hosted on GitHub Pages
 
 if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./sw.js').catch(()=>{});
-const APP_VER='v73'; // single source of truth — shown in both admin + team headers
+const APP_VER='v74'; // single source of truth — shown in both admin + team headers
 document.addEventListener('DOMContentLoaded',()=>{
   document.querySelectorAll('.app-ver').forEach(e=>e.textContent=APP_VER);
   loadStorage();
@@ -2465,7 +2465,7 @@ function buildActionItems(audit, idx){
   // Mismatches first — system mismatch (mark inward), then wrong label …
   for(const bc of openExtras(audit)){
     const row=stockData.find(f=>f.barcode==bc);
-    items.push({id:'x-'+bc, bc, label:'Mark BC '+bc+' as inward', detail:(row?'Size '+row.size+' — ':'')+'Present physically but system says outward'});
+    items.push({id:'x-'+bc, bc, label:'Mark BC '+bc+' as inward', detail:(row?'Size '+row.size+' — ':'')+'Present physically, but system marked it OUTWARD'+outwardInfo(row)});
   }
   for(const entry of openWrongProduct(audit, idx)){
     const bc=entry.split('__')[0];
@@ -2585,12 +2585,15 @@ function collectMissing(){
   return Object.values(seen);
 }
 
+// "to website on 16 Jun 2026" — the last system movement (purpose + date) for a stock row.
+function fmtMoveDate(s){ const iso=scanTimeISO(s); if(!iso) return ''; const d=new Date(iso); if(isNaN(d)) return ''; return d.toLocaleString('en-IN',{day:'numeric',month:'short',year:'numeric'}); }
+function outwardInfo(row){ if(!row) return ''; const p=row.purpose?(' to '+row.purpose):''; const dt=fmtMoveDate(row.scanTime); return p+(dt?(' on '+dt):''); }
 // Every open mismatch across non-complete audits: system-mismatch (extra) + wrong-label.
 function collectMismatches(){
   const out=[];
   for(const a of audits){
     if((a.status||'')==='complete') continue;
-    for(const bc of openExtras(a)){ const row=stockData.find(r=>String(r.barcode)===String(bc)); out.push({kind:'extra', bc:String(bc), auditId:a.id, product:a.product, color:a.color, size:row?.size||'', at:a.savedAt||a.date}); }
+    for(const bc of openExtras(a)){ const row=stockData.find(r=>String(r.barcode)===String(bc)); out.push({kind:'extra', bc:String(bc), auditId:a.id, product:a.product, color:a.color, size:row?.size||'', info:outwardInfo(row), at:a.savedAt||a.date}); }
     for(const e of openWrongProduct(a)){ const bc=String(e).split('__')[0]; const ts=wrongTrueStyle(e); const row=stockData.find(r=>String(r.barcode)===String(bc)); out.push({kind:'wrong', bc, auditId:a.id, product:a.product, color:a.color, size:row?.size||'', belongsP:ts.product, belongsC:ts.color, at:a.savedAt||a.date}); }
   }
   return out.sort((x,y)=>new Date(x.at)-new Date(y.at));
@@ -2698,7 +2701,7 @@ function renderResolve(){
     const isX=m.kind==='extra';
     mismatchHtml+=`<div style="border:1px solid ${isX?'var(--gold)':'var(--rose)'};border-left:3px solid ${isX?'var(--gold)':'var(--rose)'};background:${isX?'var(--gold-light)':'var(--rose-light)'};border-radius:8px;padding:10px;margin-bottom:8px">
       <div style="font-weight:600;font-size:13px">BC ${m.bc}${m.size?' · Size '+m.size:''} <span style="font-size:11px;color:${isX?'#a06800':'var(--rose)'}">${isX?'🟡 system says outward':'⚠️ wrong label'}</span></div>
-      <div style="font-size:12px;color:var(--steel)">${isX?(m.product+' · '+m.color+' — present physically but system says outward'):('Scanned in '+m.product+' · '+m.color+' — system says it belongs to '+m.belongsP+(m.belongsC?' · '+m.belongsC:''))}</div>
+      <div style="font-size:12px;color:var(--steel)">${isX?(m.product+' · '+m.color+' — present physically, but the system marked it OUTWARD'+(m.info||'')):('Scanned in '+m.product+' · '+m.color+' — system says it belongs to '+m.belongsP+(m.belongsC?' · '+m.belongsC:''))}</div>
       <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">
         <button class="btn bs" style="font-size:11px;padding:6px 10px" onclick="markFixedOnSystem('${m.bc}',${m.auditId})">✓ Fixed on system</button>
         ${journeyBtn(m.bc)}
@@ -4128,7 +4131,7 @@ async function uploadStockToSupabase(rows, fname){
         sku:String(r.sku||''),
         purpose:String(r.purpose||''),
         uploaded_at:String(ts)
-      }; if(withNT){ o.note=String(r.note||''); o.tags=String(r.tags||''); } return o; };
+      }; if(withNT){ o.note=String(r.note||''); o.tags=String(r.tags||''); o.scan_time=String(r.scanTime||''); o.scanned_by=String(r.scannedBy||''); } return o; };
     for(let i=0;i<rows.length;i+=BATCH){
       const slice=rows.slice(i,i+BATCH);
       const post=withNT=>fetch(sbCfg.url+'/rest/v1/stock_data',{
@@ -4170,14 +4173,14 @@ async function fetchStockFromSupabase(){
     
     // Fetch in pages (Supabase default limit is 1000)
     let allRows=[], from=0, pageSize=1000, maxUp='';
-    let cols='barcode,product_name,color,size,status,sku,purpose,uploaded_at,note,tags';
+    let cols='barcode,product_name,color,size,status,sku,purpose,uploaded_at,note,tags,scan_time,scanned_by';
     while(true){
       const get=()=>fetch(
         sbCfg.url+'/rest/v1/stock_data?select='+cols+'&order=id&offset='+from+'&limit='+pageSize,
         {headers:{'apikey':sbCfg.key,'Authorization':'Bearer '+sbCfg.key,'Range-Unit':'items','Range':from+'-'+(from+pageSize-1),'Prefer':'count=none'}}
       );
       let res=await get();
-      if(!res.ok && res.status===400 && cols.indexOf('note')>=0){ // note/tags columns not added yet → load without them
+      if(!res.ok && res.status===400 && cols.indexOf('note')>=0){ // extended columns not added yet → load without them
         cols='barcode,product_name,color,size,status,sku,purpose,uploaded_at'; res=await get();
       }
       if(!res.ok) throw new Error('HTTP '+res.status);
@@ -4203,7 +4206,9 @@ async function fetchStockFromSupabase(){
       sku:r.sku||'',
       purpose:r.purpose||'',
       note:r.note||'',   // carry sample/damage/alteration context through the cloud
-      tags:r.tags||''
+      tags:r.tags||'',
+      scanTime:r.scan_time||'', // last movement date (e.g. when it went outward)
+      scannedBy:r.scanned_by||''
     }));
     buildMap();
     try{localStorage.setItem('jaey_stock',JSON.stringify(stockData));}catch(e){}
