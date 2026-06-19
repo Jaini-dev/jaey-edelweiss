@@ -411,10 +411,16 @@ details.review-card[open]>.rc-summary{border-bottom:1px solid var(--border)}
       <div class="login-error" id="login-u-pin-err"></div>
     </div>
 
-    <!-- ADMIN LOGIN -->
+    <!-- ADMIN LOGIN — name + PIN, same as team -->
     <div id="login-admin-panel" style="display:none">
       <div class="login-title">Admin Access</div>
-      <div class="login-sub">Enter your admin PIN</div>
+      <div class="login-sub">Enter your name, then your admin PIN</div>
+      <div class="fg" style="margin-bottom:10px">
+        <input type="text" id="login-a-name" placeholder="Your name"
+               autocomplete="name"
+               style="font-size:16px;padding:12px 14px;text-align:center;border-radius:10px"
+               oninput="onAdminNameInput()">
+      </div>
       <div class="login-pin-row" id="login-a-dots">
         <div class="login-pin-dot" id="lapd0"></div>
         <div class="login-pin-dot" id="lapd1"></div>
@@ -926,7 +932,7 @@ function setUserName(){ proceedToUserPin(); }
 // Service Worker registered via sw.js when hosted on GitHub Pages
 
 if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./sw.js').catch(()=>{});
-const APP_VER='v62'; // single source of truth — shown in both admin + team headers
+const APP_VER='v63'; // single source of truth — shown in both admin + team headers
 document.addEventListener('DOMContentLoaded',()=>{
   document.querySelectorAll('.app-ver').forEach(e=>e.textContent=APP_VER);
   loadStorage();
@@ -1015,7 +1021,8 @@ function manualSync(){
 // LOGIN SYSTEM
 // ══════════════════
 let loginPinBuf={u:'', a:''};
-let pendingLoginName=''; // name entered before pin
+let pendingLoginName=''; // name entered before pin (team)
+let pendingAdminName=''; // name entered before pin (admin)
 
 function showLogin(){
   document.getElementById('shell-login').classList.add('active');
@@ -1024,8 +1031,9 @@ function showLogin(){
   fetchUsersFromSupabase(); // make sure the roster is current before anyone logs in
   // Reset login form
   loginPinBuf={u:'',a:''};
-  pendingLoginName='';
+  pendingLoginName=''; pendingAdminName='';
   document.getElementById('login-name-input').value='';
+  const aName=document.getElementById('login-a-name'); if(aName) aName.value='';
   document.getElementById('login-name-err').textContent='';
   document.getElementById('login-u-pin-err').textContent='';
   document.getElementById('login-a-err').textContent='';
@@ -1041,7 +1049,16 @@ function switchLoginTab(tab){
   document.getElementById('login-user-panel').style.display=tab==='user'?'block':'none';
   document.getElementById('login-admin-panel').style.display=tab==='admin'?'block':'none';
   loginPinBuf={u:'',a:''};
+  pendingAdminName='';
+  const aName=document.getElementById('login-a-name'); if(aName) aName.value='';
+  const aErr=document.getElementById('login-a-err'); if(aErr) aErr.textContent='';
   updateLoginDots('u'); updateLoginDots('a');
+}
+
+function onAdminNameInput(){
+  document.getElementById('login-a-err').textContent='';
+  if(loginPinBuf.a.length>0){ loginPinBuf.a=''; updateLoginDots('a'); }
+  pendingAdminName='';
 }
 
 function proceedToUserPin(){
@@ -1080,6 +1097,16 @@ function loginPinKey(type, d){
     // Defer the existence check to verifyUserPin (which refreshes from the cloud first).
     pendingLoginName=nameVal;
     document.getElementById('login-name-err').textContent='';
+  }
+  // For admin PIN: resolve name from input field at first keypress if not done
+  if(type==='a' && !pendingAdminName){
+    const nameVal=document.getElementById('login-a-name').value.trim();
+    if(!nameVal){
+      document.getElementById('login-a-err').textContent='Enter your name first';
+      return;
+    }
+    pendingAdminName=nameVal;
+    document.getElementById('login-a-err').textContent='';
   }
   loginPinBuf[type]+=d;
   updateLoginDots(type);
@@ -1132,21 +1159,23 @@ async function verifyUserPin(){
 }
 
 async function verifyAdminPin(){
+  // Pull the latest roster so a newly-added admin works on any device.
   if(navigator.onLine) await _raceTimeout(fetchUsersFromSupabase(), 2000);
-  const admins=getUsers().filter(u=>u.role==='admin');
-  // Try matching against admin users first
-  let matched=admins.find(u=>loginPinBuf.a===u.pin);
+  const errEl=document.getElementById('login-a-err');
+  const fail=msg=>{ errEl.textContent=msg; loginPinBuf.a=''; updateLoginDots('a'); shakeDots('login-a-dots'); };
+  const users=getUsers();
+  const admins=users.filter(u=>u.role==='admin');
   let adminName='Admin';
-  // Fallback: if no admin users exist yet, accept DEFAULT_PIN
-  if(!matched && admins.length===0 && loginPinBuf.a===DEFAULT_PIN){
-    adminName='Admin';
-  } else if(!matched){
-    document.getElementById('login-a-err').textContent='Wrong PIN. Try again.';
-    loginPinBuf.a=''; updateLoginDots('a');
-    shakeDots('login-a-dots');
-    return;
+  // Bootstrap: before any admin exists, accept the default PIN (name optional).
+  if(admins.length===0){
+    if(loginPinBuf.a!==DEFAULT_PIN){ fail('Wrong PIN. Try again.'); return; }
+    adminName=pendingAdminName||'Admin';
   } else {
-    adminName=matched.name;
+    const user=users.find(u=>u.name.toLowerCase()===pendingAdminName.toLowerCase());
+    if(!user){ fail('Name not found. Ask Jaini to add you.'); return; }
+    if(user.role!=='admin'){ fail(user.name+' isn’t an admin. Log in via the Team tab, or ask Jaini to grant admin access.'); return; }
+    if(loginPinBuf.a!==user.pin){ fail('Wrong PIN. Try again.'); return; }
+    adminName=user.name;
   }
   localStorage.setItem('jaey_admin_name', adminName);
   localStorage.setItem('jaey_session', JSON.stringify({type:'admin', name:adminName, at:Date.now()}));
