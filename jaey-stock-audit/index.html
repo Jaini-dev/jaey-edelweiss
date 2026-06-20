@@ -934,7 +934,7 @@ function setUserName(){ proceedToUserPin(); }
 // Service Worker registered via sw.js when hosted on GitHub Pages
 
 if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./sw.js').catch(()=>{});
-const APP_VER='v97'; // single source of truth — shown in both admin + team headers
+const APP_VER='v98'; // single source of truth — shown in both admin + team headers
 document.addEventListener('DOMContentLoaded',()=>{
   document.querySelectorAll('.app-ver').forEach(e=>e.textContent=APP_VER);
   loadStorage();
@@ -2485,7 +2485,7 @@ function buildActionItems(audit, idx){
     const row=stockData.find(f=>f.barcode==bc);
     const samp=isSample(row);
     const ctx=row?[row.tags?'🏷️ '+row.tags:'', row.note?'📝 '+row.note:''].filter(Boolean).join(' · '):'';
-    items.push({id:'g-'+bc, bc, sample:samp, label:'Mark BC '+bc+' as outward', detail:(row?row.sku+' · Size '+row.size+' — ':'')+'In system but not physically found'+(samp?' · likely in the sample rack':'')+(ctx?'<br>'+ctx:'')});
+    items.push({id:'g-'+bc, bc, sample:samp, label:'Mark BC '+bc+' as outward', detail:(row?((row.sku?row.sku+' · ':'')+'Size '+(row.size||'?')+' — '):'')+'In system but not physically found'+(samp?' · likely in the sample rack':'')+(ctx?'<br>'+ctx:'')});
   }
   return items;
 }
@@ -4345,7 +4345,7 @@ function cacheStock(){
   // Keep scanTime (after-audit "new pieces" logic) + tags (samples) at every tier; only scannedBy is droppable.
   const slim=r=>({barcode:r.barcode,product:r.product,color:r.color,size:r.size,status:r.status,sku:r.sku,purpose:r.purpose,itemId:r.itemId,sizeId:r.sizeId,tags:r.tags,note:r.note,scanTime:r.scanTime});
   const slimIn=r=>({barcode:r.barcode,product:r.product,color:r.color,size:r.size,status:r.status,sku:r.sku,purpose:r.purpose,itemId:r.itemId,sizeId:r.sizeId,tags:r.tags,note:r.note,scanTime:r.status==='inward'?r.scanTime:''});
-  const tiny=r=>({barcode:r.barcode,product:r.product,color:r.color,size:r.size,status:r.status,tags:r.tags,scanTime:r.status==='inward'?r.scanTime:''});
+  const tiny=r=>({barcode:r.barcode,product:r.product,color:r.color,size:r.size,status:r.status,sku:r.sku,tags:r.tags,scanTime:r.status==='inward'?r.scanTime:''});
   try{ localStorage.setItem('jaey_stock', JSON.stringify(stockData)); return; }catch(e){}
   try{ localStorage.setItem('jaey_stock', JSON.stringify(stockData.map(slim))); return; }catch(e){}     // ~4.7MB
   try{ localStorage.setItem('jaey_stock', JSON.stringify(stockData.map(slimIn))); return; }catch(e){}   // ~4.3MB (scanTime inward-only)
