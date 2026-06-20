@@ -934,7 +934,7 @@ function setUserName(){ proceedToUserPin(); }
 // Service Worker registered via sw.js when hosted on GitHub Pages
 
 if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./sw.js').catch(()=>{});
-const APP_VER='v95'; // single source of truth — shown in both admin + team headers
+const APP_VER='v96'; // single source of truth — shown in both admin + team headers
 document.addEventListener('DOMContentLoaded',()=>{
   document.querySelectorAll('.app-ver').forEach(e=>e.textContent=APP_VER);
   loadStorage();
@@ -2312,7 +2312,7 @@ function renderAdminReview(){
         if(isMissing) btns=`<button class="btn bs" style="font-size:11px;padding:6px 11px;flex-shrink:0" onclick="resolveFound('${ai.bc}',${audit.id})">✓ Found</button>`;
         else if(isWrong) btns=`<div style="display:flex;flex-direction:column;gap:5px;flex-shrink:0">
             <button class="btn bs" style="font-size:11px;padding:6px 10px;white-space:nowrap" onclick="markFixedOnSystem('${ai.bc}',${audit.id})">✓ Fixed on system</button>
-            <button class="btn bo" style="font-size:11px;padding:6px 10px;white-space:nowrap;color:var(--rose);border-color:var(--rose)" onclick="removeScanFromAudit(${audit.id},'${ai.bc}')">🗑 Not ours</button>
+            <button class="btn bo" style="font-size:11px;padding:6px 10px;white-space:nowrap;color:var(--rose);border-color:var(--rose)" onclick="removeScanFromAudit(${audit.id},'${ai.bc}')">🗑 Remove from here</button>
           </div>`;
         else if(isExtra) btns=`<button class="btn bs" style="font-size:11px;padding:6px 10px;white-space:nowrap;flex-shrink:0" onclick="markFixedOnSystem('${ai.bc}',${audit.id})">✓ Fixed on system</button>`;
         html+=`<div class="action-item" style="align-items:flex-start">
@@ -2707,7 +2707,7 @@ function renderResolve(){
       <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">
         <button class="btn bs" style="font-size:11px;padding:6px 10px" onclick="markFixedOnSystem('${m.bc}',${m.auditId})">✓ Fixed on system</button>
         ${journeyBtn(m.bc)}
-        <button class="btn bo" style="font-size:11px;padding:6px 10px;color:var(--rose);border-color:var(--rose)" onclick="removeScanFromAudit(${m.auditId},'${m.bc}')">🗑 ${isX?'Remove':'Not ours'}</button>
+        <button class="btn bo" style="font-size:11px;padding:6px 10px;color:var(--rose);border-color:var(--rose)" onclick="removeScanFromAudit(${m.auditId},'${m.bc}')">🗑 ${isX?'Remove':'Remove from here'}</button>
       </div></div>`;
   }
   let html=auditedHtml+mismatchHtml+bulkBar;
