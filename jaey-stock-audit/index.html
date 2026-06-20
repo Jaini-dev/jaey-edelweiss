@@ -934,7 +934,7 @@ function setUserName(){ proceedToUserPin(); }
 // Service Worker registered via sw.js when hosted on GitHub Pages
 
 if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./sw.js').catch(()=>{});
-const APP_VER='v91'; // single source of truth — shown in both admin + team headers
+const APP_VER='v92'; // single source of truth — shown in both admin + team headers
 document.addEventListener('DOMContentLoaded',()=>{
   document.querySelectorAll('.app-ver').forEach(e=>e.textContent=APP_VER);
   loadStorage();
@@ -3247,7 +3247,6 @@ function showStockToday(id){
     <div style="color:var(--sage)">✓ ${b.foundTotal} audited${b.foundOut?` <span style="color:#a06800">· ${b.foundOut} outwarded since</span>`:''}</div>
     <div style="color:var(--rose)">🔴 ${b.missingTotal} missing${b.missingOut?` <span style="color:#a06800">· ${b.missingOut} outwarded since</span>`:''}</div>
     ${b.newArrivals?`<div style="color:var(--sky)">🆕 ${b.newArrivals} new since (top up via Add pieces)</div>`:''}
-    ${(b.foundSampleT+b.missingSampleT)?`<div style="color:#6b3fa0">🧷 ${b.foundSampleT+b.missingSampleT} sample${(b.foundSampleT+b.missingSampleT)>1?'s':''} here${b.missingSampleT?' ('+b.missingSampleT+' of the missing) — likely in the sample rack':''}</div>`:''}
     <div style="display:flex;justify-content:space-between;padding:5px 0 2px;border-top:2px solid var(--ink);margin-top:5px;font-size:14px"><strong>With you now (per system)</strong><strong style="color:var(--sage)">${b.withYouNow}</strong></div>
   </div>`;
   const sizes=Object.keys(b.sizes).sort((x,y)=>sizeRank(x)-sizeRank(y));
