@@ -934,7 +934,7 @@ function setUserName(){ proceedToUserPin(); }
 // Service Worker registered via sw.js when hosted on GitHub Pages
 
 if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./sw.js').catch(()=>{});
-const APP_VER='v75'; // single source of truth — shown in both admin + team headers
+const APP_VER='v76'; // single source of truth — shown in both admin + team headers
 document.addEventListener('DOMContentLoaded',()=>{
   document.querySelectorAll('.app-ver').forEach(e=>e.textContent=APP_VER);
   loadStorage();
@@ -3189,13 +3189,13 @@ function followUpSummary(a){
 }
 // Total in system, and the barcodes physically accounted for (scanned + found-in-update).
 function sysTotal(a){ return (a.systemInward?.length) || (((a.report?.ghosts?.length)||0)+((a.report?.matched)||0)); }
-// Ghosts that are STILL a genuine discrepancy: the current stock still lists them inward.
-// If the system now shows a "missing" piece as outward/gone (e.g. it was sold/shipped after the
-// audit), it isn't a loss — drop it so it stops showing as missing.
+// A "missing" piece stops being missing ONLY when current stock POSITIVELY shows it outward
+// (e.g. sold/shipped after the audit). If the barcode is absent from the loaded stock (e.g. a
+// partial/wrong CSV) or still inward, keep it as missing — never hide it on absence.
 function effectiveGhosts(a){
   const g=(a.report?.ghosts)||[];
-  if(!stockData.length) return g.slice(); // can't judge without stock loaded
-  return g.filter(bc=>{ const row=bcRow(bc); return !!(row && row.status==='inward'); });
+  if(!stockData.length) return g.slice(); // no stock loaded → judge nothing
+  return g.filter(bc=>{ const row=bcRow(bc); return !(row && row.status==='outward'); });
 }
 function accountedBarcodes(a){
   const ghosts=effectiveGhosts(a); // outward-now pieces count as accounted (they left the system)
