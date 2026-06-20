@@ -934,7 +934,7 @@ function setUserName(){ proceedToUserPin(); }
 // Service Worker registered via sw.js when hosted on GitHub Pages
 
 if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./sw.js').catch(()=>{});
-const APP_VER='v99'; // single source of truth — shown in both admin + team headers
+const APP_VER='v100'; // single source of truth — shown in both admin + team headers
 document.addEventListener('DOMContentLoaded',()=>{
   document.querySelectorAll('.app-ver').forEach(e=>e.textContent=APP_VER);
   loadStorage();
@@ -4244,7 +4244,7 @@ async function uploadStockToSupabase(rows, fname){
         sku:String(r.sku||''),
         purpose:String(r.purpose||''),
         uploaded_at:String(ts)
-      }; if(withNT){ o.note=String(r.note||''); o.tags=String(r.tags||''); o.scan_time=String(r.scanTime||''); o.scanned_by=String(r.scannedBy||''); } return o; };
+      }; if(withNT){ o.note=String(r.note||''); o.tags=String(r.tags||''); o.scan_time=String(r.scanTime||''); o.scanned_by=String(r.scannedBy||''); o.item_id=String(r.itemId||''); o.size_id=String(r.sizeId||''); } return o; };
     for(let i=0;i<rows.length;i+=BATCH){
       const slice=rows.slice(i,i+BATCH);
       const post=withNT=>fetch(sbCfg.url+'/rest/v1/stock_data',{
@@ -4286,7 +4286,7 @@ async function fetchStockFromSupabase(){
     
     // Fetch in pages (Supabase default limit is 1000)
     let allRows=[], from=0, pageSize=1000, maxUp='';
-    let cols='barcode,product_name,color,size,status,sku,purpose,uploaded_at,note,tags,scan_time,scanned_by';
+    let cols='barcode,product_name,color,size,status,sku,purpose,uploaded_at,note,tags,scan_time,scanned_by,item_id,size_id';
     while(true){
       const get=()=>fetch(
         sbCfg.url+'/rest/v1/stock_data?select='+cols+'&order=id&offset='+from+'&limit='+pageSize,
@@ -4321,7 +4321,9 @@ async function fetchStockFromSupabase(){
       note:r.note||'',   // carry sample/damage/alteration context through the cloud
       tags:r.tags||'',
       scanTime:r.scan_time||'', // last movement date (e.g. when it went outward)
-      scannedBy:r.scanned_by||''
+      scannedBy:r.scanned_by||'',
+      itemId:r.item_id||'',  // needed for the Unknown / Lost CSV export
+      sizeId:r.size_id||''
     }));
     buildMap();
     cacheStock();
@@ -4345,18 +4347,14 @@ async function fetchStockFromSupabase(){
 }
 function parseCSVLine(line){const r=[];let c='',q=false;for(let i=0;i<line.length;i++){const ch=line[i];if(ch==='"')q=!q;else if(ch===','&&!q){r.push(c);c='';}else c+=ch;}r.push(c);return r;}
 function buildMap(){productMap={};_bcIndex=new Map();for(const r of stockData){if(!productMap[r.product])productMap[r.product]={};if(!productMap[r.product][r.color])productMap[r.product][r.color]=[];productMap[r.product][r.color].push(r);_bcIndex.set(String(r.barcode),r);}}
-// Cache stock to localStorage. A large stock (a full in/out export is ~5MB+) overflows the ~5MB
-// quota, so fall back to ever-smaller subsets; if even the smallest fails, drop the key so we
-// NEVER keep a stale partial cache (which would otherwise mask the real stock).
+// Cache stock to localStorage for instant/offline load. The full export (~5MB+) overflows the ~5MB
+// quota, so fall back to a lean ~3MB subset that keeps everything the UI + logic need (incl. ids,
+// purpose, tags, inward scanTime). Anything dropped (note, scannedBy, outward scanTime) is now in
+// Supabase, so a fresh fetch always restores the full record. If even lean fails, drop the key.
 function cacheStock(){
-  // Keep scanTime (after-audit "new pieces" logic) + tags (samples) at every tier; only scannedBy is droppable.
-  const slim=r=>({barcode:r.barcode,product:r.product,color:r.color,size:r.size,status:r.status,sku:r.sku,purpose:r.purpose,itemId:r.itemId,sizeId:r.sizeId,tags:r.tags,note:r.note,scanTime:r.scanTime});
-  const slimIn=r=>({barcode:r.barcode,product:r.product,color:r.color,size:r.size,status:r.status,sku:r.sku,purpose:r.purpose,itemId:r.itemId,sizeId:r.sizeId,tags:r.tags,note:r.note,scanTime:r.status==='inward'?r.scanTime:''});
-  const tiny=r=>({barcode:r.barcode,product:r.product,color:r.color,size:r.size,status:r.status,sku:r.sku,purpose:r.purpose,itemId:r.itemId,sizeId:r.sizeId,tags:r.tags,scanTime:r.status==='inward'?r.scanTime:''});
+  const lean=r=>({barcode:r.barcode,product:r.product,color:r.color,size:r.size,status:r.status,sku:r.sku,purpose:r.purpose,itemId:r.itemId,sizeId:r.sizeId,tags:r.tags,scanTime:r.status==='inward'?r.scanTime:''});
   try{ localStorage.setItem('jaey_stock', JSON.stringify(stockData)); return; }catch(e){}
-  try{ localStorage.setItem('jaey_stock', JSON.stringify(stockData.map(slim))); return; }catch(e){}     // ~4.7MB
-  try{ localStorage.setItem('jaey_stock', JSON.stringify(stockData.map(slimIn))); return; }catch(e){}   // ~4.3MB (scanTime inward-only)
-  try{ localStorage.setItem('jaey_stock', JSON.stringify(stockData.map(tiny))); return; }catch(e){}
+  try{ localStorage.setItem('jaey_stock', JSON.stringify(stockData.map(lean))); return; }catch(e){} // ~3MB
   try{ localStorage.removeItem('jaey_stock'); }catch(e){}
 }
 function bcRow(bc){ return _bcIndex?_bcIndex.get(String(bc)):stockData.find(r=>String(r.barcode)===String(bc)); }
