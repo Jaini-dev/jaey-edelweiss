@@ -934,7 +934,7 @@ function setUserName(){ proceedToUserPin(); }
 // Service Worker registered via sw.js when hosted on GitHub Pages
 
 if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./sw.js').catch(()=>{});
-const APP_VER='v77'; // single source of truth — shown in both admin + team headers
+const APP_VER='v78'; // single source of truth — shown in both admin + team headers
 document.addEventListener('DOMContentLoaded',()=>{
   document.querySelectorAll('.app-ver').forEach(e=>e.textContent=APP_VER);
   loadStorage();
@@ -2288,7 +2288,8 @@ function renderAdminReview(){
       </summary>
       <div class="rc-body">
         <div class="rc-tags" style="margin-bottom:8px">
-          <span class="badge b-steel" style="cursor:pointer" onclick="showScannedBarcodes(${audit.id})">📋 ${sys} in system</span>
+          <span class="badge b-steel" style="cursor:pointer" onclick="showScannedBarcodes(${audit.id})">📋 ${sys} on audit day</span>
+          ${stockData.length?`<span class="badge b-sky" style="cursor:pointer" onclick="showStockToday(${audit.id})">📦 ${withYouNow(audit)} with you now ›</span>`:''}
           <span class="badge b-sage" style="cursor:pointer" onclick="showScannedBarcodes(${audit.id})">✓ ${accounted} accounted ›</span>
           ${ghosts?'<span class="badge b-rose">🔴 '+ghosts+' missing</span>':''}
           ${extras?'<span class="badge b-gold">🟡 '+extras+' sys mismatch</span>':''}
@@ -3200,6 +3201,43 @@ function effectiveGhosts(a){
 function accountedBarcodes(a){
   const ghosts=effectiveGhosts(a); // outward-now pieces count as accounted (they left the system)
   return (a.systemInward||[]).filter(b=>!ghosts.includes(b));
+}
+// "With you now" = how many of this style the SYSTEM currently says are inward (audit-day total
+// minus anything sold/shipped since, plus any new arrivals). It's the number to physically count.
+function stockTodayBreakdown(a){
+  const sysInward=(a.systemInward||[]).map(String);
+  const auditDayTotal=sysInward.length;
+  const ghosts=new Set((a.report?.ghosts||[]).map(String)); // audit-day missing
+  let foundOut=0, missingOut=0;
+  for(const bc of sysInward){ const row=bcRow(bc); const out=row&&row.status==='outward';
+    if(out){ if(ghosts.has(bc)) missingOut++; else foundOut++; } }
+  const cur=(productMap[a.product]?.[a.color]||[]).filter(r=>r.status==='inward'); // current system-inward
+  const sysSet=new Set(sysInward);
+  const newArrivals=cur.filter(r=>!sysSet.has(String(r.barcode))).length;
+  const bySize={}; for(const r of cur){ const s=r.size||'—'; bySize[s]=(bySize[s]||0)+1; }
+  return {auditDayTotal, foundTotal:auditDayTotal-ghosts.size, missingTotal:ghosts.size, foundOut, missingOut, withYouNow:cur.length, newArrivals, bySize};
+}
+function withYouNow(a){ return (productMap[a.product]?.[a.color]||[]).filter(r=>r.status==='inward').length; }
+function showStockToday(id){
+  const a=audits.find(x=>x.id===id); if(!a) return;
+  const b=stockTodayBreakdown(a);
+  document.getElementById('modal-title').textContent='📦 Stock today · '+a.product+' · '+a.color;
+  let html=`<div style="font-size:13px">
+    <div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border)"><span>On audit day (per system)</span><strong>${b.auditDayTotal}</strong></div>
+    <div style="padding:6px 0;color:var(--sage)">✓ ${b.foundTotal} audited${b.foundOut?` <span style="color:#a06800">· ${b.foundOut} outwarded since</span>`:''}</div>
+    <div style="padding:6px 0;color:var(--rose)">🔴 ${b.missingTotal} missing${b.missingOut?` <span style="color:#a06800">· ${b.missingOut} outwarded since</span>`:''}</div>
+    ${b.newArrivals?`<div style="padding:6px 0;color:var(--sky)">🆕 ${b.newArrivals} new piece${b.newArrivals>1?'s':''} inwarded since the audit</div>`:''}
+    <div style="display:flex;justify-content:space-between;padding:9px 0;border-top:2px solid var(--ink);margin-top:4px;font-size:15px"><span><strong>With you now (per system)</strong></span><strong style="color:var(--sage)">${b.withYouNow}</strong></div>
+    <div style="font-size:11px;color:var(--steel);margin-top:2px">Physically count the rack and it should total ${b.withYouNow} (any shortfall = still-missing pieces).</div>
+  </div>`;
+  const sizes=Object.keys(b.bySize).sort((x,y)=>x.localeCompare(y,undefined,{numeric:true}));
+  if(sizes.length){
+    html+=`<div style="font-weight:600;margin:12px 0 6px;font-size:13px">📏 Size breakdown — with you now</div><table style="width:100%;border-collapse:collapse;font-size:13px">`;
+    for(const s of sizes) html+=`<tr style="border-top:1px solid var(--border)"><td style="padding:5px 0">${s}</td><td style="text-align:right;font-weight:600">${b.bySize[s]}</td></tr>`;
+    html+=`</table>`;
+  } else html+=`<div style="color:var(--steel);font-size:12px;margin-top:10px">Load today's stock CSV to see the live count + size split.</div>`;
+  document.getElementById('modal-body').innerHTML=html;
+  document.getElementById('modal-ov').classList.add('show');
 }
 // Modal: list every barcode physically accounted for (scanned in the original count or found later).
 function showScannedBarcodes(id){
