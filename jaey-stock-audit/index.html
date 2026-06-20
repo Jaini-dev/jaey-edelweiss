@@ -934,7 +934,7 @@ function setUserName(){ proceedToUserPin(); }
 // Service Worker registered via sw.js when hosted on GitHub Pages
 
 if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./sw.js').catch(()=>{});
-const APP_VER='v79'; // single source of truth — shown in both admin + team headers
+const APP_VER='v80'; // single source of truth — shown in both admin + team headers
 document.addEventListener('DOMContentLoaded',()=>{
   document.querySelectorAll('.app-ver').forEach(e=>e.textContent=APP_VER);
   loadStorage();
@@ -3210,11 +3210,10 @@ function stockTodayBreakdown(a){
   const sizes={}; let foundOut=0, missingOut=0, foundIn=0, missingIn=0;
   for(const bc of sysInward){
     const row=bcRow(bc); const size=(row&&row.size)||'—';
-    const e=(sizes[size]=sizes[size]||{found:0,missing:0});
+    const e=(sizes[size]=sizes[size]||{foundGross:0,foundOut:0,missingGross:0,missingOut:0});
     const isGhost=ghosts.has(bc); const outNow=row&&row.status==='outward';
-    if(outNow){ if(isGhost) missingOut++; else foundOut++; }       // left the system since the audit
-    else if(isGhost){ e.missing++; missingIn++; }                  // still missing (inward or absent)
-    else { e.found++; foundIn++; }                                 // audited & still with you
+    if(isGhost){ e.missingGross++; if(outNow){ e.missingOut++; missingOut++; } else missingIn++; }
+    else { e.foundGross++; if(outNow){ e.foundOut++; foundOut++; } else foundIn++; }
   }
   const cur=(productMap[a.product]?.[a.color]||[]).filter(r=>r.status==='inward');
   const sysSet=new Set(sysInward);
@@ -3238,11 +3237,15 @@ function showStockToday(id){
   </div>`;
   const sizes=Object.keys(b.sizes).sort((x,y)=>x.localeCompare(y,undefined,{numeric:true}));
   if(sizes.length){
-    html+=`<div style="font-weight:600;margin:12px 0 6px;font-size:13px">📏 Size breakdown (net)</div>
+    // Each cell shows the calc: ✓ audited (green) − outwarded-since (amber) = net.
+    const cell=(gross,out,color)=>`<div style="font-weight:700;color:${color}">${gross-out}</div><div style="font-size:9px;color:var(--steel)"><span style="color:${color}">✓${gross}</span>${out?` <span style="color:#a06800">−${out}</span>`:''}</div>`;
+    html+=`<div style="font-weight:600;margin:12px 0 4px;font-size:13px">📏 Size breakdown (net)</div>
+      <div style="font-size:10px;color:var(--steel);margin-bottom:5px"><span style="color:var(--sage)">✓ on audit day</span> · <span style="color:#a06800">− outwarded since</span> = net with you</div>
       <table style="width:100%;border-collapse:collapse;font-size:13px">
-      <tr style="color:var(--steel);font-size:10px;letter-spacing:.03em;text-transform:uppercase;text-align:right"><th style="text-align:left;padding:4px 0">Size</th><th>Found</th><th>Missing</th><th>With you now</th></tr>`;
-    for(const s of sizes){ const e=b.sizes[s]; html+=`<tr style="border-top:1px solid var(--border);text-align:right"><td style="text-align:left;padding:5px 0;font-weight:600">${s}</td><td style="color:var(--sage)">${e.found}</td><td style="color:var(--rose)">${e.missing}</td><td style="font-weight:700">${e.found+e.missing}</td></tr>`; }
-    html+=`<tr style="border-top:2px solid var(--ink);text-align:right;font-weight:700"><td style="text-align:left;padding:6px 0">Total</td><td style="color:var(--sage)">${b.foundIn}</td><td style="color:var(--rose)">${b.missingIn}</td><td>${b.withYouNow}</td></tr></table>`;
+      <tr style="color:var(--steel);font-size:10px;letter-spacing:.03em;text-transform:uppercase;text-align:right"><th style="text-align:left;padding:4px 0">Size</th><th>Found</th><th>Missing</th><th>With&nbsp;you&nbsp;now</th></tr>`;
+    for(const s of sizes){ const e=b.sizes[s]; const fNet=e.foundGross-e.foundOut, mNet=e.missingGross-e.missingOut;
+      html+=`<tr style="border-top:1px solid var(--border);text-align:right;vertical-align:top"><td style="text-align:left;padding:6px 0;font-weight:600">${s}</td><td style="padding:6px 0 6px 4px">${cell(e.foundGross,e.foundOut,'var(--sage)')}</td><td style="padding:6px 0 6px 4px">${cell(e.missingGross,e.missingOut,'var(--rose)')}</td><td style="padding:6px 0;font-weight:700;font-size:15px">${fNet+mNet}</td></tr>`; }
+    html+=`<tr style="border-top:2px solid var(--ink);text-align:right;vertical-align:top"><td style="text-align:left;padding:6px 0;font-weight:700">Total</td><td style="padding:6px 0 6px 4px">${cell(b.foundTotal,b.foundOut,'var(--sage)')}</td><td style="padding:6px 0 6px 4px">${cell(b.missingTotal,b.missingOut,'var(--rose)')}</td><td style="padding:6px 0;font-weight:700;font-size:15px">${b.withYouNow}</td></tr></table>`;
   } else html+=`<div style="color:var(--steel);font-size:12px;margin-top:10px">Load today's stock CSV to see the size split.</div>`;
   document.getElementById('modal-body').innerHTML=html;
   document.getElementById('modal-ov').classList.add('show');
