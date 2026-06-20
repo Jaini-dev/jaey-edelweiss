@@ -934,7 +934,7 @@ function setUserName(){ proceedToUserPin(); }
 // Service Worker registered via sw.js when hosted on GitHub Pages
 
 if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./sw.js').catch(()=>{});
-const APP_VER='v89'; // single source of truth — shown in both admin + team headers
+const APP_VER='v90'; // single source of truth — shown in both admin + team headers
 document.addEventListener('DOMContentLoaded',()=>{
   document.querySelectorAll('.app-ver').forEach(e=>e.textContent=APP_VER);
   loadStorage();
@@ -4328,8 +4328,10 @@ function buildMap(){productMap={};_bcIndex=new Map();for(const r of stockData){i
 // NEVER keep a stale partial cache (which would otherwise mask the real stock).
 function cacheStock(){
   try{ localStorage.setItem('jaey_stock', JSON.stringify(stockData)); return; }catch(e){}
-  try{ localStorage.setItem('jaey_stock', JSON.stringify(stockData.map(r=>({barcode:r.barcode,product:r.product,color:r.color,size:r.size,status:r.status,sku:r.sku,purpose:r.purpose})))); return; }catch(e){}
-  try{ localStorage.setItem('jaey_stock', JSON.stringify(stockData.map(r=>({barcode:r.barcode,product:r.product,color:r.color,size:r.size,status:r.status})))); return; }catch(e){}
+  // ~4MB: keep tags/note/ids (needed for sample flag, context, Lost CSV); drop only the heavy scan_time/scanned_by.
+  try{ localStorage.setItem('jaey_stock', JSON.stringify(stockData.map(r=>({barcode:r.barcode,product:r.product,color:r.color,size:r.size,status:r.status,sku:r.sku,purpose:r.purpose,itemId:r.itemId,sizeId:r.sizeId,tags:r.tags,note:r.note})))); return; }catch(e){}
+  // last resort still keeps tags so samples stay flagged.
+  try{ localStorage.setItem('jaey_stock', JSON.stringify(stockData.map(r=>({barcode:r.barcode,product:r.product,color:r.color,size:r.size,status:r.status,tags:r.tags})))); return; }catch(e){}
   try{ localStorage.removeItem('jaey_stock'); }catch(e){}
 }
 function bcRow(bc){ return _bcIndex?_bcIndex.get(String(bc)):stockData.find(r=>String(r.barcode)===String(bc)); }
