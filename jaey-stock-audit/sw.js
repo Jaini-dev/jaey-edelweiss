@@ -1,4 +1,4 @@
-const CACHE = 'jaey-audit-v86';
+const CACHE = 'jaey-audit-v87';
 const ASSETS = ['/', '/index.html'];
 
 self.addEventListener('install', e => {

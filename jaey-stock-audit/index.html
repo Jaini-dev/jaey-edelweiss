@@ -230,9 +230,9 @@ details.review-card[open]>.rc-summary{border-bottom:1px solid var(--border)}
 @keyframes shake{0%,100%{transform:translateX(0)}20%{transform:translateX(-7px)}60%{transform:translateX(7px)}}
 
 /* ── MODAL (bottom sheet) ── */
-.modal-ov{display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:150;align-items:flex-end;justify-content:center}
+.modal-ov{display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:150;align-items:center;justify-content:center;padding:18px}
 .modal-ov.show{display:flex}
-.modal-box{background:var(--white);border-radius:var(--r) var(--r) 0 0;padding:18px;width:100%;max-width:460px;max-height:88vh;overflow-y:auto}
+.modal-box{background:var(--white);border-radius:var(--r);padding:18px;width:100%;max-width:460px;max-height:90vh;overflow-y:auto}
 .modal-hdr{font-family:'DM Serif Display',serif;font-size:17px;margin-bottom:11px;display:flex;justify-content:space-between;align-items:center}
 .modal-close{background:none;border:none;font-size:21px;cursor:pointer;color:var(--steel);padding:0}
 
@@ -934,7 +934,7 @@ function setUserName(){ proceedToUserPin(); }
 // Service Worker registered via sw.js when hosted on GitHub Pages
 
 if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./sw.js').catch(()=>{});
-const APP_VER='v86'; // single source of truth — shown in both admin + team headers
+const APP_VER='v87'; // single source of truth — shown in both admin + team headers
 document.addEventListener('DOMContentLoaded',()=>{
   document.querySelectorAll('.app-ver').forEach(e=>e.textContent=APP_VER);
   loadStorage();
