@@ -934,7 +934,7 @@ function setUserName(){ proceedToUserPin(); }
 // Service Worker registered via sw.js when hosted on GitHub Pages
 
 if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./sw.js').catch(()=>{});
-const APP_VER='v76'; // single source of truth — shown in both admin + team headers
+const APP_VER='v77'; // single source of truth — shown in both admin + team headers
 document.addEventListener('DOMContentLoaded',()=>{
   document.querySelectorAll('.app-ver').forEach(e=>e.textContent=APP_VER);
   loadStorage();
@@ -2800,7 +2800,7 @@ async function applyCorrection(bc, auditId, newStatus){
   // Update local cache too.
   for(const r of stockData){ if(r.barcode==bc) r.status=newStatus; }
   buildMap();
-  try{localStorage.setItem('jaey_stock',JSON.stringify(stockData));}catch(e){}
+  cacheStock();
   const audit=audits.find(a=>a.id===auditId);
   if(audit){ (audit.systemUpdated=audit.systemUpdated||[]).push(bc); audit.updatedAt=new Date().toISOString(); try{localStorage.setItem('jaey_audits',JSON.stringify(audits));}catch(e){} saveAuditRemote(audit); }
   toast('✓ System updated — BC '+bc+' set '+newStatus);
@@ -2855,7 +2855,7 @@ function markLost(bc, auditId, hasFoundIn){
     if(!confirm('⚠️ BC '+bc+' has no Item ID / Size ID loaded, so its Unknown CSV row will be incomplete.\n\nTip: load today\'s stock CSV in the Data tab first. Continue anyway?')) return;
   }
   writeOffUnknownCore(bc, auditId);
-  buildMap(); try{localStorage.setItem('jaey_stock',JSON.stringify(stockData));}catch(e){}
+  buildMap(); cacheStock();
   toast('🔴 BC '+bc+' marked Unknown');
   renderResolve(); renderAdminReview(); updateStockComposition();
 }
@@ -2880,7 +2880,7 @@ function bulkMarkUnknown(){
   if(seen) warn+='\n• '+seen+' were seen in another count (likely misplaced)';
   if(!confirm('Write off '+sel.length+' piece'+(sel.length>1?'s':'')+' as UNKNOWN?'+(warn?'\n'+warn+'\n':'')+'\nThey\'ll be added to today\'s Unknown CSV and removed from the list.')) return;
   for(const v of sel) writeOffUnknownCore(v.bc, v.auditId);
-  buildMap(); try{localStorage.setItem('jaey_stock',JSON.stringify(stockData));}catch(e){}
+  buildMap(); cacheStock();
   resolveSel.clear();
   toast('🔴 '+sel.length+' marked Unknown');
   renderResolve(); renderAdminReview(); updateStockComposition();
@@ -4096,7 +4096,7 @@ function parseCSV(text,fname){
     recoveryCheck(rows);   // flag any previously-Lost barcode that is now inward again
     checkFixedPending();   // auto-confirm any "fixed on system" pieces the new CSV now backs up
     try{ const _na=newArrivalsByStyle(); const _tot=_na.reduce((n,s)=>n+s.count,0); if(_tot) setTimeout(()=>toast('🆕 '+_tot+' new piece'+(_tot>1?'s':'')+' arrived for '+_na.length+' audited style'+(_na.length>1?'s':'')+' — see Review'),900); }catch(e){}
-    try{localStorage.setItem('jaey_stock',JSON.stringify(stockData));}catch(e){}
+    cacheStock();
     document.getElementById('data-status').className='ds';
     document.getElementById('data-status').innerHTML=`✓ <strong>${rows.length.toLocaleString()} barcodes</strong> · ${fname}`;
     populatePlanDropdowns();
@@ -4220,7 +4220,7 @@ async function fetchStockFromSupabase(){
       scannedBy:r.scanned_by||''
     }));
     buildMap();
-    try{localStorage.setItem('jaey_stock',JSON.stringify(stockData));}catch(e){}
+    cacheStock();
     checkFixedPending();   // a freshly-pulled CSV may confirm parked "fixed on system" pieces
 
     const uploadMeta=JSON.parse(localStorage.getItem('jaey_stock_uploaded')||'null');
@@ -4240,6 +4240,15 @@ async function fetchStockFromSupabase(){
 }
 function parseCSVLine(line){const r=[];let c='',q=false;for(let i=0;i<line.length;i++){const ch=line[i];if(ch==='"')q=!q;else if(ch===','&&!q){r.push(c);c='';}else c+=ch;}r.push(c);return r;}
 function buildMap(){productMap={};_bcIndex=new Map();for(const r of stockData){if(!productMap[r.product])productMap[r.product]={};if(!productMap[r.product][r.color])productMap[r.product][r.color]=[];productMap[r.product][r.color].push(r);_bcIndex.set(String(r.barcode),r);}}
+// Cache stock to localStorage. A large stock (a full in/out export is ~5MB+) overflows the ~5MB
+// quota, so fall back to ever-smaller subsets; if even the smallest fails, drop the key so we
+// NEVER keep a stale partial cache (which would otherwise mask the real stock).
+function cacheStock(){
+  try{ localStorage.setItem('jaey_stock', JSON.stringify(stockData)); return; }catch(e){}
+  try{ localStorage.setItem('jaey_stock', JSON.stringify(stockData.map(r=>({barcode:r.barcode,product:r.product,color:r.color,size:r.size,status:r.status,sku:r.sku,purpose:r.purpose})))); return; }catch(e){}
+  try{ localStorage.setItem('jaey_stock', JSON.stringify(stockData.map(r=>({barcode:r.barcode,product:r.product,color:r.color,size:r.size,status:r.status})))); return; }catch(e){}
+  try{ localStorage.removeItem('jaey_stock'); }catch(e){}
+}
 function bcRow(bc){ return _bcIndex?_bcIndex.get(String(bc)):stockData.find(r=>String(r.barcode)===String(bc)); }
 
 // ══════════════════
