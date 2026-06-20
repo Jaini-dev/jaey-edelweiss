@@ -934,7 +934,7 @@ function setUserName(){ proceedToUserPin(); }
 // Service Worker registered via sw.js when hosted on GitHub Pages
 
 if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./sw.js').catch(()=>{});
-const APP_VER='v80'; // single source of truth — shown in both admin + team headers
+const APP_VER='v81'; // single source of truth — shown in both admin + team headers
 document.addEventListener('DOMContentLoaded',()=>{
   document.querySelectorAll('.app-ver').forEach(e=>e.textContent=APP_VER);
   loadStorage();
@@ -4279,6 +4279,7 @@ async function fetchStockFromSupabase(){
     populatePlanDropdowns();
     renderUserTasks();
     updateStockComposition();
+    if(typeof renderAdminIfActive==='function') renderAdminIfActive(); // stock just arrived → redraw review cards (e.g. 'with you now')
     return true;
   }catch(err){
     console.error('Fetch stock failed:',err);
