@@ -934,7 +934,7 @@ function setUserName(){ proceedToUserPin(); }
 // Service Worker registered via sw.js when hosted on GitHub Pages
 
 if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./sw.js').catch(()=>{});
-const APP_VER='v96'; // single source of truth — shown in both admin + team headers
+const APP_VER='v97'; // single source of truth — shown in both admin + team headers
 document.addEventListener('DOMContentLoaded',()=>{
   document.querySelectorAll('.app-ver').forEach(e=>e.textContent=APP_VER);
   loadStorage();
@@ -2310,10 +2310,15 @@ function renderAdminReview(){
         const isExtra=ai.bc&&ai.id&&ai.id.indexOf('x-')===0;   // 🟡 system mismatch → Fixed-on-system
         let btns='';
         if(isMissing) btns=`<button class="btn bs" style="font-size:11px;padding:6px 11px;flex-shrink:0" onclick="resolveFound('${ai.bc}',${audit.id})">✓ Found</button>`;
-        else if(isWrong) btns=`<div style="display:flex;flex-direction:column;gap:5px;flex-shrink:0">
-            <button class="btn bs" style="font-size:11px;padding:6px 10px;white-space:nowrap" onclick="markFixedOnSystem('${ai.bc}',${audit.id})">✓ Fixed on system</button>
+        else if(isWrong){
+          const canMove=ai.trueP&&trueStyleMissingAudit(ai.bc,ai.trueP,ai.trueC);
+          btns=`<div style="display:flex;flex-direction:column;gap:5px;flex-shrink:0">
+            ${canMove
+              ? `<button class="btn bs" style="font-size:11px;padding:6px 10px;white-space:nowrap" title="Mark found in ${esc(ai.trueP)} and remove here" onclick="moveScanToTrueStyle('${ai.bc}',${audit.id},'${esc(ai.trueP)}','${esc(ai.trueC)}')">✓ Found in ${ai.trueP}</button>`
+              : `<button class="btn bs" style="font-size:11px;padding:6px 10px;white-space:nowrap" onclick="markFixedOnSystem('${ai.bc}',${audit.id})">✓ Fixed on system</button>`}
             <button class="btn bo" style="font-size:11px;padding:6px 10px;white-space:nowrap;color:var(--rose);border-color:var(--rose)" onclick="removeScanFromAudit(${audit.id},'${ai.bc}')">🗑 Remove from here</button>
           </div>`;
+        }
         else if(isExtra) btns=`<button class="btn bs" style="font-size:11px;padding:6px 10px;white-space:nowrap;flex-shrink:0" onclick="markFixedOnSystem('${ai.bc}',${audit.id})">✓ Fixed on system</button>`;
         html+=`<div class="action-item" style="align-items:flex-start">
           <div class="ai-text">
@@ -2472,7 +2477,7 @@ function buildActionItems(audit, idx){
   for(const entry of openWrongProduct(audit, idx)){
     const bc=entry.split('__')[0];
     const parts=entry.split('__WRONG:')[1]?.split('|||')||[];
-    items.push({id:'w-'+bc, bc, label:'Fix label on BC '+bc, detail:'Found in '+audit.product+' but belongs to: '+parts[0]});
+    items.push({id:'w-'+bc, bc, trueP:parts[0]||'', trueC:parts[1]||'', label:'Fix label on BC '+bc, detail:'Found in '+audit.product+' but belongs to: '+parts[0]});
   }
   // … then every missing piece (no 6-cap); parked + now-outward ones excluded.
   for(const bc of effectiveGhosts(audit)){
@@ -2705,7 +2710,9 @@ function renderResolve(){
       <div style="font-weight:600;font-size:13px">BC ${m.bc}${m.size?' · Size '+m.size:''} <span style="font-size:11px;color:${isX?'#a06800':'var(--rose)'}">${isX?'🟡 system says outward':'⚠️ wrong label'}</span></div>
       <div style="font-size:12px;color:var(--steel)">${isX?(m.product+' · '+m.color+' — present physically, but the system marked it OUTWARD'+(m.info||'')):('Scanned in '+m.product+' · '+m.color+' — system says it belongs to '+m.belongsP+(m.belongsC?' · '+m.belongsC:''))}</div>
       <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">
-        <button class="btn bs" style="font-size:11px;padding:6px 10px" onclick="markFixedOnSystem('${m.bc}',${m.auditId})">✓ Fixed on system</button>
+        ${(!isX && m.belongsP && trueStyleMissingAudit(m.bc,m.belongsP,m.belongsC))
+          ? `<button class="btn bs" style="font-size:11px;padding:6px 10px" onclick="moveScanToTrueStyle('${m.bc}',${m.auditId},'${esc(m.belongsP)}','${esc(m.belongsC)}')">✓ Found in ${m.belongsP}</button>`
+          : `<button class="btn bs" style="font-size:11px;padding:6px 10px" onclick="markFixedOnSystem('${m.bc}',${m.auditId})">✓ Fixed on system</button>`}
         ${journeyBtn(m.bc)}
         <button class="btn bo" style="font-size:11px;padding:6px 10px;color:var(--rose);border-color:var(--rose)" onclick="removeScanFromAudit(${m.auditId},'${m.bc}')">🗑 ${isX?'Remove':'Remove from here'}</button>
       </div></div>`;
@@ -3042,6 +3049,33 @@ function syncFixedPending(){
 }
 // kind: 'inward' (wrong-label/sys-mismatch → confirm when CSV shows it inward under the style)
 //        'missing' (ghost → confirm when CSV shows it outward/gone)
+// Is this barcode currently MISSING in its true style's audit (i.e. it was misplaced into another style)?
+function trueStyleMissingAudit(bc, trueProduct, trueColor){
+  bc=String(bc);
+  for(const a of audits){ if(a.product===trueProduct && a.color===trueColor && (a.report?.ghosts||[]).map(String).includes(bc)) return a; }
+  return null;
+}
+// Misplaced piece: mark it FOUND in the style it belongs to, and remove the stray scan from here — one tap.
+function moveScanToTrueStyle(bc, fromAuditId, trueProduct, trueColor){
+  bc=String(bc);
+  const from=audits.find(a=>a.id===fromAuditId);
+  const target=trueStyleMissingAudit(bc, trueProduct, trueColor);
+  if(!target){ toast(trueProduct+' has no open missing piece for BC '+bc); return; }
+  if(!confirm('BC '+bc+' is actually a '+trueProduct+' · '+trueColor+', scanned here by mistake.\n\nMark it FOUND in '+trueProduct+' and remove it from '+(from?from.product:'here')+'?')) return;
+  markFoundCore(bc, target.id); // true style: missing → found
+  if(from){
+    from.scanned=(from.scanned||[]).filter(e=>String(e).split('__')[0]!==bc);
+    if(from.report) from.report.wrongProduct=(from.report.wrongProduct||[]).filter(e=>String(e).split('__')[0]!==bc);
+    from.followUps=(from.followUps||[]).map(f=>({...f,foundBarcodes:(f.foundBarcodes||[]).filter(b=>String(b)!==bc)})).filter(f=>(f.foundBarcodes||[]).length);
+    recomputeAuditReport(from);
+    from.updatedAt=new Date().toISOString();
+    (from.trail=from.trail||[]).push({at:from.updatedAt, by:localStorage.getItem('jaey_admin_name')||'Admin', action:'moved BC '+bc+' to '+trueProduct+' (found there)', note:''});
+    try{localStorage.setItem('jaey_audits',JSON.stringify(audits));}catch(e){}
+    saveAuditRemote(from);
+  }
+  toast('✓ BC '+bc+' moved to '+trueProduct+' — found there, removed here');
+  renderAdminReview(); if(typeof renderResolve==='function') renderResolve();
+}
 function markFixedOnSystem(bc, auditId, kind){
   const a=audits.find(x=>x.id===auditId); if(!a) return;
   bc=String(bc); kind=kind||'inward';
