@@ -918,6 +918,7 @@ let CATALOGUE_HIDDEN={"Color Block Straight Dress|||Green":1,"Color Block Straig
 const SB_DEFAULT={url:'https://uicittlmjpkzxwabwihv.supabase.co',key:'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVpY2l0dGxtanBrenh3YWJ3aWh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE4MzM2OTIsImV4cCI6MjA5NzQwOTY5Mn0.uKfrn7PiwTTcAXOYo7Dz0TgzOSgSIQIp1ChTpRpKgjI'};
 let stockData=[], productMap={}, audits=[], plans={}, sbCfg={url:SB_DEFAULT.url,key:SB_DEFAULT.key};
 let _stockHasNoteTags; // learned at upload time: do the stock_data columns note/tags exist?
+let _bcIndex=null;     // barcode → stock row, rebuilt by buildMap()
 let currentScan=null; // active scan session
 let foundBuffer=[], activeScanId=null;
 let selectedStyles=new Set(), assigneeRows=[{name:''}], planFilter='all', reviewFilter='review';
@@ -933,7 +934,7 @@ function setUserName(){ proceedToUserPin(); }
 // Service Worker registered via sw.js when hosted on GitHub Pages
 
 if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./sw.js').catch(()=>{});
-const APP_VER='v74'; // single source of truth — shown in both admin + team headers
+const APP_VER='v75'; // single source of truth — shown in both admin + team headers
 document.addEventListener('DOMContentLoaded',()=>{
   document.querySelectorAll('.app-ver').forEach(e=>e.textContent=APP_VER);
   loadStorage();
@@ -2254,7 +2255,7 @@ function renderAdminReview(){
     const ds=d.toLocaleDateString('en-IN',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});
     const r=audit.report||{};
     const parkedC=new Set(auditFixedPending(audit.id).map(p=>String(p.bc)));
-    const ghosts=(r.ghosts||[]).filter(b=>!parkedC.has(String(b))).length, extras=openExtras(audit).length, wrong=openWrongProduct(audit,scanIdx).length;
+    const ghosts=effectiveGhosts(audit).filter(b=>!parkedC.has(String(b))).length, extras=openExtras(audit).length, wrong=openWrongProduct(audit,scanIdx).length;
     const stray=(audit.status!=='complete')?wrongHandledList(audit,scanIdx).length:0; // scanned-here-by-mistake, just needs removing
     const mm=ghosts+extras+wrong;
     const status=audit.status||'review';
@@ -2472,8 +2473,8 @@ function buildActionItems(audit, idx){
     const parts=entry.split('__WRONG:')[1]?.split('|||')||[];
     items.push({id:'w-'+bc, bc, label:'Fix label on BC '+bc, detail:'Found in '+audit.product+' but belongs to: '+parts[0]});
   }
-  // … then every missing piece (no 6-cap), parked ones excluded.
-  for(const bc of (r.ghosts||[])){
+  // … then every missing piece (no 6-cap); parked + now-outward ones excluded.
+  for(const bc of effectiveGhosts(audit)){
     if(parked.has(String(bc))) continue;
     const row=stockData.find(f=>f.barcode==bc);
     const samp=isSample(row);
@@ -2508,7 +2509,7 @@ async function deleteAudit(id){
 function completeAudit(id){
   const audit=audits.find(a=>a.id===id); if(!audit) return;
   const r=audit.report||{};
-  const open=(r.ghosts?.length||0)+openExtras(audit).length+openWrongProduct(audit).length;
+  const open=effectiveGhosts(audit).length+openExtras(audit).length+openWrongProduct(audit).length;
   if(open>0&&!confirm(`${open} unresolved item(s) still open (resolve them in the 🔧 Resolve tab). Complete anyway?`)) return;
   const noteEl=document.getElementById('admin-note-'+id);
   audit.adminNote=noteEl?.value.trim()||audit.adminNote||'';
@@ -2564,7 +2565,7 @@ function collectMissing(){
   for(const a of audits){
     const updated=a.systemUpdated||[];
     const parked=new Set(auditFixedPending(a.id).map(p=>String(p.bc)));
-    for(const bc of (a.report?.ghosts||[])){
+    for(const bc of effectiveGhosts(a)){
       if(updated.includes(bc)) continue;
       if(parked.has(String(bc))) continue; // parked as "fixed on system"
       const at=a.savedAt||a.date;
@@ -2631,7 +2632,7 @@ function renderResolve(){
   if(!lEl) return;
   const today=todayStr();
   const todays=audits.filter(a=>(a.savedAt||a.date||'').startsWith(today));
-  const mmOf=a=>{const r=a.report||{};return (r.ghosts?.length||0)+openExtras(a).length+openWrongProduct(a).length;};
+  const mmOf=a=>{return effectiveGhosts(a).length+openExtras(a).length+openWrongProduct(a).length;};
   const clean=todays.filter(a=>mmOf(a)===0).length;
   const issues=todays.length-clean;
   let missing=collectMissing();
@@ -3188,8 +3189,16 @@ function followUpSummary(a){
 }
 // Total in system, and the barcodes physically accounted for (scanned + found-in-update).
 function sysTotal(a){ return (a.systemInward?.length) || (((a.report?.ghosts?.length)||0)+((a.report?.matched)||0)); }
+// Ghosts that are STILL a genuine discrepancy: the current stock still lists them inward.
+// If the system now shows a "missing" piece as outward/gone (e.g. it was sold/shipped after the
+// audit), it isn't a loss — drop it so it stops showing as missing.
+function effectiveGhosts(a){
+  const g=(a.report?.ghosts)||[];
+  if(!stockData.length) return g.slice(); // can't judge without stock loaded
+  return g.filter(bc=>{ const row=bcRow(bc); return !!(row && row.status==='inward'); });
+}
 function accountedBarcodes(a){
-  const ghosts=(a.report?.ghosts)||[];
+  const ghosts=effectiveGhosts(a); // outward-now pieces count as accounted (they left the system)
   return (a.systemInward||[]).filter(b=>!ghosts.includes(b));
 }
 // Modal: list every barcode physically accounted for (scanned in the original count or found later).
@@ -3269,7 +3278,7 @@ function showFullDetail(id){
     <div class="stats-row">
       <div class="sb"><div class="sn">${sysTotal(a)}</div><div class="sl">In system</div></div>
       <div class="sb" style="cursor:pointer" onclick="showScannedBarcodes(${a.id})"><div class="sn g">${accountedBarcodes(a).length}</div><div class="sl">Accounted&nbsp;›</div></div>
-      <div class="sb"><div class="sn r">${r.ghosts?.length||0}</div><div class="sl">Missing</div></div>
+      <div class="sb"><div class="sn r">${effectiveGhosts(a).length}</div><div class="sl">Missing</div></div>
     </div>
     <div style="font-size:11px;color:var(--steel);margin:-4px 0 8px;text-align:center">${r.totalScanned||0} scanned${(a.followUps||[]).length?' + '+(a.followUps||[]).reduce((n,f)=>n+(f.foundBarcodes?.length||0),0)+' found in updates':''} · tap “Accounted” to see them</div>`;
   html+=`<details style="margin:4px 0 8px"><summary style="font-weight:600;cursor:pointer;font-size:13px">✅ Accounted barcodes (${accountedBarcodes(a).length})</summary><div style="margin-top:6px">`;
@@ -3277,7 +3286,7 @@ function showFullDetail(id){
     for(const bc of accountedBarcodes(a)){ const f=stockData.find(x=>x.barcode==bc); const isF=found.has(String(bc));
       html+=`<div style="display:flex;justify-content:space-between;padding:5px 9px;background:var(--sage-light);border-radius:5px;margin-bottom:4px;font-size:13px;font-family:monospace">BC ${bc}${f?' · '+f.size:''}<span style="font-size:11px;color:${isF?'var(--sky)':'var(--sage)'}">${isF?'🔄 found':'✓'}</span></div>`; } }
   html+=`</div></details>`;
-  if(r.ghosts?.length){html+=`<div style="font-weight:600;margin:9px 0 5px">🔴 Missing barcodes:</div>`;for(const bc of r.ghosts){const f=stockData.find(x=>x.barcode==bc);html+=`<div style="padding:5px 9px;background:var(--rose-light);border-radius:5px;margin-bottom:4px;font-size:13px;font-family:monospace">BC ${bc}${f?' · '+f.size:''}</div>`;}}
+  { const eg=effectiveGhosts(a); if(eg.length){html+=`<div style="font-weight:600;margin:9px 0 5px">🔴 Missing barcodes:</div>`;for(const bc of eg){const f=stockData.find(x=>x.barcode==bc);html+=`<div style="padding:5px 9px;background:var(--rose-light);border-radius:5px;margin-bottom:4px;font-size:13px;font-family:monospace">BC ${bc}${f?' · '+f.size:''}</div>`;}} }
   if(r.extras?.length){html+=`<div style="font-weight:600;margin:9px 0 5px">🟡 System mismatches:</div>`;for(const bc of r.extras){const f=stockData.find(x=>x.barcode==bc);html+=`<div style="padding:5px 9px;background:var(--gold-light);border-radius:5px;margin-bottom:4px;font-size:13px;font-family:monospace">BC ${bc}${f?' · '+f.size:''}</div>`;}}
   // Trail
   const trail=[{at:a.savedAt||a.date,by:a.auditor,action:'submitted',note:''},...followUpSummary(a),...(a.trail||[])];
@@ -4148,7 +4157,7 @@ async function uploadStockToSupabase(rows, fname){
         console.error('Upload error:', res.status, errBody);
         throw new Error('HTTP '+res.status+': '+errBody.slice(0,150));
       }
-      uploaded+=batch.length;
+      uploaded+=slice.length;
       statusEl.innerHTML=`✓ <strong>${rows.length.toLocaleString()} barcodes</strong> · ${fname} <span style="color:var(--sky)">☁️ ${Math.round(uploaded/rows.length*100)}%...</span>`;
     }
 
@@ -4230,7 +4239,8 @@ async function fetchStockFromSupabase(){
   }
 }
 function parseCSVLine(line){const r=[];let c='',q=false;for(let i=0;i<line.length;i++){const ch=line[i];if(ch==='"')q=!q;else if(ch===','&&!q){r.push(c);c='';}else c+=ch;}r.push(c);return r;}
-function buildMap(){productMap={};for(const r of stockData){if(!productMap[r.product])productMap[r.product]={};if(!productMap[r.product][r.color])productMap[r.product][r.color]=[];productMap[r.product][r.color].push(r);}}
+function buildMap(){productMap={};_bcIndex=new Map();for(const r of stockData){if(!productMap[r.product])productMap[r.product]={};if(!productMap[r.product][r.color])productMap[r.product][r.color]=[];productMap[r.product][r.color].push(r);_bcIndex.set(String(r.barcode),r);}}
+function bcRow(bc){ return _bcIndex?_bcIndex.get(String(bc)):stockData.find(r=>String(r.barcode)===String(bc)); }
 
 // ══════════════════
 // SUPABASE
