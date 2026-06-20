@@ -934,7 +934,7 @@ function setUserName(){ proceedToUserPin(); }
 // Service Worker registered via sw.js when hosted on GitHub Pages
 
 if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./sw.js').catch(()=>{});
-const APP_VER='v85'; // single source of truth — shown in both admin + team headers
+const APP_VER='v86'; // single source of truth — shown in both admin + team headers
 document.addEventListener('DOMContentLoaded',()=>{
   document.querySelectorAll('.app-ver').forEach(e=>e.textContent=APP_VER);
   loadStorage();
@@ -3933,33 +3933,29 @@ async function showBarcodeJourney(bc){
     if(res.ok) events=await res.json();
   }catch(e){}
   const body=document.getElementById('modal-body');
-  // Fallback: no cloud journal yet → show what the current in/out stock file knows about this barcode.
-  if(!events.length){
-    const row=stockData.find(r=>r.barcode==bc);
-    if(row){
-      const inn=row.status==='inward';
-      const iso=row.scanTime?scanTimeISO(row.scanTime):null;
-      body.innerHTML=`<div style="font-size:13px;margin-bottom:10px"><strong>${row.product||''} · ${row.color||''}</strong>${row.size?' · Size '+row.size:''}
-        ${isSample(row)?'<span style="display:inline-block;margin-left:6px;background:#6b3fa0;color:#fff;font-size:10px;font-weight:700;padding:2px 7px;border-radius:20px">🧷 SAMPLE</span>':''}
-        <div style="font-size:12px;color:var(--steel)">From the current in/out file (no movement journal yet)</div></div>
-        <div style="display:flex;gap:9px;padding:8px 0;border-bottom:1px solid var(--border)">
-          <div style="width:8px;border-radius:4px;flex-shrink:0;background:${inn?'var(--sage)':'var(--rose)'}"></div>
-          <div style="flex:1">
-            <div style="font-size:13px;font-weight:600;color:${inn?'var(--sage)':'var(--rose)'}">${inn?'⬇ INWARD':'⬆ OUTWARD'}${row.purpose?' · '+row.purpose:''}</div>
-            <div style="font-size:11px;color:var(--steel)">${iso?formatDateTime(iso):(row.scanTime||'')}${row.scannedBy?' · by '+row.scannedBy:''}</div>
-            ${row.tags?`<div style="font-size:11px;color:var(--steel);margin-top:3px">🏷️ Tags: <strong>${row.tags}</strong></div>`:''}
-            ${row.note?`<div style="font-size:11px;color:var(--steel);margin-top:2px">📝 Note: ${row.note}</div>`:''}
-          </div>
-        </div>
-        <div style="font-size:11px;color:var(--steel);margin-top:10px">Upload the scan/movement CSV in the Data tab to build full history.</div>`;
-      return;
-    }
-    body.innerHTML='<div style="padding:16px;color:var(--steel);font-size:13px">No movement history in the journal yet for BC '+bc+'.<br><br>Upload your scan/movement CSV in the Data tab to build it.</div>'; return;
+  const row=bcRow(bc); // current stock record for this barcode
+  const top=events[0]||row||{};
+  const prod=top.product||top.product_name||(row&&row.product)||'';
+  const col=top.color||(row&&row.color)||''; const size=top.size||(row&&row.size)||'';
+  // Header card: everything we know about the piece, all in one place.
+  let head=`<div style="background:var(--cream);border-radius:10px;padding:11px 13px;margin-bottom:12px">
+    <div style="font-weight:700;font-size:14px">${prod}${col?' · '+col:''}${size?' · Size '+size:''}${isSample(row)?' <span style="background:#6b3fa0;color:#fff;font-size:9px;font-weight:700;padding:2px 7px;border-radius:20px;vertical-align:middle">🧷 SAMPLE</span>':''}</div>`;
+  if(row){
+    const det=[row.sku?'SKU '+row.sku:'',row.itemId?'Item '+row.itemId:'',row.sizeId?'Size ID '+row.sizeId:''].filter(Boolean).join(' · ');
+    if(det) head+=`<div style="font-size:11px;color:var(--steel);margin-top:3px;font-family:monospace">${det}</div>`;
+    const inn=row.status==='inward';
+    head+=`<div style="font-size:12px;margin-top:6px;font-weight:700;color:${inn?'var(--sage)':'var(--rose)'}">${inn?'⬇ Currently INWARD (with you)':'⬆ Currently OUTWARD'}${row.purpose?' · '+row.purpose:''}</div>`;
+    if(row.tags) head+=`<div style="font-size:11px;color:var(--steel);margin-top:3px">🏷️ ${row.tags}</div>`;
+    if(row.note) head+=`<div style="font-size:11px;color:var(--steel);margin-top:2px">📝 ${row.note}</div>`;
   }
-  const top=events[0];
+  head+=`</div>`;
+  if(!events.length){
+    body.innerHTML=head+`<div style="font-size:11px;color:var(--steel)">${row?'No movement journal yet — showing the current stock record. ':'No movement history in the journal yet for BC '+bc+'. '}Upload the scan/movement CSV in the Data tab to build the full timeline.</div>`;
+    return;
+  }
   const lastMoved=events.find(e=>e.scan_time);
   const daysSince=lastMoved?Math.floor((Date.now()-new Date(lastMoved.scan_time))/86400000):null;
-  let html=`<div style="font-size:13px;margin-bottom:10px"><strong>${top.product||''} · ${top.color||''}</strong>${top.size?' · Size '+top.size:''}<div style="font-size:12px;color:var(--steel)">${events.length} event${events.length>1?'s':''}${daysSince!=null?' · last moved '+(daysSince<=0?'today':daysSince+'d ago'):''}</div></div>`;
+  let html=head+`<div style="font-size:10px;color:var(--steel);margin-bottom:4px;font-weight:700;text-transform:uppercase;letter-spacing:.05em">${events.length} movement${events.length>1?'s':''}${daysSince!=null?' · last '+(daysSince<=0?'today':daysSince+'d ago'):''}</div>`;
   for(const e of events){
     const inn=e.status==='inward';
     html+=`<div style="display:flex;gap:9px;padding:8px 0;border-bottom:1px solid var(--border)">
