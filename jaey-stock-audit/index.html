@@ -934,7 +934,7 @@ function setUserName(){ proceedToUserPin(); }
 // Service Worker registered via sw.js when hosted on GitHub Pages
 
 if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./sw.js').catch(()=>{});
-const APP_VER='v88'; // single source of truth — shown in both admin + team headers
+const APP_VER='v89'; // single source of truth — shown in both admin + team headers
 document.addEventListener('DOMContentLoaded',()=>{
   document.querySelectorAll('.app-ver').forEach(e=>e.textContent=APP_VER);
   loadStorage();
@@ -3280,14 +3280,26 @@ function showScannedBarcodes(id){
   const a=audits.find(x=>x.id===id); if(!a) return;
   const acc=accountedBarcodes(a);
   const found=new Set(); (a.followUps||[]).forEach(f=>(f.foundBarcodes||[]).forEach(b=>found.add(String(b))));
+  const ghostSet=new Set((a.report?.ghosts||[]).map(String)); // audit-day missing → some now auto-accounted (outwarded)
+  let autoAcc=0;
   document.getElementById('modal-title').textContent='✅ Accounted · '+a.product+' · '+a.color;
   const rmBtn=bc=>`<button onclick="removeScanFromAudit(${a.id},'${bc}')" title="Remove — scanned here by mistake" style="background:none;border:none;color:var(--rose);cursor:pointer;font-size:15px;line-height:1;padding:0 2px;flex-shrink:0">🗑</button>`;
-  let html='<div style="font-size:12px;color:var(--steel);margin-bottom:8px">'+acc.length+' of '+sysTotal(a)+' in system physically accounted for'+(found.size?' ('+found.size+' found after the first scan)':'')+'</div>';
+  // count auto-accounted (was missing, now outward in the system)
+  for(const bc of acc){ if(ghostSet.has(String(bc))) autoAcc++; }
+  let html='<div style="font-size:12px;color:var(--steel);margin-bottom:6px">'+acc.length+' of '+sysTotal(a)+' in system accounted for'+(found.size?' · '+found.size+' found after first scan':'')+'</div>';
+  if(autoAcc) html+='<div style="font-size:11px;color:#a06800;background:var(--gold-light);border-radius:6px;padding:6px 9px;margin-bottom:8px">📤 '+autoAcc+' were <strong>missing</strong> at the audit but the system now shows them <strong>outwarded</strong> — auto-accounted (they left the building, not a loss). Highlighted below.</div>';
   html+='<div style="font-size:11px;color:var(--steel);margin-bottom:8px">Tap 🗑 to remove a piece scanned here by mistake — it’s treated as never scanned.</div>';
   if(!acc.length) html+='<div style="color:var(--steel);font-size:13px">None accounted yet.</div>';
   for(const bc of acc){
     const f=stockData.find(x=>x.barcode==bc);
     const isFound=found.has(String(bc));
+    const isAuto=ghostSet.has(String(bc));
+    if(isAuto){
+      html+=`<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 9px;background:var(--gold-light);border:1px solid var(--gold);border-radius:5px;margin-bottom:4px;font-size:13px">
+        <span style="font-family:monospace">BC ${bc}${f?' · '+f.size:''}</span>
+        <span style="display:flex;align-items:center;gap:8px;flex-shrink:0"><span style="font-size:11px;color:#a06800">📤 outwarded since · auto-accounted</span></span></div>`;
+      continue;
+    }
     html+=`<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 9px;background:var(--sage-light);border-radius:5px;margin-bottom:4px;font-size:13px">
       <span style="font-family:monospace">BC ${bc}${f?' · '+f.size:''}</span>
       <span style="display:flex;align-items:center;gap:8px;flex-shrink:0"><span style="font-size:11px;color:${isFound?'var(--sky)':'var(--sage)'}">${isFound?'🔄 found in update':'✓ scanned'}</span>${rmBtn(bc)}</span></div>`;
