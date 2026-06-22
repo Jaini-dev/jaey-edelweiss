@@ -310,6 +310,22 @@ select.f,.seg{background:#fff;border:1px solid var(--line);border-radius:99px;pa
 }
 .spin{animation:sp 1s linear infinite;} @keyframes sp{to{transform:rotate(360deg);}}
 .hidden{display:none !important;}
+
+/* ── LOGIN GATE ── */
+.gate{position:fixed;inset:0;z-index:2000;background:linear-gradient(160deg,var(--midnight),var(--ink) 60%,#2f4a72);
+  display:none;flex-direction:column;align-items:center;justify-content:center;padding:1.5rem;}
+.gate.on{display:flex;animation:fade .3s ease;}
+.gate-card{background:var(--stone);border-radius:20px;box-shadow:var(--shadow-lg);max-width:420px;width:100%;
+  padding:2.4rem 2rem 2rem;text-align:center;}
+.gate-logo{height:64px;width:auto;margin-bottom:.6rem;}
+.gate-app{font-family:var(--head);font-weight:600;font-size:1.3rem;color:var(--ink);letter-spacing:.02em;margin-bottom:.7rem;}
+.gate-sub{color:var(--dusty);font-size:.9rem;line-height:1.55;}
+.gate .btn.block{padding:.7rem 1.1rem;font-size:.82rem;}
+.gate-msg{font-size:.84rem;margin-top:.9rem;min-height:1rem;}
+.gate-msg.err{color:var(--danger);} .gate-msg.ok{color:var(--success);}
+.gate-setup{margin-top:1.4rem;text-align:left;border-top:1px solid var(--line);padding-top:1rem;}
+.gate-setup summary{cursor:pointer;font-size:.82rem;font-weight:600;color:var(--cta);text-align:center;}
+.gate-foot{color:rgba(255,255,255,.5);font-size:.74rem;margin-top:1.4rem;}
 </style>
 </head>
 <body>
@@ -329,7 +345,7 @@ select.f,.seg{background:#fff;border:1px solid var(--line);border-radius:99px;pa
     <button class="ol-chip" id="ol-chip" onclick="go('settings');setTimeout(()=>document.getElementById('ol-card').scrollIntoView({behavior:'smooth'}),120)">
       <span class="dot"></span><span id="ol-txt">Outlook off</span>
     </button>
-    <button class="me-chip" onclick="openWhoAmI()">
+    <button class="me-chip" onclick="ME?go('settings'):signIn()">
       <span class="me-nm" id="me-name">Sign in</span>
       <span class="avatar" id="me-av">?</span>
     </button>
@@ -388,23 +404,23 @@ select.f,.seg{background:#fff;border:1px solid var(--line);border-radius:99px;pa
 
     <div class="card">
       <h3>👤 You</h3>
-      <div class="sub">Used to attribute comments, activity, and "my tasks". Stored on this device.</div>
+      <div class="sub">Signed in with your Microsoft account. This is your verified identity for tasks, comments and follow-ups.</div>
       <div id="me-box"></div>
-      <button class="btn ghost sm" onclick="openWhoAmI()" style="margin-top:.7rem">Switch user</button>
+      <button class="btn ghost sm" onclick="signOut()" style="margin-top:.7rem">Sign out</button>
     </div>
 
     <div class="card" id="ol-card">
       <h3>📅 Outlook calendar sync</h3>
-      <div class="sub">Push task deadlines to your Microsoft 365 / Outlook calendar with auto reminders, and invite assignees so they're reminded 2 days &amp; 1 day before too.</div>
+      <div class="sub">Your Microsoft sign-in also powers calendar sync: deadlines become reminders on your Outlook calendar, and assignees are invited so they're reminded 2 days &amp; 1 day before too.</div>
       <div id="ol-status"></div>
       <div class="field" style="margin-top:1rem">
-        <label>Azure App (Client) ID</label>
+        <label>Azure App (Client) ID <span style="font-weight:400;text-transform:none;color:var(--lavender)">(admin)</span></label>
         <input type="text" id="azure-id" placeholder="00000000-0000-0000-0000-000000000000" oninput="saveAzure()"/>
-        <div class="hint">One-time free setup in the Azure portal — steps below. Redirect URI to register: <code id="redir-uri" style="font-family:var(--mono)"></code></div>
+        <div class="hint">Shared with the team via your database. Redirect URI to register: <code id="redir-uri" style="font-family:var(--mono)"></code></div>
       </div>
       <div style="display:flex;gap:.6rem;flex-wrap:wrap">
-        <button class="btn" id="ol-connect" onclick="outlookConnect()">Connect Outlook</button>
-        <button class="btn ghost" id="ol-disconnect" onclick="outlookDisconnect()">Disconnect</button>
+        <button class="btn" id="ol-connect" onclick="signIn()">Re-authorize calendar</button>
+        <button class="btn ghost" id="ol-disconnect" onclick="signOut()" style="display:none">Sign out</button>
         <button class="btn ghost" onclick="resyncAll()">Re-sync all deadlines</button>
       </div>
       <details style="margin-top:1.1rem">
@@ -415,7 +431,7 @@ select.f,.seg{background:#fff;border:1px solid var(--line);border-radius:99px;pa
           <li>Under <b>Redirect URI</b>, pick platform <b>Single-page application (SPA)</b> and paste the URI shown above.</li>
           <li>Click <b>Register</b>. Copy the <b>Application (client) ID</b> and paste it in the box above.</li>
           <li>Open <b>API permissions</b> → Add → Microsoft Graph → Delegated → add <code>Calendars.ReadWrite</code> and <code>User.Read</code>.</li>
-          <li>Back here, hit <b>Connect Outlook</b> and sign in. Done — deadlines now sync automatically.</li>
+          <li>Done — everyone now signs in with Microsoft, and deadlines sync to their calendars automatically.</li>
         </ol>
       </details>
     </div>
@@ -433,10 +449,11 @@ select.f,.seg{background:#fff;border:1px solid var(--line);border-radius:99px;pa
 
     <div class="card">
       <h3>🗄️ Database</h3>
-      <div class="sub">Shared cloud storage (Supabase) so the whole team sees the same list in real time.</div>
-      <div class="field"><label>Supabase URL</label><input type="text" id="sb-url" oninput="saveSB()"/></div>
-      <div class="field"><label>Anon key</label><input type="text" id="sb-key" oninput="saveSB()"/></div>
+      <div class="sub">Your own dedicated Supabase project — the shared cloud store so the whole team sees one live list. Paste the Project URL + anon key from your project's API settings.</div>
+      <div class="field"><label>Supabase URL</label><input type="text" id="sb-url" placeholder="https://yourproject.supabase.co" oninput="saveSB()"/></div>
+      <div class="field"><label>Anon key</label><input type="text" id="sb-key" placeholder="eyJhbG…" oninput="saveSB()"/></div>
       <div id="sb-status" style="font-size:.85rem;margin-bottom:1rem"></div>
+      <div class="hint" style="margin-bottom:1rem">🔒 Task visibility (you see only what you created or are assigned; admin sees all) is enforced in-app. For hard server-side security, this can move to Supabase Auth later.</div>
       <details>
         <summary style="cursor:pointer;font-weight:600;font-size:.88rem;color:var(--cta)">▸ First-time setup — run this SQL once</summary>
         <div class="sub" style="margin-top:.7rem">In Supabase → SQL Editor → paste &amp; run. Creates the tables this app needs.</div>
@@ -476,20 +493,33 @@ select.f,.seg{background:#fff;border:1px solid var(--line);border-radius:99px;pa
   </div>
 </div>
 
-<!-- ───────── WHO AM I MODAL ───────── -->
-<div class="scrim" id="who-scrim">
-  <div class="modal" style="max-width:440px">
-    <div class="m-head"><h3>Who are you?</h3><button class="x" onclick="document.getElementById('who-scrim').classList.remove('on')">✕</button></div>
-    <div class="m-body">
-      <div class="sub" style="color:var(--dusty);font-size:.86rem;margin-bottom:1rem">Pick yourself from the roster, or add yourself.</div>
-      <div id="who-list"></div>
-      <div class="row3" style="margin-top:1rem;align-items:end">
-        <div class="field" style="margin:0"><label>Name</label><input type="text" id="who-name" placeholder="Your name"/></div>
-        <div class="field" style="margin:0"><label>Email</label><input type="email" id="who-email" placeholder="you@jaey.in"/></div>
-        <button class="btn" onclick="addMe()">Add me</button>
+<!-- ───────── LOGIN GATE ───────── -->
+<div class="gate" id="gate">
+  <div class="gate-card">
+    <img src="images/Logo-Jaey-Black-HD.png" alt="Jaey" class="gate-logo"/>
+    <div class="gate-app">Tasks</div>
+    <p class="gate-sub">Shared team to-do with Outlook calendar reminders. Sign in with your Microsoft 365 / Outlook account to continue.</p>
+    <button class="btn block" id="gate-signin" onclick="signIn()" style="margin-top:1.2rem">
+      <svg width="16" height="16" viewBox="0 0 23 23" aria-hidden="true"><rect x="1" y="1" width="10" height="10" fill="#F25022"/><rect x="12" y="1" width="10" height="10" fill="#7FBA00"/><rect x="1" y="12" width="10" height="10" fill="#00A4EF"/><rect x="12" y="12" width="10" height="10" fill="#FFB900"/></svg>
+      Sign in with Microsoft
+    </button>
+    <div id="gate-msg" class="gate-msg"></div>
+    <details class="gate-setup" id="gate-setup">
+      <summary>First-time / admin setup</summary>
+      <div class="field" style="margin-top:.8rem"><label>Supabase Project URL</label>
+        <input type="text" id="gate-sburl" placeholder="https://yourproject.supabase.co"/></div>
+      <div class="field"><label>Supabase anon key</label>
+        <input type="text" id="gate-sbkey" placeholder="eyJhbG…"/>
+        <div class="hint">From your new project → Settings → API. Run the setup SQL there first (shown in Settings → Database).</div></div>
+      <div class="field"><label>Azure App (Client) ID</label>
+        <input type="text" id="gate-azure" placeholder="00000000-0000-0000-0000-000000000000"/>
+        <div class="hint">Free Azure app (steps in Settings → Outlook). Redirect URI to add: <code id="gate-redir" style="font-family:var(--mono);word-break:break-all"></code></div>
       </div>
-    </div>
+      <button class="btn ghost block" onclick="gateSaveSetup()">Save &amp; enable sign-in</button>
+      <div class="hint" style="margin-top:.6rem">Supabase keys are stored on this device; the Azure ID is also saved to your database so teammates' devices pick it up automatically.</div>
+    </details>
   </div>
+  <div class="gate-foot">Jaey Tasks · pages.jaey.in/jaey-team-todo</div>
 </div>
 
 <div id="toast"></div>
@@ -508,11 +538,16 @@ const nowISO=()=>new Date().toISOString();
 const TZ='UTC';
 const esc=s=>(s==null?'':String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 
-/* ── config ── */
-const SB_DEFAULT={url:'https://uicittlmjpkzxwabwihv.supabase.co',key:'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVpY2l0dGxtanBrenh3YWJ3aWh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE4MzM2OTIsImV4cCI6MjA5NzQwOTY5Mn0.uKfrn7PiwTTcAXOYo7Dz0TgzOSgSIQIp1ChTpRpKgjI'};
+/* ── config ──
+   Supabase is intentionally NOT hardcoded: this app uses its own dedicated
+   project. Admin enters the Project URL + anon key once on the sign-in gate
+   (or Settings); it's cached per-device. Send me the final URL + anon key and
+   I'll bake them in as defaults so teammates just sign in. */
+const SB_DEFAULT={url:'',key:''};
+const ADMIN_EMAIL='jaini@jaey.in';   // always admin; others get admin via roster role
 let sbCfg=JSON.parse(localStorage.getItem('jt_sb')||'null')||{...SB_DEFAULT};
 let azureId=localStorage.getItem('jt_azure')||'';
-let ME=JSON.parse(localStorage.getItem('jt_me')||'null');
+let ME=JSON.parse(localStorage.getItem('jt_me')||'null');  // {name,email} from verified Microsoft sign-in
 let viewMode=localStorage.getItem('jt_mode')||'list';
 let quickFilter=localStorage.getItem('jt_qf')||'open';
 
@@ -635,21 +670,6 @@ async function graph(method,path,body,token){
   const j=await r.json();if(!r.ok)throw new Error((j.error&&j.error.message)||('Graph '+r.status));return j;
 }
 function outlookConnected(){return !!(azureId&&graphAccount);}
-async function outlookConnect(){
-  if(!azureId){toast('Paste your Azure Client ID first');$('#azure-id').focus();return;}
-  try{
-    await graphToken(true);
-    const me=await graph('GET','/me');
-    localStorage.setItem('jt_ol_user',JSON.stringify({name:me.displayName,email:me.mail||me.userPrincipalName}));
-    toast('📅 Outlook connected — '+(me.mail||me.userPrincipalName));
-    setOutlookUI();
-    if(confirm('Sync all existing deadlines to your Outlook calendar now?'))resyncAll();
-  }catch(e){toast('⚠️ '+e.message,4500);}
-}
-function outlookDisconnect(){
-  try{if(msalApp&&graphAccount)msalApp.logoutPopup({account:graphAccount}).catch(()=>{});}catch(e){}
-  graphAccount=null;localStorage.removeItem('jt_ol_user');setOutlookUI();toast('Outlook disconnected');
-}
 
 /* build calendar events for a task */
 function eventTimes(t){
@@ -716,9 +736,9 @@ async function resyncAll(){
 /* ════════ RENDER ════════ */
 function renderAll(){render();renderFollowups();renderPeople();renderMe();updateCounts();}
 function updateCounts(){
-  const open=TASKS.filter(t=>t.status!=='done'&&!t.archived).length;
-  $('#tab-board-ct').textContent=open;
-  const fu=new Set(TASKS.filter(t=>t.status!=='done'&&!t.archived&&(t.assignees||[]).length).flatMap(t=>t.assignees.map(a=>a.email||a.name))).size;
+  const vis=TASKS.filter(t=>!t.archived&&canSee(t));
+  $('#tab-board-ct').textContent=vis.filter(t=>t.status!=='done').length;
+  const fu=new Set(vis.filter(t=>t.status!=='done'&&(t.assignees||[]).length).flatMap(t=>t.assignees.map(a=>a.email||a.name))).size;
   $('#tab-fu-ct').textContent=fu;
 }
 
@@ -736,7 +756,7 @@ function setMode(m){viewMode=m;localStorage.setItem('jt_mode',m);$$('#view-seg b
 function visibleTasks(){
   const q=($('#q').value||'').toLowerCase().trim();
   const fa=$('#f-assignee').value,fl=$('#f-label').value;
-  let list=TASKS.filter(t=>!t.archived);
+  let list=TASKS.filter(t=>!t.archived&&canSee(t));
   // quick filter
   list=list.filter(t=>{
     if(quickFilter==='done')return t.status==='done';
@@ -870,7 +890,7 @@ function kDrop(e,status){e.preventDefault();e.currentTarget.classList.remove('ov
 function renderFollowups(){
   const q=($('#fu-q')?.value||'').toLowerCase().trim();
   const onlyMine=$('#fu-onlyme')?.checked;
-  const open=TASKS.filter(t=>!t.archived&&t.status!=='done'&&(!onlyMine||t.created_by===(ME&&ME.email)));
+  const open=TASKS.filter(t=>!t.archived&&t.status!=='done'&&canSee(t)&&(!onlyMine||t.created_by===(ME&&ME.email)));
   // stats
   const overdue=open.filter(isOverdue).length;
   const soon=open.filter(t=>{const d=daysUntil(t.deadline);return d!==null&&d>=0&&d<=2;}).length;
@@ -1102,21 +1122,63 @@ function removePerson(email){if(!confirm('Remove this person from the roster?'))
 function renderPeople(){const el=$('#ppl-list');if(!el)return;el.innerHTML=PEOPLE.length?PEOPLE.map(p=>`<div class="ppl">${avatarHTML(p)}<div><div class="nm">${esc(p.name)} ${p.role==='admin'?'<span style="font-size:.68rem;color:var(--cta)">· admin</span>':''}</div><div class="em">${esc(p.email)}</div></div><button class="x" style="margin-left:auto;width:28px;height:28px" onclick="removePerson('${esc(p.email)}')">✕</button></div>`).join(''):'<div style="color:var(--dusty);font-size:.85rem">No one yet — add your team below.</div>';}
 function renderMe(){
   const box=$('#me-box');
-  if(ME){$('#me-name').textContent=ME.name;$('#me-av').textContent=initials(ME.name);$('#me-av').style.background=avatarColor(ME.email||ME.name);
-    if(box)box.innerHTML=`<div class="ppl" style="border:none;padding:0">${avatarHTML(ME)}<div><div class="nm">${esc(ME.name)}</div><div class="em">${esc(ME.email)}</div></div></div>`;}
-  else{$('#me-name').textContent='Sign in';$('#me-av').textContent='?';if(box)box.innerHTML='<div style="color:var(--dusty);font-size:.85rem">Not set — tell us who you are.</div>';}
+  if(ME){$('#me-name').textContent=ME.name.split(' ')[0];$('#me-av').textContent=initials(ME.name);$('#me-av').style.background=avatarColor(ME.email||ME.name);
+    if(box)box.innerHTML=`<div class="ppl" style="border:none;padding:0">${avatarHTML(ME)}<div><div class="nm">${esc(ME.name)} ${isAdmin()?'<span style="font-size:.68rem;color:var(--cta)">· admin</span>':''}</div><div class="em">${esc(ME.email)}</div></div></div>`;}
+  else{$('#me-name').textContent='Sign in';$('#me-av').textContent='?';if(box)box.innerHTML='<div style="color:var(--dusty);font-size:.85rem">Not signed in.</div>';}
 }
-function openWhoAmI(){
-  const list=$('#who-list');
-  list.innerHTML=(PEOPLE.length?PEOPLE:[]).map(p=>`<div class="sug" style="border:1px solid var(--line);border-radius:var(--rx);margin-bottom:.4rem" onclick="setMe('${esc(p.name)}','${esc(p.email)}')">${avatarHTML(p)}<div><div>${esc(p.name)}</div><div style="font-size:.74rem;color:var(--dusty)">${esc(p.email)}</div></div>${ME&&ME.email===p.email?'<span class="add">✓ you</span>':''}</div>`).join('')||'<div style="color:var(--dusty);font-size:.85rem;margin-bottom:.5rem">No roster yet — add yourself:</div>';
-  $('#who-scrim').classList.add('on');
+
+/* ── access control (in-app, by assignment) ── */
+function isAdmin(){if(!ME)return false;if(ME.email===ADMIN_EMAIL)return true;const p=PEOPLE.find(x=>x.email===ME.email);return !!(p&&p.role==='admin');}
+function canSee(t){if(isAdmin())return true;if(!ME)return false;if(t.created_by===ME.email)return true;return (t.assignees||[]).some(a=>a.email===ME.email);}
+
+/* ── Microsoft sign-in (login gate) ── */
+function showGate(){$('#gate').classList.add('on');$('#gate-redir').textContent=redirectUri();if(!azureId)$('#gate-setup').open=true;}
+function hideGate(){$('#gate').classList.remove('on');}
+function gateMsg(t,cls){const e=$('#gate-msg');e.textContent=t||'';e.className='gate-msg '+(cls||'');}
+function gateSaveSetup(){
+  const u=$('#gate-sburl').value.trim(),k=$('#gate-sbkey').value.trim(),az=$('#gate-azure').value.trim();
+  if(u&&k){sbCfg={url:u,key:k};localStorage.setItem('jt_sb',JSON.stringify(sbCfg));}
+  if(az){azureId=az;localStorage.setItem('jt_azure',az);msalApp=null;}
+  $('#sb-url').value=sbCfg.url;$('#sb-key').value=sbCfg.key;$('#azure-id').value=azureId;
+  if(azureId&&sbReady())sbUpsert('todo_config',{id:'app',azure_client_id:azureId},'id').catch(()=>{});
+  gateMsg('Saved. Now sign in with Microsoft.','ok');setOutlookUI();setSbStatus();
 }
-function setMe(name,email){ME={name,email};localStorage.setItem('jt_me',JSON.stringify(ME));$('#who-scrim').classList.remove('on');renderMe();renderAll();toast('Hi '+name.split(' ')[0]+' 👋');}
-function addMe(){const name=$('#who-name').value.trim(),email=$('#who-email').value.trim();if(!name||!email){toast('Name and email needed');return;}if(!PEOPLE.some(p=>p.email===email)){const p={name,email,role:'team'};PEOPLE.push(p);persistPerson(p);}setMe(name,email);}
+async function signIn(){
+  if(!azureId){gateMsg('Admin: add the Azure Client ID under setup first.','err');showGate();$('#gate-setup').open=true;return;}
+  gateMsg('Opening Microsoft sign-in…');
+  try{
+    await graphToken(true);
+    const me=await graph('GET','/me');
+    ME={name:me.displayName||(me.userPrincipalName||'').split('@')[0],email:(me.mail||me.userPrincipalName||'').toLowerCase()};
+    localStorage.setItem('jt_me',JSON.stringify(ME));
+    localStorage.setItem('jt_ol_user',JSON.stringify(ME));
+    hideGate();
+    await pull(false);
+    await ensureMeInRoster();
+    setOutlookUI();renderMe();renderAll();setMode(viewMode);
+    toast('Welcome, '+ME.name.split(' ')[0]+' 👋');
+  }catch(e){gateMsg('Sign-in failed: '+e.message,'err');}
+}
+function signOut(){
+  try{if(msalApp&&graphAccount)msalApp.logoutPopup({account:graphAccount}).catch(()=>{});}catch(e){}
+  graphAccount=null;ME=null;localStorage.removeItem('jt_me');localStorage.removeItem('jt_ol_user');
+  renderMe();showGate();gateMsg('');
+}
+async function ensureMeInRoster(){
+  if(!ME)return;
+  if(!PEOPLE.some(p=>p.email===ME.email)){
+    const role=(ME.email===ADMIN_EMAIL||!PEOPLE.length)?'admin':'team';
+    const p={name:ME.name,email:ME.email,role};PEOPLE.push(p);await persistPerson(p);renderPeople();
+  }
+}
+async function loadConfig(){
+  if(!sbReady())return;
+  try{const r=await sbGet('todo_config?select=azure_client_id&id=eq.app');if(r&&r[0]&&r[0].azure_client_id){azureId=r[0].azure_client_id;localStorage.setItem('jt_azure',azureId);}}catch(e){/* table may not exist yet */}
+}
 
 /* ════════ SETTINGS plumbing ════════ */
 function saveSB(){sbCfg={url:$('#sb-url').value.trim(),key:$('#sb-key').value.trim()};localStorage.setItem('jt_sb',JSON.stringify(sbCfg));setSbStatus();clearTimeout(saveSB._t);saveSB._t=setTimeout(()=>pull(true),600);}
-function saveAzure(){azureId=$('#azure-id').value.trim();localStorage.setItem('jt_azure',azureId);msalApp=null;setOutlookUI();}
+function saveAzure(){azureId=$('#azure-id').value.trim();localStorage.setItem('jt_azure',azureId);msalApp=null;setOutlookUI();if(azureId&&sbReady())sbUpsert('todo_config',{id:'app',azure_client_id:azureId},'id').then(()=>toast('Azure ID saved & shared with team')).catch(()=>{});}
 function setSbStatus(ok,msg){const el=$('#sb-status');if(!el)return;if(!sbCfg.url||!sbCfg.key){el.innerHTML='<span class="bad">⚠ Not configured</span>';return;}if(ok===true)el.innerHTML='<span class="ok">✓ Connected — '+TASKS.length+' tasks, '+PEOPLE.length+' people</span>';else if(ok===false)el.innerHTML='<span class="bad">⚠ '+esc(msg||'connection error')+'</span>';else el.innerHTML='<span style="color:var(--dusty)">Configured · '+sbCfg.url.replace('https://','')+'</span>';}
 function setOutlookUI(){
   const conn=outlookConnected();const u=JSON.parse(localStorage.getItem('jt_ol_user')||'null');
@@ -1124,12 +1186,14 @@ function setOutlookUI(){
   $('#ol-txt').textContent=conn?(u?u.email.split('@')[0]:'Outlook on'):'Outlook off';
   $('#redir-uri').textContent=redirectUri();
   const st=$('#ol-status');
-  if(conn&&u)st.innerHTML=`<div class="ok" style="font-size:.9rem;font-weight:500">✓ Connected as ${esc(u.name)} &lt;${esc(u.email)}&gt;</div><div class="hint">Deadlines create reminders on your calendar; assignees are invited so they're reminded 2 days &amp; 1 day before.</div>`;
-  else st.innerHTML=`<div style="color:var(--dusty);font-size:.9rem">Not connected. Add your Azure Client ID below, then Connect.</div>`;
-  $('#ol-connect').textContent=conn?'Reconnect':'Connect Outlook';
-  $('#ol-disconnect').style.display=conn?'inline-flex':'none';
+  if(conn&&u)st.innerHTML=`<div class="ok" style="font-size:.9rem;font-weight:500">✓ Calendar active for ${esc(u.name)} &lt;${esc(u.email)}&gt;</div><div class="hint">Deadlines create reminders on your calendar; assignees are invited so they're reminded 2 days &amp; 1 day before.</div>`;
+  else st.innerHTML=`<div style="color:var(--dusty);font-size:.9rem">Calendar not authorized yet — sign in with Microsoft.</div>`;
 }
-const SQL=`-- Jaey Tasks — run once in Supabase SQL editor
+const SQL=`-- Jaey Tasks — run once in your Supabase SQL editor
+create table if not exists todo_config (
+  id text primary key,
+  azure_client_id text
+);
 create table if not exists todo_people (
   email text primary key,
   name  text not null,
@@ -1157,12 +1221,15 @@ create table if not exists todo_tasks (
   completed_at timestamptz,
   archived boolean default false
 );
+alter table todo_config enable row level security;
 alter table todo_people enable row level security;
 alter table todo_tasks  enable row level security;
-create policy "anon read people"  on todo_people for select using (true);
-create policy "anon write people" on todo_people for all using (true) with check (true);
-create policy "anon read tasks"   on todo_tasks  for select using (true);
-create policy "anon write tasks"  on todo_tasks  for all using (true) with check (true);`;
+create policy "anon config"  on todo_config for all using (true) with check (true);
+create policy "anon people"   on todo_people for all using (true) with check (true);
+create policy "anon tasks"    on todo_tasks  for all using (true) with check (true);
+-- NOTE: these policies allow the anon key full access; per-person visibility is
+-- enforced in the app. For hard server-side restriction, switch to Supabase Auth
+-- (Microsoft provider) and replace the task policies with auth.jwt()->>'email' checks.`;
 function copySQL(){navigator.clipboard.writeText(SQL).then(()=>toast('SQL copied'));}
 function exportJSON(){const blob=new Blob([JSON.stringify({tasks:TASKS,people:PEOPLE},null,2)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='jaey-tasks-'+new Date().toISOString().slice(0,10)+'.json';a.click();}
 
@@ -1172,18 +1239,24 @@ function go(v){$$('.view').forEach(s=>s.classList.toggle('on',s.id==='view-'+v))
 /* ════════ INIT ════════ */
 function initSettingsUI(){$('#sb-url').value=sbCfg.url||'';$('#sb-key').value=sbCfg.key||'';$('#azure-id').value=azureId;$('#sql-text').textContent=SQL;setSbStatus();setOutlookUI();}
 async function boot(){
-  loadCache();initSettingsUI();renderAll();
-  setMode(viewMode);
-  // restore outlook
-  try{initMsal();setOutlookUI();}catch(e){}
-  await pull(false);
-  if(!ME)openWhoAmI();
+  loadCache();initSettingsUI();
+  await loadConfig();                 // pull shared Azure client id from the project (if set)
+  $('#azure-id').value=azureId;$('#gate-redir').textContent=redirectUri();
+  try{initMsal();}catch(e){}
+  setOutlookUI();
+  // restore an existing Microsoft session
+  if(azureId&&graphAccount&&!ME){try{const me=await graph('GET','/me');ME={name:me.displayName,email:(me.mail||me.userPrincipalName||'').toLowerCase()};localStorage.setItem('jt_me',JSON.stringify(ME));}catch(e){}}
+  if(ME&&graphAccount){
+    hideGate();await pull(false);await ensureMeInRoster();renderAll();setMode(viewMode);
+  }else{
+    ME=null;localStorage.removeItem('jt_me');showGate();
+  }
   // light polling for team sync
-  setInterval(()=>{if(document.visibilityState==='visible'&&$('#task-scrim').classList.contains('on')===false)pull(false);},45000);
+  setInterval(()=>{if(ME&&document.visibilityState==='visible'&&!$('#task-scrim').classList.contains('on'))pull(false);},45000);
 }
 document.addEventListener('keydown',e=>{
-  if(e.key==='Escape'){closeTask();$('#who-scrim').classList.remove('on');}
-  if((e.key==='n'||e.key==='N')&&!/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)&&!$('#task-scrim').classList.contains('on')){e.preventDefault();openTask();}
+  if(e.key==='Escape')closeTask();
+  if((e.key==='n'||e.key==='N')&&ME&&!/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)&&!$('#task-scrim').classList.contains('on')){e.preventDefault();openTask();}
 });
 boot();
 </script>
