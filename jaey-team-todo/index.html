@@ -411,7 +411,7 @@ select.f,.seg{background:#fff;border:1px solid var(--line);border-radius:99px;pa
 
     <div class="card" id="ol-card">
       <h3>📅 Calendar sync</h3>
-      <div class="sub">Connect <b>your</b> calendar so task deadlines appear with reminders 2 days &amp; 1 day before — and assignees get invited automatically. Use Outlook, or Gmail/Google if you don't use Outlook.</div>
+      <div class="sub">Connect <b>your</b> calendar to get <b>one tidy 9 AM reminder each day</b> listing everything of yours due today, tomorrow &amp; in 2 days — no per-task clutter. Each teammate connects their own (Outlook, or Gmail/Google).</div>
       <div id="ol-status"></div>
       <div style="display:flex;gap:.6rem;flex-wrap:wrap;margin-top:1rem">
         <button class="btn" id="cal-connect-outlook" onclick="connectOutlook()">Connect Outlook</button>
@@ -523,7 +523,7 @@ select.f,.seg{background:#fff;border:1px solid var(--line);border-radius:99px;pa
   <div class="modal" style="max-width:420px">
     <div class="m-head"><h3>📅 Connect your calendar</h3><button class="x" onclick="closeCalPrompt()">✕</button></div>
     <div class="m-body" style="text-align:center">
-      <p style="color:var(--dusty);font-size:.9rem;line-height:1.55">Get task deadlines straight onto your calendar — with reminders <b>2 days</b> &amp; <b>1 day</b> before, and assignees invited automatically. Pick the calendar you use:</p>
+      <p style="color:var(--dusty);font-size:.9rem;line-height:1.55">Get <b>one 9 AM reminder each day</b> listing your tasks due today, tomorrow &amp; in 2 days — all merged into a single calendar alert. Pick the calendar you use:</p>
       <div style="display:flex;flex-direction:column;gap:.6rem;margin-top:1.2rem">
         <button class="btn block" onclick="connectOutlook()">Outlook / Microsoft 365</button>
         <button class="btn ghost block" id="calp-google" onclick="connectGoogle()">Gmail / Google Calendar</button>
@@ -638,7 +638,7 @@ async function persist(task,{cal=true}={}){
   // cloud
   if(sbReady()){try{await sbUpsert('todo_tasks',serialize(task));}catch(e){toast('⚠️ Cloud save failed: '+e.message,4000);}}
   // calendar
-  if(cal)syncCalendar(task);
+  if(cal)scheduleDigests();
 }
 function serialize(t){
   return {id:t.id,title:t.title,notes:t.notes||'',status:t.status,priority:t.priority,
@@ -701,60 +701,72 @@ function setProvider(p){if(p)localStorage.setItem('jt_cal_provider',p);else loca
 function calConnected(){const p=getProvider();return p==='outlook'?outlookConnected():p==='google'?googleReady():false;}
 function calLabel(){const p=getProvider();return p==='outlook'?'Outlook':p==='google'?'Google Calendar':'';}
 
-/* shared event content */
-function eventTimes(t){
-  const d=new Date(t.deadline);const hasTime=!(d.getHours()===0&&d.getMinutes()===0);
-  if(!hasTime)d.setHours(18,0,0,0); // default 6pm
-  const end=new Date(d.getTime()+60*60000);const iso=x=>x.toISOString().slice(0,19);
-  return {dueStart:iso(d),dueEnd:iso(end),dueZ:d.toISOString(),endZ:end.toISOString(),hasTime};
-}
-function reminderStart(t,daysBefore){const d=startOfDay(t.deadline);d.setDate(d.getDate()-daysBefore);d.setHours(9,0,0,0);return d;}
-function descText(t){const l=[];if(t.notes)l.push(t.notes);if((t.assignees||[]).length)l.push('Assigned: '+t.assignees.map(a=>a.name).join(', '));if((t.labels||[]).length)l.push('Labels: '+t.labels.join(', '));l.push('— via Jaey Tasks');return l.join('\n');}
+/* ════════ Daily digest calendar — ONE 9 AM reminder per day, merging tasks ════════ */
+const DIGEST_DAYS=14, DIGEST_HOUR=9;
+function digestMapKey(){return 'jt_dig_'+getProvider()+'_'+(ME&&ME.email||'');}
+function getDigestMap(){try{return JSON.parse(localStorage.getItem(digestMapKey())||'{}');}catch(e){return {};}}
+function setDigestMap(m){localStorage.setItem(digestMapKey(),JSON.stringify(m));}
+function dKey(dt){const p=n=>String(n).padStart(2,'0');return dt.getFullYear()+'-'+p(dt.getMonth()+1)+'-'+p(dt.getDate());}
+function digestStart(offset){const d=new Date();d.setDate(d.getDate()+offset);d.setHours(DIGEST_HOUR,0,0,0);return d;}
+function myOpenTasks(){const e=ME&&ME.email;return TASKS.filter(t=>t.deadline&&t.status!=='done'&&!t.archived&&(t.created_by===e||(t.assignees||[]).some(a=>a.email===e)));}
 
-/* dispatcher — keeps MY calendar events for tasks I created or am assigned to.
-   task.calendar is a map keyed by user email so teammates don't clobber each other. */
-async function syncCalendar(t){
-  if(!ME)return;const prov=getProvider();if(!prov||!calConnected())return;
-  const mine=t.calendar&&t.calendar[ME.email];
-  const involved=t.created_by===ME.email||(t.assignees||[]).some(a=>a.email===ME.email);
-  const want=involved&&t.deadline&&t.status!=='done'&&!t.archived;
+/* build the morning digest content for a given day offset (today=0) */
+function digestFor(offset){
+  const tasks=myOpenTasks();
+  const groups=[['Due today',offset],['Due tomorrow',offset+1],['Due in 2 days',offset+2]];
+  const counts=groups.map(g=>tasks.filter(t=>daysUntil(t.deadline)===g[1]).length);
+  if(!counts.some(c=>c))return null;
+  const lines=[];
+  groups.forEach((g,i)=>{
+    const items=tasks.filter(t=>daysUntil(t.deadline)===g[1]).sort((a,b)=>PRI_RANK[a.priority]-PRI_RANK[b.priority]);
+    if(!items.length)return;
+    lines.push(g[0]+':');
+    items.forEach(t=>{const who=(t.assignees||[]).map(a=>a.name).join(', ');lines.push('  • '+t.title+(who?' — '+who:'')+(t.priority==='urgent'?'  ⚠ urgent':''));});
+    lines.push('');
+  });
+  const title='📋 Jaey Tasks — '+counts[0]+' due today'+(counts[1]?', '+counts[1]+' tomorrow':'')+(counts[2]?', '+counts[2]+' in 2 days':'');
+  lines.push('Open: '+location.origin+location.pathname);
+  const body=lines.join('\n').trim();
+  return {title,body,hash:title+'§'+body};
+}
+
+/* rebuild upcoming digests on the connected calendar (debounced) */
+let _digTimer=null;
+function scheduleDigests(){if(!calConnected())return;clearTimeout(_digTimer);_digTimer=setTimeout(rebuildDigests,2500);}
+let _digBusy=false;
+async function rebuildDigests(){
+  if(!ME||!calConnected()||_digBusy)return;
+  _digBusy=true;
+  const map=getDigestMap(),prov=getProvider(),today=startOfDay(new Date());
   try{
-    let entry=mine;
-    if(!want){if(mine){await clearMine(t,mine);entry=null;}}
-    else{entry=prov==='outlook'?await syncOutlook(t,mine):await syncGoogle(t,mine);}
-    t.calendar=t.calendar||{};
-    if(entry)t.calendar[ME.email]=entry;else delete t.calendar[ME.email];
-    if(sbReady())sbPatch('todo_tasks','id=eq.'+t.id,{calendar:t.calendar}).catch(()=>{});
-    cacheTasks();
-  }catch(e){console.warn('cal',e);if(/Interaction|consent|invalid|token|401/i.test(e.message))toast('Calendar needs reconnect — Settings',3500);}
+    for(const k of Object.keys(map)){if(new Date(k+'T00:00:00')<today){await digDelete(prov,map[k].id);delete map[k];}}
+    for(let off=0;off<DIGEST_DAYS;off++){
+      const start=digestStart(off),key=dKey(start),d=digestFor(off);
+      if(!d){if(map[key]){await digDelete(prov,map[key].id);delete map[key];}continue;}
+      if(map[key]&&map[key].h===d.hash)continue;       // unchanged → skip API call
+      const id=await digUpsert(prov,map[key]&&map[key].id,start,d.title,d.body);
+      map[key]={id,h:d.hash};
+    }
+    setDigestMap(map);
+  }catch(e){console.warn('digest',e);if(/Interaction|consent|invalid|token|401/i.test(e.message))toast('Calendar needs reconnect — Settings',3500);}
+  _digBusy=false;
 }
-async function clearMine(t,mine){
-  if(!mine)return;
-  if(mine.provider==='outlook'){const tok=await graphToken(false).catch(()=>null);if(tok)for(const k of['due','r2','r1'])if(mine[k])await delEvent(mine[k],tok);}
-  else if(mine.provider==='google'&&mine.id){await gDel(mine.id);}
-}
-async function clearMyCalendar(t){if(ME&&t.calendar&&t.calendar[ME.email]){try{await clearMine(t,t.calendar[ME.email]);}catch(e){}}}
+async function digUpsert(prov,id,start,title,body){return prov==='outlook'?olDigestUpsert(id,start,title,body):gDigestUpsert(id,start,title,body);}
+async function digDelete(prov,id){if(!id)return;if(prov==='outlook'){const tok=await graphToken(false).catch(()=>null);if(tok)await delEvent(id,tok);}else{await gDel(id);}}
+async function clearAllDigests(){const prov=getProvider(),map=getDigestMap();for(const k of Object.keys(map)){try{await digDelete(prov,map[k].id);}catch(e){}}setDigestMap({});}
 
-/* ── Outlook (Microsoft Graph): due event + 2-day + 1-day reminders, assignees invited ── */
-function attendees(t){return (t.assignees||[]).filter(a=>a.email&&a.email!==ME.email).map(a=>({emailAddress:{address:a.email,name:a.name},type:'required'}));}
-function olBody(t){return {contentType:'HTML',content:esc(descText(t)).replace(/\n/g,'<br>')};}
-async function syncOutlook(t,mine){
-  const token=await graphToken(false);const tms=eventTimes(t);const att=attendees(t);const body=olBody(t);const cat=['Jaey Tasks'];
-  mine=(mine&&mine.provider==='outlook')?mine:{provider:'outlook'};
-  const due={subject:'⏰ Due: '+t.title,body,start:{dateTime:tms.dueStart,timeZone:'UTC'},end:{dateTime:tms.dueEnd,timeZone:'UTC'},
-    isReminderOn:true,reminderMinutesBeforeStart:30,attendees:att,categories:cat,importance:t.priority==='urgent'?'high':'normal'};
-  mine.due=await olUpsert(mine.due,due,token);
-  const mk=(days,label)=>{const s=reminderStart(t,days);if(s<=new Date())return null;const e=new Date(s.getTime()+30*60000);
-    return {subject:'🔔 '+label+': '+t.title,body,start:{dateTime:s.toISOString().slice(0,19),timeZone:'UTC'},end:{dateTime:e.toISOString().slice(0,19),timeZone:'UTC'},
-      isReminderOn:true,reminderMinutesBeforeStart:0,attendees:att,categories:cat,showAs:'free'};};
-  const r2=mk(2,'Due in 2 days');mine.r2=r2?await olUpsert(mine.r2,r2,token):await delEvent(mine.r2,token);
-  const r1=mk(1,'Due tomorrow');mine.r1=r1?await olUpsert(mine.r1,r1,token):await delEvent(mine.r1,token);
-  return mine;
+/* ── Outlook (Microsoft Graph): one morning digest event ── */
+async function olDigestUpsert(id,start,title,body){
+  const token=await graphToken(false);const end=new Date(start.getTime()+15*60000);
+  const payload={subject:title,body:{contentType:'text',content:body},
+    start:{dateTime:start.toISOString().slice(0,19),timeZone:'UTC'},end:{dateTime:end.toISOString().slice(0,19),timeZone:'UTC'},
+    isReminderOn:true,reminderMinutesBeforeStart:0,showAs:'free',categories:['Jaey Tasks']};
+  return olUpsert(id,payload,token);
 }
 async function olUpsert(id,payload,token){if(id){try{await graph('PATCH','/me/events/'+id,payload,token);return id;}catch(e){}}const r=await graph('POST','/me/events',payload,token);return r.id;}
 async function delEvent(id,token){if(!id)return null;try{await graph('DELETE','/me/events/'+id,null,token);}catch(e){}return null;}
 
-/* ── Google Calendar: one event with 2-day + 1-day reminder overrides, assignees invited ── */
+/* ── Google Calendar auth (Google Identity Services) ── */
 let googleTokenClient=null,googleAccessToken='',googleTokenExp=0;
 function googleReady(){return !!(googleId&&(googleAccessToken||localStorage.getItem('jt_g_user')));}
 function ensureGISLib(){return new Promise(res=>{if(typeof google!=='undefined'&&google.accounts&&google.accounts.oauth2)return res(true);const s=document.createElement('script');s.src='https://accounts.google.com/gsi/client';s.async=true;s.onload=()=>res(true);s.onerror=()=>res(false);document.head.appendChild(s);});}
@@ -776,19 +788,15 @@ async function gapi(method,path,body){
   if(method==='DELETE')return (r.ok||r.status===410)?{}:Promise.reject(new Error('Google '+r.status));
   const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error((j.error&&j.error.message)||('Google '+r.status));return j;
 }
-function gAttendees(t){return (t.assignees||[]).filter(a=>a.email&&a.email!==ME.email).map(a=>({email:a.email,displayName:a.name}));}
-async function syncGoogle(t,mine){
-  const tms=eventTimes(t);const du=daysUntil(t.deadline);
-  const overrides=[{method:'popup',minutes:30}];
-  if(du>=2){overrides.push({method:'popup',minutes:2880});overrides.push({method:'email',minutes:2880});}
-  if(du>=1)overrides.push({method:'popup',minutes:1440});
-  const ev={summary:'⏰ Due: '+t.title,description:descText(t),start:{dateTime:tms.dueZ,timeZone:'UTC'},end:{dateTime:tms.endZ,timeZone:'UTC'},
-    attendees:gAttendees(t),reminders:{useDefault:false,overrides}};
-  mine=(mine&&mine.provider==='google')?mine:{provider:'google'};
-  if(mine.id){try{await gapi('PATCH','/calendars/primary/events/'+mine.id+'?sendUpdates=all',ev);return mine;}catch(e){}}
-  const r=await gapi('POST','/calendars/primary/events?sendUpdates=all',ev);mine.id=r.id;return mine;
+/* ── Google Calendar: one morning digest event ── */
+async function gDigestUpsert(id,start,title,body){
+  const end=new Date(start.getTime()+15*60000);
+  const ev={summary:title,description:body,start:{dateTime:start.toISOString(),timeZone:'UTC'},end:{dateTime:end.toISOString(),timeZone:'UTC'},
+    transparency:'transparent',reminders:{useDefault:false,overrides:[{method:'popup',minutes:0}]}};
+  if(id){try{await gapi('PATCH','/calendars/primary/events/'+id,ev);return id;}catch(e){}}
+  const r=await gapi('POST','/calendars/primary/events',ev);return r.id;
 }
-async function gDel(id){if(!id)return;try{await gapi('DELETE','/calendars/primary/events/'+id+'?sendUpdates=all');}catch(e){}}
+async function gDel(id){if(!id)return;try{await gapi('DELETE','/calendars/primary/events/'+id);}catch(e){}}
 
 /* connect / disconnect (per device) */
 async function connectOutlook(){
@@ -797,8 +805,8 @@ async function connectOutlook(){
   if(!(await ensureMsalLib())){toast('Couldn’t load Microsoft library — check ad-blocker',4000);return;}
   try{await graphToken(true);const me=await graph('GET','/me');
     localStorage.setItem('jt_ol_user',JSON.stringify({name:me.displayName,email:(me.mail||me.userPrincipalName||'')}));
-    setProvider('outlook');toast('📅 Outlook connected');setOutlookUI();closeCalPrompt();
-    if(confirm('Sync your upcoming deadlines to Outlook now?'))resyncAll();
+    setProvider('outlook');toast('📅 Outlook connected — setting up your daily reminder');setOutlookUI();closeCalPrompt();
+    rebuildDigests();
   }catch(e){toast('⚠️ '+e.message,4500);}
 }
 async function connectGoogle(){
@@ -806,23 +814,22 @@ async function connectGoogle(){
   toast('Opening Google sign-in…');
   try{await googleToken(true);
     localStorage.setItem('jt_g_user',JSON.stringify({email:ME&&ME.email}));
-    setProvider('google');toast('📅 Google Calendar connected');setOutlookUI();closeCalPrompt();
-    if(confirm('Sync your upcoming deadlines to Google Calendar now?'))resyncAll();
+    setProvider('google');toast('📅 Google Calendar connected — setting up your daily reminder');setOutlookUI();closeCalPrompt();
+    rebuildDigests();
   }catch(e){toast('⚠️ '+e.message,4500);}
 }
-function disconnectCal(){
+async function disconnectCal(){
   const p=getProvider();
+  await clearAllDigests();
   if(p==='outlook'){try{if(msalApp&&graphAccount)msalApp.logoutPopup({account:graphAccount}).catch(()=>{});}catch(e){}graphAccount=null;localStorage.removeItem('jt_ol_user');}
-  if(p==='google'){googleAccessToken='';localStorage.removeItem('jt_g_user');try{if(googleAccessToken)google.accounts.oauth2.revoke(googleAccessToken);}catch(e){}}
+  if(p==='google'){try{if(googleAccessToken)google.accounts.oauth2.revoke(googleAccessToken);}catch(e){}googleAccessToken='';localStorage.removeItem('jt_g_user');}
   setProvider('');setOutlookUI();toast('Calendar disconnected');
 }
 async function resyncAll(){
   if(!calConnected()){toast('Connect a calendar first');return;}
-  const mineTasks=TASKS.filter(t=>t.deadline&&t.status!=='done'&&!t.archived&&(t.created_by===ME.email||(t.assignees||[]).some(a=>a.email===ME.email)));
-  if(!mineTasks.length){toast('No upcoming deadlines for you to sync');return;}
-  toast('Syncing '+mineTasks.length+' deadlines to your '+calLabel()+'…');
-  let ok=0;for(const t of mineTasks){try{await syncCalendar(t);ok++;}catch(e){}}
-  toast('📅 Synced '+ok+'/'+mineTasks.length);
+  toast('Rebuilding your daily reminders…');
+  await rebuildDigests();
+  toast('📅 Daily reminders updated');
 }
 
 /* ════════ RENDER ════════ */
@@ -1104,7 +1111,7 @@ function renderTaskForm(){
     <div id="tm-tab"></div>
   `;
   renderTokens();renderSubs();renderTmTab();bindTokenInputs();
-  if(calConnected()&&t.deadline)$('#tm-body').insertAdjacentHTML('beforeend',`<div class="hint" style="margin-top:.4rem">📅 Saving will create/update your ${calLabel()} reminders ${(t.assignees||[]).length>1?'and invite assignees':''}.</div>`);
+  if(calConnected()&&t.deadline)$('#tm-body').insertAdjacentHTML('beforeend',`<div class="hint" style="margin-top:.4rem">📅 This deadline will roll into your daily 9 AM ${calLabel()} reminder.</div>`);
 }
 function splitDateTime(iso){if(!iso)return {date:'',time:''};const d=new Date(iso);const p=n=>String(n).padStart(2,'0');const date=`${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}`;const hasT=!(d.getHours()===0&&d.getMinutes()===0);return {date,time:hasT?`${p(d.getHours())}:${p(d.getMinutes())}`:''};}
 function updateDeadline(){const date=$('#dl-date').value,time=$('#dl-time').value;if(!date){editing.deadline=null;return;}editing.deadline=new Date(date+'T'+(time||'00:00')).toISOString();}
@@ -1199,10 +1206,9 @@ function spawnRecurrence(t){
 }
 async function deleteTask(){
   if(!editing)return;const t=TASKS.find(x=>x.id===editing.id);if(!t)return;
-  if(!confirm('Delete "'+t.title+'"? This also removes its Outlook reminders.'))return;
+  if(!confirm('Delete "'+t.title+'"?'))return;
   closeTask();
-  await clearMyCalendar(t);
-  TASKS=TASKS.filter(x=>x.id!==t.id);cacheTasks();renderAll();
+  TASKS=TASKS.filter(x=>x.id!==t.id);cacheTasks();renderAll();scheduleDigests();
   if(sbReady()){try{await fetch(`${sbCfg.url}/rest/v1/todo_tasks?id=eq.${t.id}`,{method:'DELETE',headers:sbHeaders()});}catch(e){}}
   toast('Deleted');
 }
@@ -1292,7 +1298,7 @@ function setOutlookUI(){
   if($('#ol-chip')){$('#ol-chip').classList.toggle('on',conn);$('#ol-txt').textContent=conn?(calLabel()):'Calendar off';}
   if($('#redir-uri'))$('#redir-uri').textContent=redirectUri();
   const st=$('#ol-status');if(!st)return;
-  if(conn)st.innerHTML=`<div class="ok" style="font-size:.9rem;font-weight:500">✓ ${calLabel()} connected${u&&u.email?` — ${esc(u.email)}`:''}</div><div class="hint">Your deadlines create reminders on your calendar; assignees are invited so they're reminded 2 days &amp; 1 day before.</div>`;
+  if(conn)st.innerHTML=`<div class="ok" style="font-size:.9rem;font-weight:500">✓ ${calLabel()} connected${u&&u.email?` — ${esc(u.email)}`:''}</div><div class="hint">You'll get one 9 AM reminder each day listing your tasks due today, tomorrow &amp; in 2 days.</div>`;
   else st.innerHTML=`<div style="color:var(--dusty);font-size:.9rem">No calendar connected on this device. Connect Outlook or Google below to get deadline reminders.</div>`;
   const oc=$('#cal-connect-outlook'),gc=$('#cal-connect-google'),dc=$('#cal-disconnect');
   if(oc)oc.style.display=conn?'none':'inline-flex';
