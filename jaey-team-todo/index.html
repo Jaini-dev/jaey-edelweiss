@@ -345,7 +345,7 @@ select.f,.seg{background:#fff;border:1px solid var(--line);border-radius:99px;pa
     <button class="ol-chip" id="ol-chip" onclick="go('settings');setTimeout(()=>document.getElementById('ol-card').scrollIntoView({behavior:'smooth'}),120)">
       <span class="dot"></span><span id="ol-txt">Outlook off</span>
     </button>
-    <button class="me-chip" onclick="ME?go('settings'):signIn()">
+    <button class="me-chip" onclick="ME?go('settings'):showGate()">
       <span class="me-nm" id="me-name">Sign in</span>
       <span class="avatar" id="me-av">?</span>
     </button>
@@ -404,47 +404,46 @@ select.f,.seg{background:#fff;border:1px solid var(--line);border-radius:99px;pa
 
     <div class="card">
       <h3>👤 You</h3>
-      <div class="sub">Signed in with your Microsoft account. This is your verified identity for tasks, comments and follow-ups.</div>
+      <div class="sub">Your identity for tasks, comments and follow-ups. Change your login code by asking an admin (or yourself, if you're admin, in the roster below).</div>
       <div id="me-box"></div>
       <button class="btn ghost sm" onclick="signOut()" style="margin-top:.7rem">Sign out</button>
     </div>
 
     <div class="card" id="ol-card">
-      <h3>📅 Outlook calendar sync</h3>
-      <div class="sub">Your Microsoft sign-in also powers calendar sync: deadlines become reminders on your Outlook calendar, and assignees are invited so they're reminded 2 days &amp; 1 day before too.</div>
+      <h3>📅 Calendar sync</h3>
+      <div class="sub">Connect <b>your</b> calendar so task deadlines appear with reminders 2 days &amp; 1 day before — and assignees get invited automatically. Use Outlook, or Gmail/Google if you don't use Outlook.</div>
       <div id="ol-status"></div>
-      <div class="field" style="margin-top:1rem">
-        <label>Azure App (Client) ID <span style="font-weight:400;text-transform:none;color:var(--lavender)">(admin)</span></label>
-        <input type="text" id="azure-id" placeholder="00000000-0000-0000-0000-000000000000" oninput="saveAzure()"/>
-        <div class="hint">Shared with the team via your database. Redirect URI to register: <code id="redir-uri" style="font-family:var(--mono)"></code></div>
-      </div>
-      <div style="display:flex;gap:.6rem;flex-wrap:wrap">
-        <button class="btn" id="ol-connect" onclick="signIn()">Re-authorize calendar</button>
-        <button class="btn ghost" id="ol-disconnect" onclick="signOut()" style="display:none">Sign out</button>
-        <button class="btn ghost" onclick="resyncAll()">Re-sync all deadlines</button>
+      <div style="display:flex;gap:.6rem;flex-wrap:wrap;margin-top:1rem">
+        <button class="btn" id="cal-connect-outlook" onclick="connectOutlook()">Connect Outlook</button>
+        <button class="btn ghost" id="cal-connect-google" onclick="connectGoogle()">Connect Google</button>
+        <button class="btn ghost" id="cal-disconnect" onclick="disconnectCal()" style="display:none">Disconnect</button>
+        <button class="btn ghost" onclick="resyncAll()">Re-sync my deadlines</button>
       </div>
       <details style="margin-top:1.1rem">
-        <summary style="cursor:pointer;font-weight:600;font-size:.88rem;color:var(--cta)">▸ How to get the Azure Client ID (5 min, free)</summary>
-        <ol class="steps" style="margin-top:.9rem">
-          <li>Go to <a href="https://portal.azure.com" target="_blank">portal.azure.com</a> → search <b>App registrations</b> → <b>New registration</b>.</li>
-          <li>Name it <code>Jaey Tasks</code>. Under <b>Supported account types</b> choose <i>Accounts in any org directory and personal Microsoft accounts</i>.</li>
-          <li>Under <b>Redirect URI</b>, pick platform <b>Single-page application (SPA)</b> and paste the URI shown above.</li>
-          <li>Click <b>Register</b>. Copy the <b>Application (client) ID</b> and paste it in the box above.</li>
-          <li>Open <b>API permissions</b> → Add → Microsoft Graph → Delegated → add <code>Calendars.ReadWrite</code> and <code>User.Read</code>.</li>
-          <li>Done — everyone now signs in with Microsoft, and deadlines sync to their calendars automatically.</li>
-        </ol>
+        <summary style="cursor:pointer;font-weight:600;font-size:.88rem;color:var(--cta)">▸ Admin: calendar app credentials (one-time)</summary>
+        <div class="field" style="margin-top:.9rem">
+          <label>Azure App (Client) ID — for Outlook</label>
+          <input type="text" id="azure-id" placeholder="00000000-0000-0000-0000-000000000000" oninput="saveAzure()"/>
+          <div class="hint">portal.azure.com → App registrations → New → <b>SPA</b> redirect <code id="redir-uri" style="font-family:var(--mono)"></code> → API permission <code>Calendars.ReadWrite</code>. Shared with team via DB.</div>
+        </div>
+        <div class="field">
+          <label>Google OAuth Client ID — for Gmail/Google Calendar</label>
+          <input type="text" id="google-id" placeholder="xxxx.apps.googleusercontent.com" oninput="saveGoogle()"/>
+          <div class="hint">console.cloud.google.com → APIs &amp; Services → Credentials → OAuth client ID → <b>Web application</b>. Add <code>https://pages.jaey.in</code> to Authorized JavaScript origins, and enable the <b>Google Calendar API</b>. Shared with team via DB.</div>
+        </div>
       </details>
     </div>
 
     <div class="card">
       <h3>👥 Team roster</h3>
-      <div class="sub">Add teammates with their email so they can be assigned tasks and auto-invited to calendar reminders.</div>
+      <div class="sub">Admins add teammates with a name, email, and a login code (PIN). Set or reset codes and admin rights per person.</div>
       <div id="ppl-list"></div>
       <div class="row3" style="margin-top:.9rem;align-items:end">
         <div class="field" style="margin:0"><label>Name</label><input type="text" id="np-name" placeholder="Priya"/></div>
         <div class="field" style="margin:0"><label>Email</label><input type="email" id="np-email" placeholder="priya@jaey.in"/></div>
-        <button class="btn" onclick="addPerson()">＋ Add</button>
+        <div class="field" style="margin:0"><label>Code (PIN)</label><input type="text" id="np-pin" inputmode="numeric" placeholder="e.g. 4827"/></div>
       </div>
+      <button class="btn" onclick="addPerson()" style="margin-top:.6rem">＋ Add teammate</button>
     </div>
 
     <div class="card">
@@ -498,28 +497,40 @@ select.f,.seg{background:#fff;border:1px solid var(--line);border-radius:99px;pa
   <div class="gate-card">
     <img src="images/Logo-Jaey-Black-HD.png" alt="Jaey" class="gate-logo"/>
     <div class="gate-app">Tasks</div>
-    <p class="gate-sub">Shared team to-do with Outlook calendar reminders. Sign in with your Microsoft 365 / Outlook account to continue.</p>
-    <button class="btn block" id="gate-signin" onclick="signIn()" style="margin-top:1.2rem">
-      <svg width="16" height="16" viewBox="0 0 23 23" aria-hidden="true"><rect x="1" y="1" width="10" height="10" fill="#F25022"/><rect x="12" y="1" width="10" height="10" fill="#7FBA00"/><rect x="1" y="12" width="10" height="10" fill="#00A4EF"/><rect x="12" y="12" width="10" height="10" fill="#FFB900"/></svg>
-      Sign in with Microsoft
-    </button>
+    <p class="gate-sub">Shared team to-do with Outlook calendar reminders. Pick your name and enter your code to continue.</p>
+    <div class="field" style="margin-top:1.2rem;text-align:left"><label>Who are you?</label>
+      <select id="gate-who"></select></div>
+    <div class="field" style="text-align:left"><label>Your code (PIN)</label>
+      <input type="password" id="gate-pin" inputmode="numeric" placeholder="••••" autocomplete="off" onkeydown="if(event.key==='Enter')pinLogin()"/></div>
+    <button class="btn block" id="gate-signin" onclick="pinLogin()" style="margin-top:.4rem">Enter</button>
     <div id="gate-msg" class="gate-msg"></div>
+    <div class="hint" style="margin-top:1rem">Don't have a code? Ask your admin to add you in Settings → Team roster.</div>
     <details class="gate-setup" id="gate-setup">
-      <summary>First-time / admin setup</summary>
+      <summary>Admin setup</summary>
       <div class="field" style="margin-top:.8rem"><label>Supabase Project URL</label>
         <input type="text" id="gate-sburl" placeholder="https://yourproject.supabase.co"/></div>
       <div class="field"><label>Supabase anon key</label>
         <input type="text" id="gate-sbkey" placeholder="eyJhbG…"/>
-        <div class="hint">From your new project → Settings → API. Run the setup SQL there first (shown in Settings → Database).</div></div>
-      <div class="field"><label>Azure App (Client) ID</label>
-        <input type="text" id="gate-azure" placeholder="00000000-0000-0000-0000-000000000000"/>
-        <div class="hint">Free Azure app (steps in Settings → Outlook). Redirect URI to add: <code id="gate-redir" style="font-family:var(--mono);word-break:break-all"></code></div>
-      </div>
-      <button class="btn ghost block" onclick="gateSaveSetup()">Save &amp; enable sign-in</button>
-      <div class="hint" style="margin-top:.6rem">Supabase keys are stored on this device; the Azure ID is also saved to your database so teammates' devices pick it up automatically.</div>
+        <div class="hint">Pre-filled with your project. Run the setup SQL there first (shown in Settings → Database).</div></div>
+      <button class="btn ghost block" onclick="gateSaveSetup()">Save &amp; reload roster</button>
     </details>
   </div>
   <div class="gate-foot">Jaey Tasks · pages.jaey.in/jaey-team-todo</div>
+</div>
+
+<!-- ───────── CONNECT CALENDAR PROMPT ───────── -->
+<div class="scrim" id="cal-scrim">
+  <div class="modal" style="max-width:420px">
+    <div class="m-head"><h3>📅 Connect your calendar</h3><button class="x" onclick="closeCalPrompt()">✕</button></div>
+    <div class="m-body" style="text-align:center">
+      <p style="color:var(--dusty);font-size:.9rem;line-height:1.55">Get task deadlines straight onto your calendar — with reminders <b>2 days</b> &amp; <b>1 day</b> before, and assignees invited automatically. Pick the calendar you use:</p>
+      <div style="display:flex;flex-direction:column;gap:.6rem;margin-top:1.2rem">
+        <button class="btn block" onclick="connectOutlook()">Outlook / Microsoft 365</button>
+        <button class="btn ghost block" id="calp-google" onclick="connectGoogle()">Gmail / Google Calendar</button>
+        <button class="btn ghost block" onclick="calSkip()" style="border:none;box-shadow:none;color:var(--dusty)">Skip for now</button>
+      </div>
+    </div>
+  </div>
 </div>
 
 <div id="toast"></div>
@@ -545,9 +556,12 @@ const esc=s=>(s==null?'':String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;
    I'll bake them in as defaults so teammates just sign in. */
 const SB_DEFAULT={url:'https://kzcaockkencdqxhpzsqk.supabase.co',key:'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt6Y2FvY2trZW5jZHF4aHB6c3FrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIwODM3MzIsImV4cCI6MjA5NzY1OTczMn0.fUI5MpbGd85fIxAOlrmah--lHsZCJwol2DwvhYb7R2Q'};
 const ADMIN_EMAIL='jaini@jaey.in';   // always admin; others get admin via roster role
-const AZURE_DEFAULT='c87811e6-4c84-4513-99c9-a4a6733bdcee';  // Jaey Tasks app registration
+const AZURE_DEFAULT='c87811e6-4c84-4513-99c9-a4a6733bdcee';  // Jaey Tasks app registration (Outlook calendar)
+const AZURE_TENANT='jaey.in';  // single-tenant app → Outlook connect restricted to this org
+const GOOGLE_DEFAULT='';  // Google OAuth client id for Gmail/Google Calendar (admin sets in Settings)
 let sbCfg=JSON.parse(localStorage.getItem('jt_sb')||'null')||{...SB_DEFAULT};
 let azureId=localStorage.getItem('jt_azure')||AZURE_DEFAULT;
+let googleId=localStorage.getItem('jt_google')||GOOGLE_DEFAULT;
 let ME=JSON.parse(localStorage.getItem('jt_me')||'null');  // {name,email} from verified Microsoft sign-in
 let viewMode=localStorage.getItem('jt_mode')||'list';
 let quickFilter=localStorage.getItem('jt_qf')||'open';
@@ -605,7 +619,7 @@ async function pull(notify){
     ]);
     TASKS=tasks||[];PEOPLE=ppl||[];
     // seed Jaini if roster empty
-    if(!PEOPLE.length){const j={name:'Jaini',email:'jaini@jaey.in',role:'admin'};PEOPLE=[j];try{await sbUpsert('todo_people',{...j,added_at:nowISO()},'email');}catch(e){}}
+    if(!PEOPLE.length){const j={name:'Jaini',email:'jaini@jaey.in',role:'admin',pin:'6558'};PEOPLE=[j];try{await sbUpsert('todo_people',{...j,added_at:nowISO()},'email');}catch(e){}}
     cacheTasks();localStorage.setItem('jt_people_cache',JSON.stringify(PEOPLE));
     setSbStatus(true);
     if(notify)toast('↻ Synced — '+TASKS.length+' tasks');
@@ -650,7 +664,7 @@ function initMsal(){
   if(!azureId||typeof msal==='undefined')return null;
   if(msalApp&&msalApp._id===azureId)return msalApp;
   msalApp=new msal.PublicClientApplication({
-    auth:{clientId:azureId,authority:'https://login.microsoftonline.com/common',redirectUri:redirectUri()},
+    auth:{clientId:azureId,authority:'https://login.microsoftonline.com/'+AZURE_TENANT,redirectUri:redirectUri()},
     cache:{cacheLocation:'localStorage',storeAuthStateInCookie:false}
   });
   msalApp._id=azureId;
@@ -682,67 +696,133 @@ async function graph(method,path,body,token){
   const j=await r.json();if(!r.ok)throw new Error((j.error&&j.error.message)||('Graph '+r.status));return j;
 }
 function outlookConnected(){return !!(azureId&&graphAccount);}
+function getProvider(){return localStorage.getItem('jt_cal_provider')||'';}
+function setProvider(p){if(p)localStorage.setItem('jt_cal_provider',p);else localStorage.removeItem('jt_cal_provider');}
+function calConnected(){const p=getProvider();return p==='outlook'?outlookConnected():p==='google'?googleReady():false;}
+function calLabel(){const p=getProvider();return p==='outlook'?'Outlook':p==='google'?'Google Calendar':'';}
 
-/* build calendar events for a task */
+/* shared event content */
 function eventTimes(t){
-  const d=new Date(t.deadline);
-  const hasTime=!(d.getHours()===0&&d.getMinutes()===0);
-  if(!hasTime)d.setHours(18,0,0,0); // default 6pm IST
-  const end=new Date(d.getTime()+60*60000);
-  const iso=x=>x.toISOString().slice(0,19);
-  return {dueStart:iso(d),dueEnd:iso(end),hasTime};
+  const d=new Date(t.deadline);const hasTime=!(d.getHours()===0&&d.getMinutes()===0);
+  if(!hasTime)d.setHours(18,0,0,0); // default 6pm
+  const end=new Date(d.getTime()+60*60000);const iso=x=>x.toISOString().slice(0,19);
+  return {dueStart:iso(d),dueEnd:iso(end),dueZ:d.toISOString(),endZ:end.toISOString(),hasTime};
 }
-function reminderStart(t,daysBefore){
-  const d=startOfDay(t.deadline);d.setDate(d.getDate()-daysBefore);d.setHours(9,0,0,0);
-  return d;
-}
-function attendees(t){return (t.assignees||[]).filter(a=>a.email).map(a=>({emailAddress:{address:a.email,name:a.name},type:'required'}));}
-function eventBody(t){
-  const lines=[];
-  if(t.notes)lines.push(esc(t.notes).replace(/\n/g,'<br>'));
-  if((t.assignees||[]).length)lines.push('<br><b>Assigned:</b> '+t.assignees.map(a=>esc(a.name)).join(', '));
-  if((t.labels||[]).length)lines.push('<b>Labels:</b> '+t.labels.map(esc).join(', '));
-  lines.push('<br><i>via Jaey Tasks</i>');
-  return {contentType:'HTML',content:lines.join('<br>')};
-}
+function reminderStart(t,daysBefore){const d=startOfDay(t.deadline);d.setDate(d.getDate()-daysBefore);d.setHours(9,0,0,0);return d;}
+function descText(t){const l=[];if(t.notes)l.push(t.notes);if((t.assignees||[]).length)l.push('Assigned: '+t.assignees.map(a=>a.name).join(', '));if((t.labels||[]).length)l.push('Labels: '+t.labels.join(', '));l.push('— via Jaey Tasks');return l.join('\n');}
+
+/* dispatcher — keeps MY calendar events for tasks I created or am assigned to.
+   task.calendar is a map keyed by user email so teammates don't clobber each other. */
 async function syncCalendar(t){
-  if(!outlookConnected())return;
-  if(!t.deadline||t.status==='done'||t.archived){await clearCalendar(t);return;}
+  if(!ME)return;const prov=getProvider();if(!prov||!calConnected())return;
+  const mine=t.calendar&&t.calendar[ME.email];
+  const involved=t.created_by===ME.email||(t.assignees||[]).some(a=>a.email===ME.email);
+  const want=involved&&t.deadline&&t.status!=='done'&&!t.archived;
   try{
-    const token=await graphToken(false);
-    const cal=t.calendar||{};const tms=eventTimes(t);const att=attendees(t);const body=eventBody(t);const cat=['Jaey Tasks'];
-    const due={subject:'⏰ Due: '+t.title,body,start:{dateTime:tms.dueStart,timeZone:TZ},end:{dateTime:tms.dueEnd,timeZone:TZ},
-      isReminderOn:true,reminderMinutesBeforeStart:30,attendees:att,categories:cat,importance:t.priority==='urgent'?'high':'normal'};
-    cal.due=await upsertEvent(cal.due,due,token);
-    // advance reminders (only if in future)
-    const mk=(days,label)=>{const s=reminderStart(t,days);if(s<=new Date())return null;const e=new Date(s.getTime()+30*60000);
-      return {subject:'🔔 '+label+': '+t.title,body,start:{dateTime:s.toISOString().slice(0,19),timeZone:TZ},end:{dateTime:e.toISOString().slice(0,19),timeZone:TZ},
-        isReminderOn:true,reminderMinutesBeforeStart:0,attendees:att,categories:cat,showAs:'free'};};
-    const r2=mk(2,'Due in 2 days');cal.r2=r2?await upsertEvent(cal.r2,r2,token):await delEvent(cal.r2,token);
-    const r1=mk(1,'Due tomorrow');cal.r1=r1?await upsertEvent(cal.r1,r1,token):await delEvent(cal.r1,token);
-    t.calendar=cal;
-    // save calendar ids back quietly
-    if(sbReady())sbPatch('todo_tasks','id=eq.'+t.id,{calendar:cal}).catch(()=>{});
+    let entry=mine;
+    if(!want){if(mine){await clearMine(t,mine);entry=null;}}
+    else{entry=prov==='outlook'?await syncOutlook(t,mine):await syncGoogle(t,mine);}
+    t.calendar=t.calendar||{};
+    if(entry)t.calendar[ME.email]=entry;else delete t.calendar[ME.email];
+    if(sbReady())sbPatch('todo_tasks','id=eq.'+t.id,{calendar:t.calendar}).catch(()=>{});
     cacheTasks();
-  }catch(e){console.warn('cal sync',e);if(/InteractionRequired|consent|token/i.test(e.message))toast('Outlook needs re-connect',3500);}
+  }catch(e){console.warn('cal',e);if(/Interaction|consent|invalid|token|401/i.test(e.message))toast('Calendar needs reconnect — Settings',3500);}
 }
-async function upsertEvent(id,payload,token){
-  if(id){try{await graph('PATCH','/me/events/'+id,payload,token);return id;}catch(e){/* recreate below */}}
-  const r=await graph('POST','/me/events',payload,token);return r.id;
+async function clearMine(t,mine){
+  if(!mine)return;
+  if(mine.provider==='outlook'){const tok=await graphToken(false).catch(()=>null);if(tok)for(const k of['due','r2','r1'])if(mine[k])await delEvent(mine[k],tok);}
+  else if(mine.provider==='google'&&mine.id){await gDel(mine.id);}
 }
+async function clearMyCalendar(t){if(ME&&t.calendar&&t.calendar[ME.email]){try{await clearMine(t,t.calendar[ME.email]);}catch(e){}}}
+
+/* ── Outlook (Microsoft Graph): due event + 2-day + 1-day reminders, assignees invited ── */
+function attendees(t){return (t.assignees||[]).filter(a=>a.email&&a.email!==ME.email).map(a=>({emailAddress:{address:a.email,name:a.name},type:'required'}));}
+function olBody(t){return {contentType:'HTML',content:esc(descText(t)).replace(/\n/g,'<br>')};}
+async function syncOutlook(t,mine){
+  const token=await graphToken(false);const tms=eventTimes(t);const att=attendees(t);const body=olBody(t);const cat=['Jaey Tasks'];
+  mine=(mine&&mine.provider==='outlook')?mine:{provider:'outlook'};
+  const due={subject:'⏰ Due: '+t.title,body,start:{dateTime:tms.dueStart,timeZone:'UTC'},end:{dateTime:tms.dueEnd,timeZone:'UTC'},
+    isReminderOn:true,reminderMinutesBeforeStart:30,attendees:att,categories:cat,importance:t.priority==='urgent'?'high':'normal'};
+  mine.due=await olUpsert(mine.due,due,token);
+  const mk=(days,label)=>{const s=reminderStart(t,days);if(s<=new Date())return null;const e=new Date(s.getTime()+30*60000);
+    return {subject:'🔔 '+label+': '+t.title,body,start:{dateTime:s.toISOString().slice(0,19),timeZone:'UTC'},end:{dateTime:e.toISOString().slice(0,19),timeZone:'UTC'},
+      isReminderOn:true,reminderMinutesBeforeStart:0,attendees:att,categories:cat,showAs:'free'};};
+  const r2=mk(2,'Due in 2 days');mine.r2=r2?await olUpsert(mine.r2,r2,token):await delEvent(mine.r2,token);
+  const r1=mk(1,'Due tomorrow');mine.r1=r1?await olUpsert(mine.r1,r1,token):await delEvent(mine.r1,token);
+  return mine;
+}
+async function olUpsert(id,payload,token){if(id){try{await graph('PATCH','/me/events/'+id,payload,token);return id;}catch(e){}}const r=await graph('POST','/me/events',payload,token);return r.id;}
 async function delEvent(id,token){if(!id)return null;try{await graph('DELETE','/me/events/'+id,null,token);}catch(e){}return null;}
-async function clearCalendar(t){
-  if(!outlookConnected()||!t.calendar)return;
-  try{const token=await graphToken(false);for(const k of['due','r2','r1'])if(t.calendar[k])t.calendar[k]=await delEvent(t.calendar[k],token);
-    if(sbReady())sbPatch('todo_tasks','id=eq.'+t.id,{calendar:t.calendar}).catch(()=>{});}catch(e){}
+
+/* ── Google Calendar: one event with 2-day + 1-day reminder overrides, assignees invited ── */
+let googleTokenClient=null,googleAccessToken='',googleTokenExp=0;
+function googleReady(){return !!(googleId&&(googleAccessToken||localStorage.getItem('jt_g_user')));}
+function ensureGISLib(){return new Promise(res=>{if(typeof google!=='undefined'&&google.accounts&&google.accounts.oauth2)return res(true);const s=document.createElement('script');s.src='https://accounts.google.com/gsi/client';s.async=true;s.onload=()=>res(true);s.onerror=()=>res(false);document.head.appendChild(s);});}
+async function googleToken(interactive){
+  if(!googleId)throw new Error('Google Client ID not set');
+  if(googleAccessToken&&Date.now()<googleTokenExp-60000)return googleAccessToken;
+  if(!(await ensureGISLib()))throw new Error('Could not load Google sign-in');
+  return new Promise((resolve,reject)=>{
+    try{
+      googleTokenClient=google.accounts.oauth2.initTokenClient({client_id:googleId,scope:'https://www.googleapis.com/auth/calendar.events',
+        callback:r=>{if(r&&r.access_token){googleAccessToken=r.access_token;googleTokenExp=Date.now()+((r.expires_in||3600)*1000);resolve(googleAccessToken);}else reject(new Error((r&&r.error)||'Google auth failed'));}});
+      googleTokenClient.requestAccessToken({prompt:interactive?'consent':''});
+    }catch(e){reject(e);}
+  });
+}
+async function gapi(method,path,body){
+  const tok=await googleToken(false);
+  const r=await fetch('https://www.googleapis.com/calendar/v3'+path,{method,headers:{'Authorization':'Bearer '+tok,'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined});
+  if(method==='DELETE')return (r.ok||r.status===410)?{}:Promise.reject(new Error('Google '+r.status));
+  const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error((j.error&&j.error.message)||('Google '+r.status));return j;
+}
+function gAttendees(t){return (t.assignees||[]).filter(a=>a.email&&a.email!==ME.email).map(a=>({email:a.email,displayName:a.name}));}
+async function syncGoogle(t,mine){
+  const tms=eventTimes(t);const du=daysUntil(t.deadline);
+  const overrides=[{method:'popup',minutes:30}];
+  if(du>=2){overrides.push({method:'popup',minutes:2880});overrides.push({method:'email',minutes:2880});}
+  if(du>=1)overrides.push({method:'popup',minutes:1440});
+  const ev={summary:'⏰ Due: '+t.title,description:descText(t),start:{dateTime:tms.dueZ,timeZone:'UTC'},end:{dateTime:tms.endZ,timeZone:'UTC'},
+    attendees:gAttendees(t),reminders:{useDefault:false,overrides}};
+  mine=(mine&&mine.provider==='google')?mine:{provider:'google'};
+  if(mine.id){try{await gapi('PATCH','/calendars/primary/events/'+mine.id+'?sendUpdates=all',ev);return mine;}catch(e){}}
+  const r=await gapi('POST','/calendars/primary/events?sendUpdates=all',ev);mine.id=r.id;return mine;
+}
+async function gDel(id){if(!id)return;try{await gapi('DELETE','/calendars/primary/events/'+id+'?sendUpdates=all');}catch(e){}}
+
+/* connect / disconnect (per device) */
+async function connectOutlook(){
+  if(!azureId){toast('Admin: set the Azure Client ID in Settings → Calendar');return;}
+  toast('Loading Microsoft sign-in…');
+  if(!(await ensureMsalLib())){toast('Couldn’t load Microsoft library — check ad-blocker',4000);return;}
+  try{await graphToken(true);const me=await graph('GET','/me');
+    localStorage.setItem('jt_ol_user',JSON.stringify({name:me.displayName,email:(me.mail||me.userPrincipalName||'')}));
+    setProvider('outlook');toast('📅 Outlook connected');setOutlookUI();closeCalPrompt();
+    if(confirm('Sync your upcoming deadlines to Outlook now?'))resyncAll();
+  }catch(e){toast('⚠️ '+e.message,4500);}
+}
+async function connectGoogle(){
+  if(!googleId){toast('Admin: set the Google Client ID in Settings → Calendar');go('settings');return;}
+  toast('Opening Google sign-in…');
+  try{await googleToken(true);
+    localStorage.setItem('jt_g_user',JSON.stringify({email:ME&&ME.email}));
+    setProvider('google');toast('📅 Google Calendar connected');setOutlookUI();closeCalPrompt();
+    if(confirm('Sync your upcoming deadlines to Google Calendar now?'))resyncAll();
+  }catch(e){toast('⚠️ '+e.message,4500);}
+}
+function disconnectCal(){
+  const p=getProvider();
+  if(p==='outlook'){try{if(msalApp&&graphAccount)msalApp.logoutPopup({account:graphAccount}).catch(()=>{});}catch(e){}graphAccount=null;localStorage.removeItem('jt_ol_user');}
+  if(p==='google'){googleAccessToken='';localStorage.removeItem('jt_g_user');try{if(googleAccessToken)google.accounts.oauth2.revoke(googleAccessToken);}catch(e){}}
+  setProvider('');setOutlookUI();toast('Calendar disconnected');
 }
 async function resyncAll(){
-  if(!outlookConnected()){toast('Connect Outlook first');return;}
-  const todo=TASKS.filter(t=>t.deadline&&t.status!=='done'&&!t.archived);
-  if(!todo.length){toast('No upcoming deadlines to sync');return;}
-  toast('Syncing '+todo.length+' deadlines…');
-  let ok=0;for(const t of todo){try{await syncCalendar(t);ok++;}catch(e){}}
-  toast('📅 Synced '+ok+'/'+todo.length+' to Outlook');
+  if(!calConnected()){toast('Connect a calendar first');return;}
+  const mineTasks=TASKS.filter(t=>t.deadline&&t.status!=='done'&&!t.archived&&(t.created_by===ME.email||(t.assignees||[]).some(a=>a.email===ME.email)));
+  if(!mineTasks.length){toast('No upcoming deadlines for you to sync');return;}
+  toast('Syncing '+mineTasks.length+' deadlines to your '+calLabel()+'…');
+  let ok=0;for(const t of mineTasks){try{await syncCalendar(t);ok++;}catch(e){}}
+  toast('📅 Synced '+ok+'/'+mineTasks.length);
 }
 
 /* ════════ RENDER ════════ */
@@ -1024,7 +1104,7 @@ function renderTaskForm(){
     <div id="tm-tab"></div>
   `;
   renderTokens();renderSubs();renderTmTab();bindTokenInputs();
-  if(outlookConnected()&&t.deadline)$('#tm-body').insertAdjacentHTML('beforeend',`<div class="hint" style="margin-top:.4rem">📅 Saving will create/update Outlook reminders ${(t.assignees||[]).length>1?'and invite assignees':''}.</div>`);
+  if(calConnected()&&t.deadline)$('#tm-body').insertAdjacentHTML('beforeend',`<div class="hint" style="margin-top:.4rem">📅 Saving will create/update your ${calLabel()} reminders ${(t.assignees||[]).length>1?'and invite assignees':''}.</div>`);
 }
 function splitDateTime(iso){if(!iso)return {date:'',time:''};const d=new Date(iso);const p=n=>String(n).padStart(2,'0');const date=`${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}`;const hasT=!(d.getHours()===0&&d.getMinutes()===0);return {date,time:hasT?`${p(d.getHours())}:${p(d.getMinutes())}`:''};}
 function updateDeadline(){const date=$('#dl-date').value,time=$('#dl-time').value;if(!date){editing.deadline=null;return;}editing.deadline=new Date(date+'T'+(time||'00:00')).toISOString();}
@@ -1101,7 +1181,7 @@ async function saveTask(){
   if(t.status!=='done')t.completed_at=null;
   closeTask();
   await persist(t);
-  toast(isNew?'✓ Task created':'✓ Saved'+(outlookConnected()&&t.deadline?' · syncing calendar':''));
+  toast(isNew?'✓ Task created':'✓ Saved'+(calConnected()&&t.deadline?' · syncing calendar':''));
 }
 function toggleDone(id){const t=TASKS.find(x=>x.id===id);if(!t)return;if(t.status==='done'){t.status='todo';t.completed_at=null;logActivity(t,'reopened');persist(t);}else completeTask(t);}
 async function completeTask(t){
@@ -1121,17 +1201,25 @@ async function deleteTask(){
   if(!editing)return;const t=TASKS.find(x=>x.id===editing.id);if(!t)return;
   if(!confirm('Delete "'+t.title+'"? This also removes its Outlook reminders.'))return;
   closeTask();
-  await clearCalendar(t);
+  await clearMyCalendar(t);
   TASKS=TASKS.filter(x=>x.id!==t.id);cacheTasks();renderAll();
   if(sbReady()){try{await fetch(`${sbCfg.url}/rest/v1/todo_tasks?id=eq.${t.id}`,{method:'DELETE',headers:sbHeaders()});}catch(e){}}
   toast('Deleted');
 }
 
 /* ════════ PEOPLE / ME ════════ */
-async function persistPerson(p){if(sbReady()){try{await sbUpsert('todo_people',{name:p.name,email:p.email,role:p.role||'team',added_at:nowISO()},'email');}catch(e){}}localStorage.setItem('jt_people_cache',JSON.stringify(PEOPLE));}
-function addPerson(){const name=$('#np-name').value.trim(),email=$('#np-email').value.trim();if(!name||!email){toast('Name and email both needed');return;}if(PEOPLE.some(p=>p.email===email)){toast('Already added');return;}const p={name,email,role:'team'};PEOPLE.push(p);persistPerson(p);$('#np-name').value='';$('#np-email').value='';renderPeople();renderAll();toast('Added '+name);}
-function removePerson(email){if(!confirm('Remove this person from the roster?'))return;PEOPLE=PEOPLE.filter(p=>p.email!==email);localStorage.setItem('jt_people_cache',JSON.stringify(PEOPLE));if(sbReady())fetch(`${sbCfg.url}/rest/v1/todo_people?email=eq.${encodeURIComponent(email)}`,{method:'DELETE',headers:sbHeaders()}).catch(()=>{});renderPeople();}
-function renderPeople(){const el=$('#ppl-list');if(!el)return;el.innerHTML=PEOPLE.length?PEOPLE.map(p=>`<div class="ppl">${avatarHTML(p)}<div><div class="nm">${esc(p.name)} ${p.role==='admin'?'<span style="font-size:.68rem;color:var(--cta)">· admin</span>':''}</div><div class="em">${esc(p.email)}</div></div><button class="x" style="margin-left:auto;width:28px;height:28px" onclick="removePerson('${esc(p.email)}')">✕</button></div>`).join(''):'<div style="color:var(--dusty);font-size:.85rem">No one yet — add your team below.</div>';}
+async function persistPerson(p){if(sbReady()){try{await sbUpsert('todo_people',{name:p.name,email:p.email,role:p.role||'team',pin:p.pin||null,added_at:nowISO()},'email');}catch(e){}}localStorage.setItem('jt_people_cache',JSON.stringify(PEOPLE));}
+function addPerson(){const name=$('#np-name').value.trim(),email=$('#np-email').value.trim().toLowerCase(),pin=$('#np-pin').value.trim();
+  if(!name||!email){toast('Name and email both needed');return;}
+  if(!isAdmin()){toast('Only an admin can manage the roster');return;}
+  if(PEOPLE.some(p=>p.email===email)){toast('Already added');return;}
+  const p={name,email,role:'team',pin:pin||'0000'};PEOPLE.push(p);persistPerson(p);
+  $('#np-name').value='';$('#np-email').value='';$('#np-pin').value='';renderPeople();renderAll();gateWho();toast('Added '+name+(pin?'':' (code 0000 — ask them to change it)'));}
+function setPin(email){if(!isAdmin()){toast('Admins only');return;}const p=PEOPLE.find(x=>x.email===email);if(!p)return;const v=prompt('Set a login code (PIN) for '+p.name+':',p.pin||'');if(v===null)return;p.pin=v.trim();persistPerson(p);renderPeople();toast('Code updated for '+p.name);}
+function toggleAdmin(email){if(!isAdmin()){toast('Admins only');return;}const p=PEOPLE.find(x=>x.email===email);if(!p)return;p.role=p.role==='admin'?'team':'admin';persistPerson(p);renderPeople();renderMe();toast(p.name+' is now '+p.role);}
+function removePerson(email){if(!isAdmin()){toast('Admins only');return;}if(!confirm('Remove this person from the roster?'))return;PEOPLE=PEOPLE.filter(p=>p.email!==email);localStorage.setItem('jt_people_cache',JSON.stringify(PEOPLE));if(sbReady())fetch(`${sbCfg.url}/rest/v1/todo_people?email=eq.${encodeURIComponent(email)}`,{method:'DELETE',headers:sbHeaders()}).catch(()=>{});renderPeople();gateWho();}
+function renderPeople(){const el=$('#ppl-list');if(!el)return;const adm=isAdmin();
+  el.innerHTML=PEOPLE.length?PEOPLE.map(p=>`<div class="ppl">${avatarHTML(p)}<div><div class="nm">${esc(p.name)} ${p.role==='admin'?'<span style="font-size:.68rem;color:var(--cta)">· admin</span>':''}</div><div class="em">${esc(p.email)}${adm?` · code: ${p.pin?'••••':'<span class="bad">not set</span>'}`:''}</div></div>${adm?`<div style="margin-left:auto;display:flex;gap:.3rem"><button class="btn ghost sm" onclick="setPin('${esc(p.email)}')">Code</button><button class="btn ghost sm" onclick="toggleAdmin('${esc(p.email)}')">${p.role==='admin'?'Unadmin':'Admin'}</button><button class="x" style="width:28px;height:28px" onclick="removePerson('${esc(p.email)}')">✕</button></div>`:''}</div>`).join(''):'<div style="color:var(--dusty);font-size:.85rem">No one yet — add your team below.</div>';}
 function renderMe(){
   const box=$('#me-box');
   if(ME){$('#me-name').textContent=ME.name.split(' ')[0];$('#me-av').textContent=initials(ME.name);$('#me-av').style.background=avatarColor(ME.email||ME.name);
@@ -1144,74 +1232,84 @@ function isAdmin(){if(!ME)return false;if(ME.email===ADMIN_EMAIL)return true;con
 function canSee(t){if(isAdmin())return true;if(!ME)return false;if(t.created_by===ME.email)return true;return (t.assignees||[]).some(a=>a.email===ME.email);}
 
 /* ── Microsoft sign-in (login gate) ── */
-function showGate(){$('#gate').classList.add('on');$('#gate-redir').textContent=redirectUri();if(!azureId)$('#gate-setup').open=true;}
+function showGate(){gateWho();$('#gate').classList.add('on');$('#gate-sburl').value=sbCfg.url||'';$('#gate-sbkey').value=sbCfg.key||'';if(!PEOPLE.length)$('#gate-setup').open=true;setTimeout(()=>$('#gate-pin')&&$('#gate-pin').focus(),100);}
 function hideGate(){$('#gate').classList.remove('on');}
+function openCalPrompt(){$('#cal-scrim').classList.add('on');const g=$('#calp-google');if(g)g.style.display=googleId?'inline-flex':'none';}
+function closeCalPrompt(){$('#cal-scrim').classList.remove('on');}
+function calSkip(){localStorage.setItem('jt_cal_skip','1');closeCalPrompt();}
 function gateMsg(t,cls){const e=$('#gate-msg');e.textContent=t||'';e.className='gate-msg '+(cls||'');}
-function gateSaveSetup(){
-  const u=$('#gate-sburl').value.trim(),k=$('#gate-sbkey').value.trim(),az=$('#gate-azure').value.trim();
-  if(u&&k){sbCfg={url:u,key:k};localStorage.setItem('jt_sb',JSON.stringify(sbCfg));}
-  if(az){azureId=az;localStorage.setItem('jt_azure',az);msalApp=null;}
-  $('#sb-url').value=sbCfg.url;$('#sb-key').value=sbCfg.key;$('#azure-id').value=azureId;
-  if(azureId&&sbReady())sbUpsert('todo_config',{id:'app',azure_client_id:azureId},'id').catch(()=>{});
-  gateMsg('Saved. Now sign in with Microsoft.','ok');setOutlookUI();setSbStatus();
+function gateWho(){
+  const sel=$('#gate-who');if(!sel)return;
+  sel.innerHTML=PEOPLE.length?PEOPLE.map(p=>`<option value="${esc(p.email)}">${esc(p.name)}</option>`).join(''):'<option value="">No team members yet — admin setup below</option>';
 }
-async function signIn(){
-  if(!azureId){gateMsg('Admin: add the Azure Client ID under setup first.','err');showGate();$('#gate-setup').open=true;return;}
-  gateMsg('Loading Microsoft sign-in…');
-  if(!(await ensureMsalLib())){gateMsg('Couldn’t load the Microsoft sign-in library. Disable any ad-blocker for this site and retry.','err');return;}
-  gateMsg('Opening Microsoft sign-in…');
+function gateSaveSetup(){
+  const u=$('#gate-sburl').value.trim(),k=$('#gate-sbkey').value.trim();
+  if(u&&k){sbCfg={url:u,key:k};localStorage.setItem('jt_sb',JSON.stringify(sbCfg));$('#sb-url').value=sbCfg.url;$('#sb-key').value=sbCfg.key;}
+  gateMsg('Saved. Loading roster…');setSbStatus();
+  pull(false).then(()=>{gateWho();gateMsg('Roster loaded — pick your name.','ok');});
+}
+function pinLogin(){
+  const email=$('#gate-who').value,pin=$('#gate-pin').value.trim();
+  const p=PEOPLE.find(x=>x.email===email);
+  if(!p){gateMsg('Pick your name (or set up the roster below).','err');return;}
+  if(String(p.pin||'')!==pin){gateMsg('That code doesn’t match. Try again or ask your admin.','err');return;}
+  ME={name:p.name,email:p.email};localStorage.setItem('jt_me',JSON.stringify(ME));
+  $('#gate-pin').value='';hideGate();gateMsg('');
+  renderMe();renderAll();setMode(viewMode);setOutlookUI();
+  toast('Welcome, '+ME.name.split(' ')[0]+' 👋');maybeCalPrompt();
+}
+function signOut(){ME=null;localStorage.removeItem('jt_me');renderMe();gateWho();showGate();gateMsg('');}
+async function loadConfig(){
+  if(!sbReady())return;
+  try{const r=await sbGet('todo_config?select=*&id=eq.app');if(r&&r[0]){if(r[0].azure_client_id){azureId=r[0].azure_client_id;localStorage.setItem('jt_azure',azureId);}if(r[0].google_client_id){googleId=r[0].google_client_id;localStorage.setItem('jt_google',googleId);}}}catch(e){/* table may not exist yet */}
+}
+/* ── Optional: connect this device's Outlook for calendar sync ── */
+async function connectOutlook(){
+  if(!azureId){toast('Admin: set the Azure Client ID in Settings → Outlook first');return;}
+  toast('Loading Microsoft sign-in…');
+  if(!(await ensureMsalLib())){toast('Couldn’t load Microsoft library — check ad-blocker',4000);return;}
   try{
     await graphToken(true);
     const me=await graph('GET','/me');
-    ME={name:me.displayName||(me.userPrincipalName||'').split('@')[0],email:(me.mail||me.userPrincipalName||'').toLowerCase()};
-    localStorage.setItem('jt_me',JSON.stringify(ME));
-    localStorage.setItem('jt_ol_user',JSON.stringify(ME));
-    hideGate();
-    await pull(false);
-    await ensureMeInRoster();
-    setOutlookUI();renderMe();renderAll();setMode(viewMode);
-    toast('Welcome, '+ME.name.split(' ')[0]+' 👋');
-  }catch(e){gateMsg('Sign-in failed: '+e.message,'err');}
+    localStorage.setItem('jt_ol_user',JSON.stringify({name:me.displayName,email:(me.mail||me.userPrincipalName||'')}));
+    toast('📅 Outlook connected — '+(me.mail||me.userPrincipalName));setOutlookUI();
+    if(confirm('Sync all your upcoming deadlines to Outlook now?'))resyncAll();
+  }catch(e){toast('⚠️ '+e.message,4500);}
 }
-function signOut(){
+function disconnectOutlook(){
   try{if(msalApp&&graphAccount)msalApp.logoutPopup({account:graphAccount}).catch(()=>{});}catch(e){}
-  graphAccount=null;ME=null;localStorage.removeItem('jt_me');localStorage.removeItem('jt_ol_user');
-  renderMe();showGate();gateMsg('');
-}
-async function ensureMeInRoster(){
-  if(!ME)return;
-  if(!PEOPLE.some(p=>p.email===ME.email)){
-    const role=(ME.email===ADMIN_EMAIL||!PEOPLE.length)?'admin':'team';
-    const p={name:ME.name,email:ME.email,role};PEOPLE.push(p);await persistPerson(p);renderPeople();
-  }
-}
-async function loadConfig(){
-  if(!sbReady())return;
-  try{const r=await sbGet('todo_config?select=azure_client_id&id=eq.app');if(r&&r[0]&&r[0].azure_client_id){azureId=r[0].azure_client_id;localStorage.setItem('jt_azure',azureId);}}catch(e){/* table may not exist yet */}
+  graphAccount=null;localStorage.removeItem('jt_ol_user');setOutlookUI();toast('Outlook disconnected');
 }
 
 /* ════════ SETTINGS plumbing ════════ */
 function saveSB(){sbCfg={url:$('#sb-url').value.trim(),key:$('#sb-key').value.trim()};localStorage.setItem('jt_sb',JSON.stringify(sbCfg));setSbStatus();clearTimeout(saveSB._t);saveSB._t=setTimeout(()=>pull(true),600);}
 function saveAzure(){azureId=$('#azure-id').value.trim();localStorage.setItem('jt_azure',azureId);msalApp=null;setOutlookUI();if(azureId&&sbReady())sbUpsert('todo_config',{id:'app',azure_client_id:azureId},'id').then(()=>toast('Azure ID saved & shared with team')).catch(()=>{});}
+function saveGoogle(){googleId=$('#google-id').value.trim();localStorage.setItem('jt_google',googleId);googleTokenClient=null;setOutlookUI();if(googleId&&sbReady())sbUpsert('todo_config',{id:'app',google_client_id:googleId},'id').then(()=>toast('Google ID saved & shared with team')).catch(()=>{});}
 function setSbStatus(ok,msg){const el=$('#sb-status');if(!el)return;if(!sbCfg.url||!sbCfg.key){el.innerHTML='<span class="bad">⚠ Not configured</span>';return;}if(ok===true)el.innerHTML='<span class="ok">✓ Connected — '+TASKS.length+' tasks, '+PEOPLE.length+' people</span>';else if(ok===false)el.innerHTML='<span class="bad">⚠ '+esc(msg||'connection error')+'</span>';else el.innerHTML='<span style="color:var(--dusty)">Configured · '+sbCfg.url.replace('https://','')+'</span>';}
 function setOutlookUI(){
-  const conn=outlookConnected();const u=JSON.parse(localStorage.getItem('jt_ol_user')||'null');
-  $('#ol-chip').classList.toggle('on',conn);
-  $('#ol-txt').textContent=conn?(u?u.email.split('@')[0]:'Outlook on'):'Outlook off';
-  $('#redir-uri').textContent=redirectUri();
-  const st=$('#ol-status');
-  if(conn&&u)st.innerHTML=`<div class="ok" style="font-size:.9rem;font-weight:500">✓ Calendar active for ${esc(u.name)} &lt;${esc(u.email)}&gt;</div><div class="hint">Deadlines create reminders on your calendar; assignees are invited so they're reminded 2 days &amp; 1 day before.</div>`;
-  else st.innerHTML=`<div style="color:var(--dusty);font-size:.9rem">Calendar not authorized yet — sign in with Microsoft.</div>`;
+  const conn=calConnected();const prov=getProvider();
+  const u=JSON.parse(localStorage.getItem(prov==='google'?'jt_g_user':'jt_ol_user')||'null');
+  if($('#ol-chip')){$('#ol-chip').classList.toggle('on',conn);$('#ol-txt').textContent=conn?(calLabel()):'Calendar off';}
+  if($('#redir-uri'))$('#redir-uri').textContent=redirectUri();
+  const st=$('#ol-status');if(!st)return;
+  if(conn)st.innerHTML=`<div class="ok" style="font-size:.9rem;font-weight:500">✓ ${calLabel()} connected${u&&u.email?` — ${esc(u.email)}`:''}</div><div class="hint">Your deadlines create reminders on your calendar; assignees are invited so they're reminded 2 days &amp; 1 day before.</div>`;
+  else st.innerHTML=`<div style="color:var(--dusty);font-size:.9rem">No calendar connected on this device. Connect Outlook or Google below to get deadline reminders.</div>`;
+  const oc=$('#cal-connect-outlook'),gc=$('#cal-connect-google'),dc=$('#cal-disconnect');
+  if(oc)oc.style.display=conn?'none':'inline-flex';
+  if(gc)gc.style.display=conn?'none':(googleId?'inline-flex':'none');
+  if(dc)dc.style.display=conn?'inline-flex':'none';
 }
 const SQL=`-- Jaey Tasks — run once in your Supabase SQL editor
 create table if not exists todo_config (
   id text primary key,
-  azure_client_id text
+  azure_client_id text,
+  google_client_id text
 );
 create table if not exists todo_people (
   email text primary key,
   name  text not null,
   role  text default 'team',
+  pin   text,
   added_at timestamptz default now()
 );
 create table if not exists todo_tasks (
@@ -1251,25 +1349,24 @@ function exportJSON(){const blob=new Blob([JSON.stringify({tasks:TASKS,people:PE
 function go(v){$$('.view').forEach(s=>s.classList.toggle('on',s.id==='view-'+v));$$('.tab').forEach(b=>b.classList.toggle('on',b.dataset.view===v));window.scrollTo({top:0,behavior:'smooth'});if(v==='followups')renderFollowups();}
 
 /* ════════ INIT ════════ */
-function initSettingsUI(){$('#sb-url').value=sbCfg.url||'';$('#sb-key').value=sbCfg.key||'';$('#azure-id').value=azureId;$('#sql-text').textContent=SQL;setSbStatus();setOutlookUI();}
+function initSettingsUI(){$('#sb-url').value=sbCfg.url||'';$('#sb-key').value=sbCfg.key||'';$('#azure-id').value=azureId;$('#google-id').value=googleId;$('#sql-text').textContent=SQL;setSbStatus();setOutlookUI();}
 async function boot(){
-  loadCache();initSettingsUI();
-  await loadConfig();                 // pull shared Azure client id from the project (if set)
-  $('#azure-id').value=azureId;$('#gate-redir').textContent=redirectUri();
+  loadCache();initSettingsUI();gateWho();
+  await loadConfig();
   try{await ensureMsalLib();initMsal();}catch(e){console.warn(e);}
   setOutlookUI();
-  // restore an existing Microsoft session
-  if(azureId&&graphAccount&&!ME){try{const me=await graph('GET','/me');ME={name:me.displayName,email:(me.mail||me.userPrincipalName||'').toLowerCase()};localStorage.setItem('jt_me',JSON.stringify(ME));}catch(e){}}
-  if(ME&&graphAccount){
-    hideGate();await pull(false);await ensureMeInRoster();renderAll();setMode(viewMode);
+  await pull(false);                  // load roster + tasks
+  gateWho();
+  if(ME&&PEOPLE.some(p=>p.email===ME.email)){
+    hideGate();renderAll();setMode(viewMode);maybeCalPrompt();
   }else{
     ME=null;localStorage.removeItem('jt_me');showGate();
   }
-  // light polling for team sync
   setInterval(()=>{if(ME&&document.visibilityState==='visible'&&!$('#task-scrim').classList.contains('on'))pull(false);},45000);
 }
+function maybeCalPrompt(){if(ME&&!getProvider()&&localStorage.getItem('jt_cal_skip')!=='1')setTimeout(openCalPrompt,500);}
 document.addEventListener('keydown',e=>{
-  if(e.key==='Escape')closeTask();
+  if(e.key==='Escape'){closeTask();closeCalPrompt();}
   if((e.key==='n'||e.key==='N')&&ME&&!/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)&&!$('#task-scrim').classList.contains('on')){e.preventDefault();openTask();}
 });
 boot();
