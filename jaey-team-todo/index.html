@@ -638,6 +638,14 @@ function logActivity(t,action){t.activity=t.activity||[];t.activity.unshift({ts:
 /* ════════ Microsoft Graph / Outlook ════════ */
 let msalApp=null,graphAccount=null;
 function redirectUri(){return location.origin+location.pathname;}
+/* Load MSAL with CDN fallbacks (alcdn can be blocked on some networks/ad-blockers) */
+const MSAL_CDNS=['https://alcdn.msauth.net/browser/2.38.3/js/msal-browser.min.js','https://cdn.jsdelivr.net/npm/@azure/msal-browser@2.38.3/lib/msal-browser.min.js','https://unpkg.com/@azure/msal-browser@2.38.3/lib/msal-browser.min.js'];
+function loadScript(src){return new Promise((res,rej)=>{const s=document.createElement('script');s.src=src;s.async=true;s.onload=res;s.onerror=()=>rej(new Error('failed '+src));document.head.appendChild(s);});}
+async function ensureMsalLib(){
+  if(typeof msal!=='undefined')return true;
+  for(const u of MSAL_CDNS){try{await loadScript(u);if(typeof msal!=='undefined')return true;}catch(e){console.warn(e.message);}}
+  return typeof msal!=='undefined';
+}
 function initMsal(){
   if(!azureId||typeof msal==='undefined')return null;
   if(msalApp&&msalApp._id===azureId)return msalApp;
@@ -651,7 +659,10 @@ function initMsal(){
   return msalApp;
 }
 async function graphToken(interactive){
-  const app=initMsal();if(!app)throw new Error('Add your Azure Client ID first');
+  if(typeof msal==='undefined')await ensureMsalLib();
+  if(typeof msal==='undefined')throw new Error('Microsoft sign-in library blocked — disable ad-blocker / check network');
+  if(!azureId)throw new Error('Azure Client ID not set');
+  const app=initMsal();if(!app)throw new Error('Could not initialise Microsoft sign-in');
   const scopes=['User.Read','Calendars.ReadWrite'];
   if(!graphAccount){const a=app.getAllAccounts();if(a.length)graphAccount=a[0];}
   try{
@@ -1146,6 +1157,8 @@ function gateSaveSetup(){
 }
 async function signIn(){
   if(!azureId){gateMsg('Admin: add the Azure Client ID under setup first.','err');showGate();$('#gate-setup').open=true;return;}
+  gateMsg('Loading Microsoft sign-in…');
+  if(!(await ensureMsalLib())){gateMsg('Couldn’t load the Microsoft sign-in library. Disable any ad-blocker for this site and retry.','err');return;}
   gateMsg('Opening Microsoft sign-in…');
   try{
     await graphToken(true);
@@ -1243,7 +1256,7 @@ async function boot(){
   loadCache();initSettingsUI();
   await loadConfig();                 // pull shared Azure client id from the project (if set)
   $('#azure-id').value=azureId;$('#gate-redir').textContent=redirectUri();
-  try{initMsal();}catch(e){}
+  try{await ensureMsalLib();initMsal();}catch(e){console.warn(e);}
   setOutlookUI();
   // restore an existing Microsoft session
   if(azureId&&graphAccount&&!ME){try{const me=await graph('GET','/me');ME={name:me.displayName,email:(me.mail||me.userPrincipalName||'').toLowerCase()};localStorage.setItem('jt_me',JSON.stringify(ME));}catch(e){}}
