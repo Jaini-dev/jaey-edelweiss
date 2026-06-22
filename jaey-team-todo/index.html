@@ -545,8 +545,9 @@ const esc=s=>(s==null?'':String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;
    I'll bake them in as defaults so teammates just sign in. */
 const SB_DEFAULT={url:'https://kzcaockkencdqxhpzsqk.supabase.co',key:'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt6Y2FvY2trZW5jZHF4aHB6c3FrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIwODM3MzIsImV4cCI6MjA5NzY1OTczMn0.fUI5MpbGd85fIxAOlrmah--lHsZCJwol2DwvhYb7R2Q'};
 const ADMIN_EMAIL='jaini@jaey.in';   // always admin; others get admin via roster role
+const AZURE_DEFAULT='c87811e6-4c84-4513-99c9-a4a6733bdcee';  // Jaey Tasks app registration
 let sbCfg=JSON.parse(localStorage.getItem('jt_sb')||'null')||{...SB_DEFAULT};
-let azureId=localStorage.getItem('jt_azure')||'';
+let azureId=localStorage.getItem('jt_azure')||AZURE_DEFAULT;
 let ME=JSON.parse(localStorage.getItem('jt_me')||'null');  // {name,email} from verified Microsoft sign-in
 let viewMode=localStorage.getItem('jt_mode')||'list';
 let quickFilter=localStorage.getItem('jt_qf')||'open';
