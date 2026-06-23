@@ -935,7 +935,7 @@ function setUserName(){ proceedToUserPin(); }
 // Service Worker registered via sw.js when hosted on GitHub Pages
 
 if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./sw.js').catch(()=>{});
-const APP_VER='v104'; // single source of truth — shown in both admin + team headers
+const APP_VER='v105'; // single source of truth — shown in both admin + team headers
 document.addEventListener('DOMContentLoaded',()=>{
   document.querySelectorAll('.app-ver').forEach(e=>e.textContent=APP_VER);
   loadStorage();
@@ -1493,9 +1493,9 @@ function openScan(product,color){
   const rows=productMap[product]?.[color]||[];
   const sysInward=rows.filter(r=>r.status==='inward');
 
-  // Record first-touch on the plan item — or create one so a self-started audit shows in Plan (who's doing what).
-  const todayItems=plans[todayStr()]||[];
-  const planItem=todayItems.find(p=>p.product===product&&p.color===color&&(!p.assignee||p.assignee.toLowerCase()===name.toLowerCase()));
+  // Record first-touch on the plan item (searched across EVERY date, not just today, so a style planned
+  // earlier but audited now doesn't leave its original plan item stuck in "Pending"). Else create one.
+  const planItem=planItemFor(product,color,name);
   if(planItem){ if(!planItem.startedAt){ planItem.startedAt=new Date().toISOString(); savePlans(); syncPlanChange({op:'upsert',item:planItem}); } }
   else { const ni={id:Date.now(),product,color,plannedDate:todayStr(),assignee:name,addedAt:new Date().toISOString(),startedAt:new Date().toISOString()};
     (plans[todayStr()]=plans[todayStr()]||[]).push(ni); savePlans(); syncPlanChange({op:'upsert',item:ni}); }
@@ -1768,9 +1768,8 @@ function sendForReview(){
   currentScan.savedAt=new Date().toISOString();
   currentScan.updatedAt=currentScan.savedAt;
 
-  // Record completedAt on the plan item
-  const _planItems=plans[todayStr()]||[];
-  const _planItem=_planItems.find(p=>p.product===currentScan.product&&p.color===currentScan.color&&(!p.assignee||p.assignee.toLowerCase()===currentScan.auditor.toLowerCase()));
+  // Record completedAt on the plan item (any date, not just today — see planItemFor).
+  const _planItem=planItemFor(currentScan.product,currentScan.color,currentScan.auditor);
   if(_planItem&&!_planItem.completedAt){ _planItem.completedAt=new Date().toISOString(); savePlans(); syncPlanChange({op:'upsert',item:_planItem}); }
 
   if(_liveAuditTimer){ clearTimeout(_liveAuditTimer); _liveAuditTimer=null; } // cancel pending live push
@@ -2248,6 +2247,7 @@ function renderAdminReview(){
     const seenP=new Set(); const pend=[];
     for(const date of Object.keys(plans||{})) for(const it of (plans[date]||[])){
       if(it.startedAt||it.completedAt) continue;
+      if(plannedButAudited(it.product,it.color,it.plannedDate)) continue; // audited since planned → not pending
       const k=it.product+'|||'+it.color; if(seenP.has(k)) continue; seenP.add(k); pend.push(it);
     }
     const pendPcs=stockData.length>0?pend.reduce((n,it)=>n+(productMap[it.product]?.[it.color]||[]).filter(r=>r.status==='inward').length,0):null;
@@ -2468,20 +2468,38 @@ function setAdminNote(id,val){
   try{localStorage.setItem('jaey_audits',JSON.stringify(audits));}catch(e){}
 }
 
-// "Pending" = styles that were planned but nobody has started scanning yet.
+// A planned style counts as DONE (not pending) once it has an audit created on/after it was planned —
+// even when the plan item never got its startedAt flag (e.g. it was planned one day, audited another).
+function plannedButAudited(product,color,plannedDate){
+  const since=plannedDate||'';
+  return audits.some(a=>a.product===product&&a.color===color&&String(a.savedAt||a.date||'')>=since);
+}
+// The plan item for a style across EVERY planned date (prefer one not yet completed). Plan items are
+// bucketed by date, so today-only lookups orphaned styles planned on an earlier day.
+function planItemFor(product,color,auditor){
+  const au=(auditor||'').toLowerCase(); let any=null;
+  for(const d of Object.keys(plans||{})) for(const p of (plans[d]||[])){
+    if(p.product!==product||p.color!==color) continue;
+    if(p.assignee && au && p.assignee.toLowerCase()!==au) continue;
+    if(!p.completedAt) return p; any=any||p;
+  }
+  return any;
+}
+// "Pending" = styles that were planned but nobody has started scanning yet (and not audited since).
 function renderPendingReview(el,matchQ){
   const items=[];
   for(const date of Object.keys(plans||{})){
     for(const it of (plans[date]||[])){
       if(it.startedAt||it.completedAt) continue;
+      if(plannedButAudited(it.product,it.color,it.plannedDate)) continue; // already audited → not pending
       if(!matchQ(it.product,it.color)) continue;
-      items.push(it);
+      items.push({it,date});
     }
   }
-  items.sort((a,b)=>(a.plannedDate||'').localeCompare(b.plannedDate||''));
+  items.sort((a,b)=>(a.it.plannedDate||'').localeCompare(b.it.plannedDate||''));
   if(!items.length){ el.innerHTML='<div class="empty"><div class="ei">📋</div><div>Nothing planned-but-not-started.</div></div>'; return; }
   let html='<div style="font-size:12px;color:var(--steel);margin-bottom:8px">'+items.length+' planned · not started yet</div>';
-  for(const it of items){
+  for(const {it,date} of items){
     const sd=STYLES_DATA.find(s=>s.product===it.product&&s.color===it.color);
     const img=getImg(it.product,it.color);
     const pd=it.plannedDate?new Date(it.plannedDate).toLocaleDateString('en-IN',{day:'numeric',month:'short'}):'';
@@ -2492,6 +2510,7 @@ function renderPendingReview(el,matchQ){
         <div style="font-size:11px;color:var(--steel)">${it.assignee?'👤 '+it.assignee+' · ':''}Planned ${pd}${sd?' · '+sd.tier+'-tier':''}</div>
       </div>
       <span class="sp sp-pending" style="flex-shrink:0">⏳ Not started</span>
+      <button onclick="removePlanItem('${date}',${it.id})" title="Remove from plan" style="background:none;border:none;color:var(--rose);cursor:pointer;font-size:16px;line-height:1;padding:2px;flex-shrink:0">🗑</button>
     </div>`;
   }
   el.innerHTML=html;
@@ -3807,6 +3826,7 @@ function removePlanItem(date,id){
   if(!plans[date]) return;
   plans[date]=plans[date].filter(p=>p.id!==id);
   savePlans(); renderPlanList(); renderUserTasks();
+  if(typeof renderAdminReview==='function') renderAdminReview(); // refresh the Pending list / summary
   syncPlanChange({op:'delete',id}); // remove from the cloud too
 }
 
