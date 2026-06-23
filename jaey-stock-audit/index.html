@@ -497,6 +497,7 @@ details.review-card[open]>.rc-summary{border-bottom:1px solid var(--border)}
       <div style="font-size:13px;color:var(--rose)">⚠️ Stock data not loaded yet. Please ask admin to load the CSV.</div>
     </div>
 
+    <input type="text" id="u-task-search" placeholder="🔍 Search your styles…" autocomplete="off" oninput="renderUserTasks()" style="display:none;width:100%;font-size:13px;padding:8px 11px;margin-bottom:9px">
     <div id="u-task-list"></div>
 
     <button class="btn bo bb" onclick="openStylePicker()" style="margin-top:6px">➕ Pick a style to audit</button>
@@ -935,7 +936,7 @@ function setUserName(){ proceedToUserPin(); }
 // Service Worker registered via sw.js when hosted on GitHub Pages
 
 if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./sw.js').catch(()=>{});
-const APP_VER='v105'; // single source of truth — shown in both admin + team headers
+const APP_VER='v106'; // single source of truth — shown in both admin + team headers
 document.addEventListener('DOMContentLoaded',()=>{
   document.querySelectorAll('.app-ver').forEach(e=>e.textContent=APP_VER);
   loadStorage();
@@ -1264,11 +1265,17 @@ function renderUserTasks(){
   document.getElementById('u-no-data').style.display=(!stockData.length&&name)?'block':'none';
   document.getElementById('u-no-tasks').style.display=(name&&!myPlan.length)?'block':'none';
 
-  if(!myPlan.length){ document.getElementById('u-task-list').innerHTML=''; return; }
+  if(!myPlan.length){ document.getElementById('u-task-list').innerHTML=''; const _se0=document.getElementById('u-task-search'); if(_se0) _se0.style.display='none'; return; }
+
+  // Search box: filter the assigned list as the user types (shown only when there are tasks).
+  const _se=document.getElementById('u-task-search'); if(_se) _se.style.display='block';
+  const q=(_se?.value||'').trim().toLowerCase();
+  const viewPlan=q?myPlan.filter(p=>(p.product+' '+p.color).toLowerCase().includes(q)):myPlan;
+  if(!viewPlan.length){ document.getElementById('u-task-list').innerHTML='<div style="padding:14px;text-align:center;color:var(--steel);font-size:13px">No tasks match “'+q+'”.</div>'; return; }
 
   let html='';
   let shownCarryoverHeader=false, shownTodayHeader=false;
-  for(const item of myPlan){
+  for(const item of viewPlan){
     // Section headers
     if(item._carryoverFrom&&!shownCarryoverHeader){
       html+=`<div style="font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--rose);margin-bottom:7px;display:flex;align-items:center;gap:6px"><span style="width:18px;height:2px;background:var(--rose);border-radius:2px;display:inline-block"></span>Carried over from previous days<span style="flex:1;height:2px;background:var(--rose-light);border-radius:2px"></span></div>`;
