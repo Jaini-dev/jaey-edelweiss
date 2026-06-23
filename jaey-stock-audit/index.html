@@ -934,7 +934,7 @@ function setUserName(){ proceedToUserPin(); }
 // Service Worker registered via sw.js when hosted on GitHub Pages
 
 if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./sw.js').catch(()=>{});
-const APP_VER='v100'; // single source of truth — shown in both admin + team headers
+const APP_VER='v101'; // single source of truth — shown in both admin + team headers
 document.addEventListener('DOMContentLoaded',()=>{
   document.querySelectorAll('.app-ver').forEach(e=>e.textContent=APP_VER);
   loadStorage();
@@ -1279,8 +1279,9 @@ function renderUserTasks(){
     }
     const img=getImg(item.product,item.color);
     const sd=STYLES_DATA.find(s=>s.product===item.product&&s.color===item.color);
-    const liveCount=(productMap[item.product]?.[item.color]||[]).filter(r=>r.status==='inward').length;
-    const inCount=stockData.length>0?liveCount:(sd?.stockCount||0);
+    // Live inward count from the loaded CSV. Null (shown as "—") when no stock is loaded —
+    // we never fall back to STYLES_DATA.stockCount, which was a frozen build-time snapshot.
+    const inCount=stockData.length>0?(productMap[item.product]?.[item.color]||[]).filter(r=>r.status==='inward').length:null;
     // For carryover: find audit from the original planned date; for today: check today
     const checkDate=item._carryoverFrom||today;
     const auditToday=audits.filter(a=>a.product===item.product&&a.color===item.color&&a.savedAt&&(a.savedAt.startsWith(checkDate)||a.savedAt.startsWith(today)))
@@ -1312,7 +1313,7 @@ function renderUserTasks(){
         <div class="sc-sub">${item.color}${item.assignee?' · <em>'+item.assignee+'</em>':''}</div>
         <div class="sc-meta">
           ${sd?`<span class="tier-${sd.tier.toLowerCase()}">${sd.tier}</span><span style="font-size:10px;color:var(--steel);background:var(--cream);padding:2px 6px;border-radius:10px">${sd.vpw} u/wk</span>`:''}
-          <span class="badge b-steel">📦 ${inCount}</span>
+          <span class="badge b-steel"${inCount==null?' title="Stock CSV not loaded — open Data tab to load live stock"':''}>📦 ${inCount==null?'—':inCount}</span>
           ${item._carryoverFrom?`<span class="badge b-rose" style="font-size:10px">From ${formatDate(item._carryoverFrom)}</span>`:''}
           ${pillHtml}
         </div>
@@ -1353,10 +1354,14 @@ function closeImgZoom(){ document.getElementById('img-zoom-ov').style.display='n
 // but isn't in STYLES_DATA yet, so new styles/colours always appear (with a live inward count).
 function allStyles(){
   const out=[], seen=new Set();
+  const loaded=stockData.length>0;
   const live=(p,c)=>(productMap[p]?.[c]||[]).filter(r=>r.status==='inward').length;
-  // Drop discontinued styles: hidden in the catalogue AND no live stock. Keep visible styles even at 0 stock.
-  const drop=(p,c,baked)=>CATALOGUE_HIDDEN[p+'|||'+c] && (stockData.length>0?live(p,c):(baked||0))===0;
-  for(const s of STYLES_DATA){ const k=s.product+'|||'+s.color; if(seen.has(k))continue; seen.add(k); if(!drop(s.product,s.color,s.stockCount)) out.push(s); }
+  // Stock count is LIVE-only: the real inward count when a CSV is loaded, else null (never the baked
+  // STYLES_DATA.stockCount snapshot — that was frozen at build time and silently went stale).
+  const sc=(p,c)=>loaded?live(p,c):null;
+  // Drop discontinued styles only when we can SEE they're empty in live stock. Never hide on stale data.
+  const drop=(p,c)=>CATALOGUE_HIDDEN[p+'|||'+c] && loaded && live(p,c)===0;
+  for(const s of STYLES_DATA){ const k=s.product+'|||'+s.color; if(seen.has(k))continue; seen.add(k); if(!drop(s.product,s.color)) out.push({...s, stockCount:sc(s.product,s.color)}); }
   for(const p in productMap){ for(const c in productMap[p]){
     const k=p+'|||'+c; if(seen.has(k)) continue; seen.add(k);
     const lc=live(p,c); if(CATALOGUE_HIDDEN[k] && lc===0) continue;
@@ -1370,8 +1375,7 @@ function buildCatalogue(){
   for(const s of allStyles()){
     const key=s.product+'|||'+s.color;
     if(seen.has(key)) continue; seen.add(key);
-    const liveCount=(productMap[s.product]?.[s.color]||[]).filter(r=>r.status==='inward').length;
-    const inCount=stockData.length>0?liveCount:(s.stockCount||0);
+    const inCount=s.stockCount; // live inward count, or null when no stock CSV is loaded
     items.push({product:s.product,color:s.color,tier:(s.tier||'D').toUpperCase(),vpw:s.vpw||0,inCount,recent:recentlyAuditedBy(s.product,s.color)});
   }
   const tierRank=t=>({A:0,B:1,C:2,D:3}[t]??9);
@@ -1380,7 +1384,7 @@ function buildCatalogue(){
     if(!!a.recent!==!!b.recent) return a.recent?1:-1;
     if(tierRank(a.tier)!==tierRank(b.tier)) return tierRank(a.tier)-tierRank(b.tier);
     if(b.vpw!==a.vpw) return b.vpw-a.vpw;
-    return b.inCount-a.inCount;
+    return (b.inCount||0)-(a.inCount||0);
   });
   return items;
 }
@@ -1411,7 +1415,7 @@ function renderPicker(q){
         <div class="sc-meta">
           <span class="tier-${i.tier.toLowerCase()}">${i.tier}</span>
           <span style="font-size:10px;color:var(--steel);background:var(--cream);padding:2px 6px;border-radius:10px">${i.vpw} u/wk</span>
-          <span class="badge b-steel">📦 ${i.inCount}</span>
+          <span class="badge b-steel">📦 ${i.inCount==null?'—':i.inCount}</span>
         </div>
         ${r?`<div style="margin-top:5px;font-size:11px;color:var(--sky);background:var(--sky-light);padding:3px 8px;border-radius:8px;display:inline-block">✓ Recently audited ${formatDateTime(r.when)} by ${r.by}</div>`:''}
       </div>
@@ -1470,6 +1474,20 @@ function updateDraftBanner(){
 }
 
 function openScan(product,color){
+  // Never let anyone scan against empty stock — the audit would be meaningless (every barcode "unknown")
+  // and the header would show a stale baked number. Pull the latest stock first; refuse if we can't.
+  if(stockData.length===0){
+    if(navigator.onLine && sbCfg.url && sbCfg.key){
+      toast('⏳ Loading latest stock before you scan…');
+      fetchStockFromSupabase().then(ok=>{
+        if(ok && stockData.length>0) openScan(product,color);
+        else toast('❌ Stock not loaded — open the Data tab → "Fetch latest", then scan.');
+      });
+    } else {
+      toast('❌ No stock loaded (offline / not configured). Load the stock CSV in the Data tab before scanning.');
+    }
+    return;
+  }
   const name=localStorage.getItem('jaey_user_name')||'Unknown';
   const rows=productMap[product]?.[color]||[];
   const sysInward=rows.filter(r=>r.status==='inward');
@@ -1502,8 +1520,9 @@ function openScan(product,color){
 // Paint the scan screen from the current (new or resumed) scan session.
 function _renderScanScreen(){
   const product=currentScan.product, color=currentScan.color, name=currentScan.auditor;
-  const displayCount=stockData.length>0?(currentScan.systemInward?currentScan.systemInward.length:0):
-    (STYLES_DATA.find(s=>s.product===product&&s.color===color)?.stockCount||'?');
+  // "In system" is the real inward barcode count for THIS scan. When no stock is loaded we show "—"
+  // (never the stale baked count) — and openScan blocks entry until stock loads, so this stays honest.
+  const displayCount=stockData.length>0?(currentScan.systemInward?currentScan.systemInward.length:0):'—';
   document.getElementById('ss-prod').textContent=product;
   document.getElementById('ss-prod2').textContent=product;
   document.getElementById('ss-mode-label').textContent=color+' · Scanning';
@@ -3536,10 +3555,18 @@ function renderPlanSuggestions(){
   const planned=new Set((plans[today]||[]).map(p=>p.product+'|||'+p.color));
   const q=(document.getElementById('plan-search')?.value||'').trim().toLowerCase();
   const styles=allStyles();   // baked styles + any in the uploaded stock (so new styles/colours appear)
+  const stockLoaded=stockData.length>0;   // s.stockCount is null until a CSV is loaded
   let list;
   if(q){
     // Global search — across ALL styles, every stock level (incl. OOS) and every tier.
     list=styles.filter(s=>!planned.has(s.product+'|||'+s.color)&&(s.product.toLowerCase().includes(q)||s.color.toLowerCase().includes(q)));
+  } else if(!stockLoaded){
+    // No live stock yet → can't split by OOS/in-stock. Show everything (tier filter still works) and
+    // let the notice below prompt loading the CSV, rather than guessing from a stale snapshot.
+    list=styles.filter(s=>!planned.has(s.product+'|||'+s.color));
+    if(planFilter==='A') list=list.filter(s=>s.tier==='A');
+    else if(planFilter==='B') list=list.filter(s=>s.tier==='B');
+    else if(planFilter==='overdue') list=list.filter(s=>isOverdue(s));
   } else if(planFilter==='oos'){
     list=styles.filter(s=>(s.stockCount||0)<=0&&!planned.has(s.product+'|||'+s.color));
   } else {
@@ -3552,7 +3579,8 @@ function renderPlanSuggestions(){
 
   const el=document.getElementById('suggest-list');
   if(!list.length){el.innerHTML='<div style="padding:16px;text-align:center;color:var(--steel);font-size:13px">Nothing to show.</div>';return;}
-  let html='';
+  // When no CSV is loaded the 📦 counts read "—" — warn so a planner doesn't read it as zero stock.
+  let html=stockLoaded?'':'<div style="background:var(--rose);color:#fff;padding:8px 12px;border-radius:8px;font-size:12px;font-weight:600;margin-bottom:8px">📦 Stock CSV not loaded — counts show "—". Load the latest in the Data tab to plan by stock level.</div>';
   for(const s of list.slice(0,60)){
     const sel=selectedStyles.has(s.product+'|||'+s.color);
     const overdue=isOverdue(s);
@@ -3562,7 +3590,7 @@ function renderPlanSuggestions(){
       ${s.image?`<img class="si-img" src="${s.image}" onerror="this.style.display='none'" alt="">`:`<div class="si-ph">👗</div>`}
       <div class="si-info">
         <div class="si-name">${s.product}</div>
-        <div class="si-meta">${s.color} · <span class="tier-${s.tier.toLowerCase()}" style="padding:1px 5px">${s.tier}</span>${s.vpw>0?' · '+s.vpw+' u/wk':''} · 📦${s.stockCount}${(s.stockCount||0)<=0?' <span style="color:var(--rose);font-weight:700">OOS</span>':''}${overdue?(' · <span style="color:var(--rose);font-weight:600">'+(days===null?'Never audited':days+'d ago')+'</span>'):(days!==null?' · ✓ '+days+'d ago':'')}</div>
+        <div class="si-meta">${s.color} · <span class="tier-${s.tier.toLowerCase()}" style="padding:1px 5px">${s.tier}</span>${s.vpw>0?' · '+s.vpw+' u/wk':''} · 📦${s.stockCount==null?'—':s.stockCount}${(s.stockCount!=null&&s.stockCount<=0)?' <span style="color:var(--rose);font-weight:700">OOS</span>':''}${overdue?(' · <span style="color:var(--rose);font-weight:600">'+(days===null?'Never audited':days+'d ago')+'</span>'):(days!==null?' · ✓ '+days+'d ago':'')}</div>
       </div>
       <div class="si-ck">${sel?'✓':''}</div>
     </div>`;
