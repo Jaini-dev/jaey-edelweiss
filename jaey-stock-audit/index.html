@@ -660,6 +660,7 @@ details.review-card[open]>.rc-summary{border-bottom:1px solid var(--border)}
 
   <!-- REVIEW -->
   <div id="apg-review" class="pg active">
+    <div id="review-summary"></div>
     <div id="review-daily"></div>
     <div id="review-newarrivals"></div>
     <div id="review-stockdelta"></div>
@@ -934,7 +935,7 @@ function setUserName(){ proceedToUserPin(); }
 // Service Worker registered via sw.js when hosted on GitHub Pages
 
 if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./sw.js').catch(()=>{});
-const APP_VER='v102'; // single source of truth — shown in both admin + team headers
+const APP_VER='v103'; // single source of truth — shown in both admin + team headers
 document.addEventListener('DOMContentLoaded',()=>{
   document.querySelectorAll('.app-ver').forEach(e=>e.textContent=APP_VER);
   loadStorage();
@@ -2232,6 +2233,39 @@ function setReviewFilter(f){
 
 function renderAdminReview(){
   const el=document.getElementById('review-list'); if(!el) return;
+  // Total roll-up (admin-only — this whole screen is admin): audited work vs styles still to do.
+  const _sEl=document.getElementById('review-summary');
+  if(_sEl){
+    const real=audits.filter(a=>['review','updated','complete'].includes(a.status||'review'));
+    const stylesA=new Set(real.map(a=>a.product+'|||'+a.color));
+    let matched=0, missing=0;
+    for(const a of real){
+      matched+=accountedBarcodes(a).length;
+      const parked=new Set(auditFixedPending(a.id).map(p=>String(p.bc)));
+      missing+=effectiveGhosts(a).filter(b=>!parked.has(String(b))).length;
+    }
+    // Pending = planned but not started (same set as the Pending tab); pcs = live stock for those styles.
+    const seenP=new Set(); const pend=[];
+    for(const date of Object.keys(plans||{})) for(const it of (plans[date]||[])){
+      if(it.startedAt||it.completedAt) continue;
+      const k=it.product+'|||'+it.color; if(seenP.has(k)) continue; seenP.add(k); pend.push(it);
+    }
+    const pendPcs=stockData.length>0?pend.reduce((n,it)=>n+(productMap[it.product]?.[it.color]||[]).filter(r=>r.status==='inward').length,0):null;
+    const big="font-size:16px;font-family:'DM Serif Display',serif";
+    _sEl.innerHTML=(real.length||pend.length)?`<div style="background:var(--white);border:1px solid var(--border);border-radius:10px;padding:10px 14px;margin-bottom:10px;font-size:13px;display:flex;flex-direction:column;gap:5px">
+      <div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap">
+        <span style="font-weight:700;color:var(--sage)">✅ Audited</span>
+        <span><strong style="${big}">${stylesA.size}</strong> styles</span><span style="color:var(--border)">·</span>
+        <span><strong style="${big};color:var(--sage)">${matched.toLocaleString()}</strong> pcs matched</span><span style="color:var(--border)">·</span>
+        <span><strong style="${big};color:var(--rose)">${missing.toLocaleString()}</strong> missing</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap">
+        <span style="font-weight:700;color:var(--steel)">⏳ Pending</span>
+        <span><strong style="${big}">${pend.length}</strong> styles</span><span style="color:var(--border)">·</span>
+        <span><strong style="${big}">${pendPcs==null?'—':pendPcs.toLocaleString()}</strong> pcs ${pendPcs==null?'(load stock)':'to audit'}</span>
+      </div>
+    </div>`:'';
+  }
   // Daily progress banner — styles audited + pieces counted today (shown above the list, any filter).
   const _dEl=document.getElementById('review-daily');
   if(_dEl){
