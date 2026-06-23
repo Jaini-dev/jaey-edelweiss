@@ -935,7 +935,7 @@ function setUserName(){ proceedToUserPin(); }
 // Service Worker registered via sw.js when hosted on GitHub Pages
 
 if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./sw.js').catch(()=>{});
-const APP_VER='v103'; // single source of truth — shown in both admin + team headers
+const APP_VER='v104'; // single source of truth — shown in both admin + team headers
 document.addEventListener('DOMContentLoaded',()=>{
   document.querySelectorAll('.app-ver').forEach(e=>e.textContent=APP_VER);
   loadStorage();
@@ -3296,7 +3296,7 @@ function stockTodayBreakdown(a){
   const sysInward=(a.systemInward||[]).map(String);
   const ghosts=new Set((a.report?.ghosts||[]).map(String)); // audit-day missing
   const sizes={}; let foundOut=0, missingOut=0, foundIn=0, missingIn=0, foundSampleT=0, missingSampleT=0;
-  const S=sz=>(sizes[sz]=sizes[sz]||{foundGross:0,foundOut:0,missingGross:0,missingOut:0,new:0,foundSample:0,missingSample:0});
+  const S=sz=>(sizes[sz]=sizes[sz]||{foundGross:0,foundOut:0,missingGross:0,missingOut:0,new:0,foundSample:0,missingSample:0,extra:0});
   for(const bc of sysInward){
     const row=bcRow(bc); const e=S((row&&row.size)||'—');
     const isGhost=ghosts.has(bc); const outNow=row&&row.status==='outward'; const samp=isSample(row);
@@ -3307,7 +3307,12 @@ function stockTodayBreakdown(a){
   const cur=(productMap[a.product]?.[a.color]||[]).filter(r=>r.status==='inward');
   const sysSet=new Set(sysInward); let newArrivals=0;
   for(const r of cur){ if(!sysSet.has(String(r.barcode))){ S(r.size||'—').new++; newArrivals++; } }
-  return {auditDayTotal:sysInward.length, foundTotal:sysInward.length-ghosts.size, missingTotal:ghosts.size, foundOut, missingOut, foundIn, missingIn, foundSampleT, missingSampleT, newArrivals, withYouNow:foundIn+missingIn+newArrivals, sizes};
+  // Sys mismatches ("extras") = physically present here but the system still shows OUTWARD. Not in
+  // systemInward and not currently inward, so they're invisible above — surface them so this popup
+  // agrees with the card's "🟡 N sys mismatch" instead of looking like it dropped a found piece.
+  let extrasTotal=0;
+  for(const bc of openExtras(a)){ const row=bcRow(bc); S((row&&row.size)||'—').extra++; extrasTotal++; }
+  return {auditDayTotal:sysInward.length, foundTotal:sysInward.length-ghosts.size, missingTotal:ghosts.size, foundOut, missingOut, foundIn, missingIn, foundSampleT, missingSampleT, newArrivals, extrasTotal, withYouNow:foundIn+missingIn+newArrivals, sizes};
 }
 // How many of this style the system currently shows inward = audit pieces still in + new arrivals.
 function withYouNow(a){
@@ -3335,30 +3340,31 @@ function showStockToday(id){
     <div style="color:var(--sage)">✓ ${b.foundTotal} audited${b.foundOut?` <span style="color:#a06800">· ${b.foundOut} outwarded since</span>`:''}</div>
     <div style="color:var(--rose)">🔴 ${b.missingTotal} missing${b.missingOut?` <span style="color:#a06800">· ${b.missingOut} outwarded since</span>`:''}</div>
     ${b.newArrivals?`<div style="color:var(--sky)">🆕 ${b.newArrivals} new since (top up via Add pieces)</div>`:''}
-    <div style="display:flex;justify-content:space-between;padding:3px 0 1px;border-top:2px solid var(--ink);margin-top:3px;font-size:14px"><strong>With you now (per system)</strong><strong style="color:var(--sage)">${b.withYouNow}</strong></div>
+    ${b.extrasTotal?`<div style="color:#a06800">🟡 ${b.extrasTotal} found here, but system says outward — fix on system (Resolve)</div>`:''}
+    <div style="display:flex;justify-content:space-between;padding:3px 0 1px;border-top:2px solid var(--ink);margin-top:3px;font-size:14px"><strong>With you now (per system)</strong><strong style="color:var(--sage)">${b.withYouNow}${b.extrasTotal?`<span style="font-size:11px;color:#a06800;font-weight:600;margin-left:5px">🟡+${b.extrasTotal} to fix</span>`:''}</strong></div>
   </div>`;
   const sizes=Object.keys(b.sizes).sort((x,y)=>sizeRank(x)-sizeRank(y));
   if(sizes.length){
     const num=(net,color)=>`<span style="font-weight:700;font-size:13px;color:${net?color:'#c7c7c7'}">${net}</span>`;
     const sub=(gross,out)=>out?`<span style="font-size:9px;color:#a06800;margin-left:3px">(${gross}−${out})</span>`:'';
     const smp=n=>n?`<span style="font-size:9px;color:#6b3fa0;margin-left:3px">🧷${n}</span>`:'';
-    html+=`<div style="font-weight:600;margin:6px 0 0;font-size:12px">📏 Size breakdown <span style="font-weight:400;font-size:9px;color:var(--steel)">· <span style="color:#a06800">(was−out)</span> · <span style="color:#6b3fa0">🧷 sample</span> · <span style="color:var(--sky)">🆕 new</span></span></div>
+    html+=`<div style="font-weight:600;margin:6px 0 0;font-size:12px">📏 Size breakdown <span style="font-weight:400;font-size:9px;color:var(--steel)">· <span style="color:#a06800">(was−out)</span> · <span style="color:#6b3fa0">🧷 sample</span> · <span style="color:var(--sky)">🆕 new</span> · <span style="color:#a06800">🟡 to fix</span></span></div>
       <table style="width:100%;border-collapse:collapse;font-size:12px;table-layout:fixed">
       <colgroup><col style="width:18%"><col style="width:28%"><col style="width:28%"><col style="width:26%"></colgroup>
       <tr style="color:var(--steel);font-size:9px;letter-spacing:.03em;text-transform:uppercase"><th style="text-align:left;padding:2px">Size</th><th style="text-align:center;padding:2px">Found</th><th style="text-align:center;padding:2px">Missing</th><th style="text-align:center;padding:2px;color:var(--ink)">With you</th></tr>`;
-    const nowCell=(net,nw)=>`<td style="text-align:center;padding:2px 3px;font-weight:800;font-size:14px">${net+nw}${nw?`<span style="font-size:9px;color:var(--sky);font-weight:600;margin-left:3px">🆕+${nw}</span>`:''}</td>`;
+    const nowCell=(net,nw,ex)=>`<td style="text-align:center;padding:2px 3px;font-weight:800;font-size:14px">${net+nw}${nw?`<span style="font-size:9px;color:var(--sky);font-weight:600;margin-left:3px">🆕+${nw}</span>`:''}${ex?`<span style="font-size:9px;color:#a06800;font-weight:600;margin-left:3px">🟡+${ex}</span>`:''}</td>`;
     let i=0;
     for(const s of sizes){ const e=b.sizes[s]; const fNet=e.foundGross-e.foundOut, mNet=e.missingGross-e.missingOut;
       html+=`<tr style="border-top:1px solid var(--border);background:${(i++%2)?'var(--cream)':'transparent'}">
         <td style="padding:2px 3px;font-weight:700">${s}</td>
         <td style="text-align:center;padding:2px 3px">${num(fNet,'var(--sage)')}${sub(e.foundGross,e.foundOut)}${smp(e.foundSample)}</td>
         <td style="text-align:center;padding:2px 3px">${num(mNet,'var(--rose)')}${sub(e.missingGross,e.missingOut)}${smp(e.missingSample)}</td>
-        ${nowCell(fNet+mNet,e.new||0)}</tr>`; }
+        ${nowCell(fNet+mNet,e.new||0,e.extra||0)}</tr>`; }
     html+=`<tr style="border-top:2px solid var(--ink)">
       <td style="padding:3px;font-weight:800">Total</td>
       <td style="text-align:center;padding:3px">${num(b.foundIn,'var(--sage)')}${sub(b.foundTotal,b.foundOut)}${smp(b.foundSampleT)}</td>
       <td style="text-align:center;padding:3px">${num(b.missingIn,'var(--rose)')}${sub(b.missingTotal,b.missingOut)}${smp(b.missingSampleT)}</td>
-      ${nowCell(b.foundIn+b.missingIn,b.newArrivals)}</tr></table>`;
+      ${nowCell(b.foundIn+b.missingIn,b.newArrivals,b.extrasTotal)}</tr></table>`;
   } else html+=`<div style="color:var(--steel);font-size:12px;margin-top:10px">Load today's stock CSV to see the size split.</div>`;
   document.getElementById('modal-body').innerHTML=html;
   document.getElementById('modal-ov').classList.add('show');
