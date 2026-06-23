@@ -934,7 +934,7 @@ function setUserName(){ proceedToUserPin(); }
 // Service Worker registered via sw.js when hosted on GitHub Pages
 
 if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./sw.js').catch(()=>{});
-const APP_VER='v101'; // single source of truth — shown in both admin + team headers
+const APP_VER='v102'; // single source of truth — shown in both admin + team headers
 document.addEventListener('DOMContentLoaded',()=>{
   document.querySelectorAll('.app-ver').forEach(e=>e.textContent=APP_VER);
   loadStorage();
@@ -1498,6 +1498,19 @@ function openScan(product,color){
   if(planItem){ if(!planItem.startedAt){ planItem.startedAt=new Date().toISOString(); savePlans(); syncPlanChange({op:'upsert',item:planItem}); } }
   else { const ni={id:Date.now(),product,color,plannedDate:todayStr(),assignee:name,addedAt:new Date().toISOString(),startedAt:new Date().toISOString()};
     (plans[todayStr()]=plans[todayStr()]||[]).push(ni); savePlans(); syncPlanChange({op:'upsert',item:ni}); }
+
+  // One open audit per style: if a non-complete audit already exists for this style, CONTINUE it
+  // instead of starting a duplicate. A brand-new audit is only allowed once the previous one is
+  // marked Complete by an admin (e.g. re-auditing the same style days later). Prevents the "same
+  // style shows twice in Review" duplicates.
+  const openPrior=audits
+    .filter(a=>a.product===product&&a.color===color&&(a.status||'review')!=='complete')
+    .sort((a,b)=>new Date(b.updatedAt||b.savedAt||b.date||0)-new Date(a.updatedAt||a.savedAt||a.date||0))[0];
+  if(openPrior){
+    toast('↩️ Continuing the open audit for '+product+' · '+color+' — an admin must mark it Complete before a new one can start.');
+    continueAudit(openPrior.id);
+    return;
+  }
 
   currentScan={
     id:Date.now(), date:new Date().toISOString(), product, color,
