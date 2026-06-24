@@ -936,7 +936,7 @@ function setUserName(){ proceedToUserPin(); }
 // Service Worker registered via sw.js when hosted on GitHub Pages
 
 if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./sw.js').catch(()=>{});
-const APP_VER='v106'; // single source of truth — shown in both admin + team headers
+const APP_VER='v107'; // single source of truth — shown in both admin + team headers
 document.addEventListener('DOMContentLoaded',()=>{
   document.querySelectorAll('.app-ver').forEach(e=>e.textContent=APP_VER);
   loadStorage();
@@ -2812,6 +2812,7 @@ function renderResolve(){
   }
   let html=auditedHtml+mismatchHtml+bulkBar;
   if(!missing.length&&!auditedHtml&&!mism.length) html='<div class="empty"><div class="ei">'+(q?'🔍':'✅')+'</div><div>'+(q?'No pieces match “'+q+'”.':'No unresolved pieces.')+'</div></div>';
+  const fixedByBc={}; for(const p of getFixedPending()) fixedByBc[String(p.bc)]=p; // barcodes already marked "fixed on system"
   for(const m of missing){
     const days=Math.floor((Date.now()-new Date(m.at))/86400000);
     const ageTxt=days<=0?'today':days+'d ago';
@@ -2827,6 +2828,7 @@ function renderResolve(){
           ${(m.tags||m.note)?`<div style="margin-top:4px;font-size:11px;color:var(--steel)">${m.tags?'🏷️ <strong>'+m.tags+'</strong>':''}${m.tags&&m.note?' · ':''}${m.note?'📝 '+m.note:''}</div>`:''}
           ${m.sample?`<div style="margin-top:4px;font-size:11px;color:#6b3fa0;background:#f1ebf8;padding:4px 8px;border-radius:7px">🧷 Sample — check the sample rack before writing off</div>`:''}
           ${m.foundIn?`<div style="margin-top:5px;font-size:11px;color:var(--sky);background:var(--sky-light);padding:4px 8px;border-radius:7px">📍 Last scanned in <strong>${m.foundIn.product} · ${m.foundIn.color}</strong> by ${m.foundIn.auditor} · ${formatDateTime(m.foundIn.at)}${m.foundIn.kind==='misplaced'?' (misplaced)':''}</div>`:''}
+          ${fixedByBc[String(m.bc)]?`<div style="margin-top:5px;font-size:11px;color:var(--sage);background:var(--sage-light);padding:4px 8px;border-radius:7px">🔧 <strong>Fixed on system</strong> by ${fixedByBc[String(m.bc)].by||'Admin'} · ${formatDateTime(fixedByBc[String(m.bc)].at)} — auto-confirms on the next stock CSV</div>`:''}
         </div>
       </div>
       <div style="display:flex;gap:6px;margin-top:8px">
