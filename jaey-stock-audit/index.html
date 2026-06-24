@@ -936,7 +936,7 @@ function setUserName(){ proceedToUserPin(); }
 // Service Worker registered via sw.js when hosted on GitHub Pages
 
 if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./sw.js').catch(()=>{});
-const APP_VER='v111'; // single source of truth — shown in both admin + team headers
+const APP_VER='v112'; // single source of truth — shown in both admin + team headers
 document.addEventListener('DOMContentLoaded',()=>{
   document.querySelectorAll('.app-ver').forEach(e=>e.textContent=APP_VER);
   loadStorage();
@@ -1602,7 +1602,11 @@ function closeScanScreen(){
   // Topping up an existing audit (Add pieces): just save it and keep its status — no "draft" prompt.
   if(currentScan && currentScan._adding){
     currentScan.report=genReport(currentScan);
-    currentScan.status=(currentScan._priorStatus==='complete')?'complete':'updated';
+    // A completed audit stays complete ONLY if it still has no open items. If "Add pieces" introduced a
+    // new mismatch / wrong-label / missing piece, reopen it (→ updated) so it can't get buried.
+    const hasOpen=effectiveGhosts(currentScan).length+openExtras(currentScan).length+openWrongProduct(currentScan).length>0;
+    const reopened=currentScan._priorStatus==='complete' && hasOpen;
+    currentScan.status=(currentScan._priorStatus==='complete' && !hasOpen)?'complete':'updated';
     currentScan.updatedAt=new Date().toISOString();
     delete currentScan._adding; delete currentScan._priorStatus;
     try{localStorage.setItem('jaey_audits',JSON.stringify(audits));}catch(e){}
@@ -1610,7 +1614,7 @@ function closeScanScreen(){
     document.getElementById('scan-screen').classList.remove('active');
     liveStop(); currentScan=null; updateDraftBanner();
     if(typeof renderAdminReview==='function') renderAdminReview();
-    toast('✓ Saved');
+    toast(reopened?'🔓 Reopened — a new item needs resolving':'✓ Saved');
     return;
   }
   if(currentScan&&currentScan.status==='scanning'&&currentScan.scanned.length>0){
@@ -2710,11 +2714,11 @@ function collectMissing(){
 // "to website on 16 Jun 2026" — the last system movement (purpose + date) for a stock row.
 function fmtMoveDate(s){ const iso=scanTimeISO(s); if(!iso) return ''; const d=new Date(iso); if(isNaN(d)) return ''; return d.toLocaleString('en-IN',{day:'numeric',month:'short',year:'numeric'}); }
 function outwardInfo(row){ if(!row) return ''; const p=row.purpose?(' to '+row.purpose):''; const dt=fmtMoveDate(row.scanTime); return p+(dt?(' on '+dt):''); }
-// Every open mismatch across non-complete audits: system-mismatch (extra) + wrong-label.
+// Every open mismatch across audits: system-mismatch (extra) + wrong-label. Includes completed audits
+// that still have an open extra (e.g. a piece found after completion) so it can never get buried.
 function collectMismatches(){
   const out=[];
   for(const a of audits){
-    if((a.status||'')==='complete') continue;
     for(const bc of openExtras(a)){ const row=stockData.find(r=>String(r.barcode)===String(bc)); out.push({kind:'extra', bc:String(bc), auditId:a.id, product:a.product, color:a.color, size:row?.size||'', info:outwardInfo(row), at:a.savedAt||a.date}); }
     for(const e of openWrongProduct(a)){ const bc=String(e).split('__')[0]; const ts=wrongTrueStyle(e); const row=stockData.find(r=>String(r.barcode)===String(bc)); out.push({kind:'wrong', bc, auditId:a.id, product:a.product, color:a.color, size:row?.size||'', belongsP:ts.product, belongsC:ts.color, at:a.savedAt||a.date}); }
   }
