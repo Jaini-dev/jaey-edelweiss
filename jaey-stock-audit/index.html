@@ -648,7 +648,7 @@ details.review-card[open]>.rc-summary{border-bottom:1px solid var(--border)}
           <option value="found">Found-elsewhere first</option>
         </select>
       </div>
-      <input type="text" id="resolve-search" placeholder="🔍 Search barcode, style or colour…" autocomplete="off" oninput="renderResolve()" style="width:100%;font-size:13px;padding:8px 11px;margin-bottom:8px">
+      <input type="text" id="resolve-search" placeholder="🔍 Search barcode, style, colour or tag (e.g. sample)…" autocomplete="off" oninput="renderResolve()" style="width:100%;font-size:13px;padding:8px 11px;margin-bottom:8px">
       <div style="font-size:12px;color:var(--steel);margin-bottom:8px">Every unresolved piece across all styles, deduped. "Last scanned in" = it was scanned inside another style's audit (misplaced) — don't write it off.</div>
       <div id="resolve-list"></div>
     </div>
@@ -936,7 +936,7 @@ function setUserName(){ proceedToUserPin(); }
 // Service Worker registered via sw.js when hosted on GitHub Pages
 
 if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./sw.js').catch(()=>{});
-const APP_VER='v107'; // single source of truth — shown in both admin + team headers
+const APP_VER='v108'; // single source of truth — shown in both admin + team headers
 document.addEventListener('DOMContentLoaded',()=>{
   document.querySelectorAll('.app-ver').forEach(e=>e.textContent=APP_VER);
   loadStorage();
@@ -2759,7 +2759,7 @@ function renderResolve(){
   const missingBcSet=new Set(missing.map(m=>String(m.bc)));   // all open missing (before the search filter)
   const mismAll=collectMismatches();                           // open system-mismatch + wrong-label, resolvable here too
   const mismBcSet=new Set(mismAll.map(m=>String(m.bc)));
-  if(q) missing=missing.filter(m=>String(m.bc).includes(q)||(m.product||'').toLowerCase().includes(q)||(m.color||'').toLowerCase().includes(q)||(m.sku||'').toLowerCase().includes(q));
+  if(q) missing=missing.filter(m=>String(m.bc).includes(q)||(m.product||'').toLowerCase().includes(q)||(m.color||'').toLowerCase().includes(q)||(m.sku||'').toLowerCase().includes(q)||(m.tags||'').toLowerCase().includes(q)||(m.note||'').toLowerCase().includes(q)||(m.sample&&q.length>=3&&'sample'.includes(q)));
   const sort=document.getElementById('resolve-sort')?.value||'age';
   if(sort==='style') missing.sort((a,b)=>(a.product+a.color).localeCompare(b.product+b.color));
   else if(sort==='found') missing.sort((a,b)=>(b.foundIn?1:0)-(a.foundIn?1:0));
@@ -2796,7 +2796,7 @@ function renderResolve(){
     </div>`:'';
   // Mismatch cards (system-mismatch + wrong-label) — resolvable right here, searchable like missing.
   let mism=mismAll;
-  if(q) mism=mism.filter(m=>String(m.bc).includes(q)||(m.product||'').toLowerCase().includes(q)||(m.color||'').toLowerCase().includes(q));
+  if(q) mism=mism.filter(m=>String(m.bc).includes(q)||(m.product||'').toLowerCase().includes(q)||(m.color||'').toLowerCase().includes(q)||(m.tags||'').toLowerCase().includes(q)||(m.note||'').toLowerCase().includes(q));
   let mismatchHtml='';
   for(const m of mism){
     const isX=m.kind==='extra';
