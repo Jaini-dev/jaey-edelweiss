@@ -936,7 +936,7 @@ function setUserName(){ proceedToUserPin(); }
 // Service Worker registered via sw.js when hosted on GitHub Pages
 
 if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./sw.js').catch(()=>{});
-const APP_VER='v110'; // single source of truth — shown in both admin + team headers
+const APP_VER='v111'; // single source of truth — shown in both admin + team headers
 document.addEventListener('DOMContentLoaded',()=>{
   document.querySelectorAll('.app-ver').forEach(e=>e.textContent=APP_VER);
   loadStorage();
@@ -1650,6 +1650,7 @@ function feedBarcode(raw){
       currentScan.scanned.push(bc); res='match';
     }
   }
+  (currentScan.scanTimes=currentScan.scanTimes||{})[bc]=new Date().toISOString(); // per-piece scan time → precise same-day mismatch check
   renderScanList();
   saveDraft();              // persist progress so a back-tap / reload never loses it
   liveHeartbeat({bc,type:res});
@@ -1818,12 +1819,14 @@ function genReport(scan){
 
   // Scanned issues: pieces physically in hand but something wrong
   const sysSet=new Set((sysIn||[]).map(String));
-  const auditTs=Date.parse(scan.date||scan.savedAt||'')||0;
-  const extras=bcs.filter(b=>{  // present physically but system says outward (and was NOT present at audit time)
+  const st=scan.scanTimes||{};
+  const extras=bcs.filter(b=>{  // present physically but system says outward (and was NOT present when counted)
     if(sysSet.has(String(b))) return false; // inward when audited → found, not a mismatch
     const f=stockData.find(r=>r.barcode==b);
     if(!(f&&f.product===scan.product&&f.color===scan.color&&f.status==='outward'&&!scanned.find(s=>s.startsWith(b+'__')))) return false;
-    if(auditTs){ const outTs=Date.parse(scanTimeISO(f.scanTime)||'')||0; if(outTs && outTs>auditTs) return false; } // sold after the audit → a sale, not a mismatch
+    const refTs=Date.parse(st[b]||scan.date||scan.savedAt||'')||0; // piece's scan time (fallback: audit time)
+    const outTs=Date.parse(scanTimeISO(f.scanTime)||'')||0;
+    if(refTs && outTs && outTs>refTs) return false; // sold after it was counted → a sale, not a mismatch
     return true;
   });
   const wrongProduct=scanned.filter(e=>e.includes('__WRONG:'));
@@ -2557,17 +2560,19 @@ function wrongHandledList(audit, idx){
 function openExtras(audit){
   const pend=new Set(auditFixedPending(audit.id).map(p=>String(p.bc)));
   const sysIn=new Set((audit.systemInward||[]).map(String)); // inward on the audit-day snapshot
-  const auditTs=Date.parse(audit.date||audit.savedAt||'')||0;
+  const st=audit.scanTimes||{};
   return (audit.report?.extras||[]).filter(bc=>{
     if(pend.has(String(bc))) return false; // parked as "fixed on system"
     if((audit.systemUpdated||[]).includes(bc)) return false;
     if(sysIn.has(String(bc))) return false; // inward in the audit-day snapshot → not a mismatch
     const row=stockData.find(r=>r.barcode==bc);
     if(row && row.status==='inward') return false; // back inward → resolved
-    // Sold AFTER the audit → it was physically present when audited; a normal post-audit sale, not a mismatch.
-    if(row && row.status==='outward' && auditTs){
+    // Sold AFTER this piece was physically counted → a normal post-audit sale, not a mismatch.
+    // Reference = the piece's own scan time when known, else the audit time (older audits).
+    if(row && row.status==='outward'){
+      const refTs=Date.parse(st[bc]||audit.date||audit.savedAt||'')||0;
       const outTs=Date.parse(scanTimeISO(row.scanTime)||'')||0;
-      if(outTs && outTs>auditTs) return false;
+      if(refTs && outTs && outTs>refTs) return false;
     }
     return true;
   });
@@ -3495,6 +3500,9 @@ function removeScanFromAudit(auditId, bc){
 function showFullDetail(id){
   const a=audits.find(x=>x.id===id); if(!a) return;
   const r=a.report||{};
+  // Date a piece was counted: its follow-up time if found in an update, else its own scan time, else the audit date.
+  const scanDateOf=bc=>{ const fu=(a.followUps||[]).find(f=>(f.foundBarcodes||[]).map(String).includes(String(bc))); const t=(fu&&fu.at)||(a.scanTimes&&a.scanTimes[bc])||a.date||a.savedAt; return t?new Date(t).toLocaleDateString('en-IN',{day:'numeric',month:'short'}):''; };
+  const dateTag=bc=>{ const d=scanDateOf(bc); return d?'🗓️ '+d+' · ':''; };
   const img=getImg(a.product,a.color);
   let html=`${img?`<img src="${img}" style="width:100%;max-height:140px;object-fit:cover;border-radius:9px;margin-bottom:11px" onerror="this.style.display='none'" alt="">`:''}
     <div style="margin-bottom:12px"><div style="font-size:16px;font-weight:600">${a.product} · ${a.color}</div>
@@ -3508,10 +3516,10 @@ function showFullDetail(id){
   html+=`<details style="margin:4px 0 8px"><summary style="font-weight:600;cursor:pointer;font-size:13px">✅ Accounted barcodes (${accountedBarcodes(a).length})</summary><div style="margin-top:6px">`;
   { const found=new Set(); (a.followUps||[]).forEach(f=>(f.foundBarcodes||[]).forEach(b=>found.add(String(b))));
     for(const bc of accountedBarcodes(a)){ const f=stockData.find(x=>x.barcode==bc); const isF=found.has(String(bc));
-      html+=`<div style="display:flex;justify-content:space-between;padding:5px 9px;background:var(--sage-light);border-radius:5px;margin-bottom:4px;font-size:13px;font-family:monospace">BC ${bc}${f?' · '+f.size:''}<span style="font-size:11px;color:${isF?'var(--sky)':'var(--sage)'}">${isF?'🔄 found':'✓'}</span></div>`; } }
+      html+=`<div style="display:flex;justify-content:space-between;padding:5px 9px;background:var(--sage-light);border-radius:5px;margin-bottom:4px;font-size:13px;font-family:monospace">${dateTag(bc)}BC ${bc}${f?' · '+f.size:''}<span style="font-size:11px;color:${isF?'var(--sky)':'var(--sage)'}">${isF?'🔄 found':'✓'}</span></div>`; } }
   html+=`</div></details>`;
-  { const eg=effectiveGhosts(a); if(eg.length){html+=`<div style="font-weight:600;margin:9px 0 5px">🔴 Missing barcodes:</div>`;for(const bc of eg){const f=stockData.find(x=>x.barcode==bc);html+=`<div style="padding:5px 9px;background:var(--rose-light);border-radius:5px;margin-bottom:4px;font-size:13px;font-family:monospace">BC ${bc}${f?' · '+f.size:''}</div>`;}} }
-  if(r.extras?.length){html+=`<div style="font-weight:600;margin:9px 0 5px">🟡 System mismatches:</div>`;for(const bc of r.extras){const f=stockData.find(x=>x.barcode==bc);html+=`<div style="padding:5px 9px;background:var(--gold-light);border-radius:5px;margin-bottom:4px;font-size:13px;font-family:monospace">BC ${bc}${f?' · '+f.size:''}</div>`;}}
+  { const eg=effectiveGhosts(a); if(eg.length){html+=`<div style="font-weight:600;margin:9px 0 5px">🔴 Missing barcodes:</div>`;for(const bc of eg){const f=stockData.find(x=>x.barcode==bc);html+=`<div style="padding:5px 9px;background:var(--rose-light);border-radius:5px;margin-bottom:4px;font-size:13px;font-family:monospace">${dateTag(bc)}BC ${bc}${f?' · '+f.size:''}</div>`;}} }
+  if(r.extras?.length){html+=`<div style="font-weight:600;margin:9px 0 5px">🟡 System mismatches:</div>`;for(const bc of r.extras){const f=stockData.find(x=>x.barcode==bc);html+=`<div style="padding:5px 9px;background:var(--gold-light);border-radius:5px;margin-bottom:4px;font-size:13px;font-family:monospace">${dateTag(bc)}BC ${bc}${f?' · '+f.size:''}</div>`;}}
   // Trail
   const trail=[{at:a.savedAt||a.date,by:a.auditor,action:'submitted',note:''},...followUpSummary(a),...(a.trail||[])];
   if(trail.length){
