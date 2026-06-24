@@ -936,7 +936,7 @@ function setUserName(){ proceedToUserPin(); }
 // Service Worker registered via sw.js when hosted on GitHub Pages
 
 if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./sw.js').catch(()=>{});
-const APP_VER='v109'; // single source of truth — shown in both admin + team headers
+const APP_VER='v110'; // single source of truth — shown in both admin + team headers
 document.addEventListener('DOMContentLoaded',()=>{
   document.querySelectorAll('.app-ver').forEach(e=>e.textContent=APP_VER);
   loadStorage();
@@ -1818,11 +1818,13 @@ function genReport(scan){
 
   // Scanned issues: pieces physically in hand but something wrong
   const sysSet=new Set((sysIn||[]).map(String));
-  const extras=bcs.filter(b=>{  // present physically but system says outward (and was NOT inward on audit day)
-    if(sysSet.has(String(b))) return false; // inward when audited → found, not a mismatch (any outward is a later sale)
+  const auditTs=Date.parse(scan.date||scan.savedAt||'')||0;
+  const extras=bcs.filter(b=>{  // present physically but system says outward (and was NOT present at audit time)
+    if(sysSet.has(String(b))) return false; // inward when audited → found, not a mismatch
     const f=stockData.find(r=>r.barcode==b);
-    return f&&f.product===scan.product&&f.color===scan.color&&f.status==='outward'
-      &&!scanned.find(s=>s.startsWith(b+'__'));
+    if(!(f&&f.product===scan.product&&f.color===scan.color&&f.status==='outward'&&!scanned.find(s=>s.startsWith(b+'__')))) return false;
+    if(auditTs){ const outTs=Date.parse(scanTimeISO(f.scanTime)||'')||0; if(outTs && outTs>auditTs) return false; } // sold after the audit → a sale, not a mismatch
+    return true;
   });
   const wrongProduct=scanned.filter(e=>e.includes('__WRONG:'));
   const unknown=scanned.filter(e=>e.endsWith('__UNKNOWN'));
@@ -2554,28 +2556,36 @@ function wrongHandledList(audit, idx){
 // inward corrections still clear, because we key on current status, not the event date.
 function openExtras(audit){
   const pend=new Set(auditFixedPending(audit.id).map(p=>String(p.bc)));
-  const sysIn=new Set((audit.systemInward||[]).map(String)); // inward on audit day
+  const sysIn=new Set((audit.systemInward||[]).map(String)); // inward on the audit-day snapshot
+  const auditTs=Date.parse(audit.date||audit.savedAt||'')||0;
   return (audit.report?.extras||[]).filter(bc=>{
     if(pend.has(String(bc))) return false; // parked as "fixed on system"
     if((audit.systemUpdated||[]).includes(bc)) return false;
-    if(sysIn.has(String(bc))) return false; // was inward when audited → a later outward is a normal sale, not a mismatch
+    if(sysIn.has(String(bc))) return false; // inward in the audit-day snapshot → not a mismatch
     const row=stockData.find(r=>r.barcode==bc);
-    return !(row && row.status==='inward');   // cleared once the system shows inward
+    if(row && row.status==='inward') return false; // back inward → resolved
+    // Sold AFTER the audit → it was physically present when audited; a normal post-audit sale, not a mismatch.
+    if(row && row.status==='outward' && auditTs){
+      const outTs=Date.parse(scanTimeISO(row.scanTime)||'')||0;
+      if(outTs && outTs>auditTs) return false;
+    }
+    return true;
   });
 }
 
 function buildActionItems(audit, idx){
   const items=[], r=audit.report||{};
   const parked=new Set(auditFixedPending(audit.id).map(p=>String(p.bc)));
+  const aud=auditDateStr(audit); const audTag=aud?' · 🗓️ audited '+aud:''; // show the audit date on every piece
   // Mismatches first — system mismatch (mark inward), then wrong label …
   for(const bc of openExtras(audit)){
     const row=stockData.find(f=>f.barcode==bc);
-    items.push({id:'x-'+bc, bc, label:'Mark BC '+bc+' as inward', detail:(row?'Size '+row.size+' — ':'')+'Present physically, but system marked it OUTWARD'+outwardInfo(row)});
+    items.push({id:'x-'+bc, bc, label:'Mark BC '+bc+' as inward', detail:(row?'Size '+row.size+' — ':'')+'Present physically, but system marked it OUTWARD'+outwardInfo(row)+audTag});
   }
   for(const entry of openWrongProduct(audit, idx)){
     const bc=entry.split('__')[0];
     const parts=entry.split('__WRONG:')[1]?.split('|||')||[];
-    items.push({id:'w-'+bc, bc, trueP:parts[0]||'', trueC:parts[1]||'', label:'Fix label on BC '+bc, detail:'Found in '+audit.product+' but belongs to: '+parts[0]});
+    items.push({id:'w-'+bc, bc, trueP:parts[0]||'', trueC:parts[1]||'', label:'Fix label on BC '+bc, detail:'Found in '+audit.product+' but belongs to: '+parts[0]+audTag});
   }
   // … then every missing piece (no 6-cap); parked + now-outward ones excluded.
   for(const bc of effectiveGhosts(audit)){
@@ -2583,10 +2593,12 @@ function buildActionItems(audit, idx){
     const row=stockData.find(f=>f.barcode==bc);
     const samp=isSample(row);
     const ctx=row?[row.tags?'🏷️ '+row.tags:'', row.note?'📝 '+row.note:''].filter(Boolean).join(' · '):'';
-    items.push({id:'g-'+bc, bc, sample:samp, label:'Mark BC '+bc+' as outward', detail:(row?((row.sku?row.sku+' · ':'')+'Size '+(row.size||'?')+' — '):'')+'In system but not physically found'+(samp?' · likely in the sample rack':'')+(ctx?'<br>'+ctx:'')});
+    items.push({id:'g-'+bc, bc, sample:samp, label:'Mark BC '+bc+' as outward', detail:(row?((row.sku?row.sku+' · ':'')+'Size '+(row.size||'?')+' — '):'')+'In system but not physically found'+(samp?' · likely in the sample rack':'')+audTag+(ctx?'<br>'+ctx:'')});
   }
   return items;
 }
+// Formatted audit date for a piece (the date of the audit it was counted in).
+function auditDateStr(audit){ const v=audit&&(audit.date||audit.savedAt); if(!v) return ''; const d=new Date(v); return isNaN(d)?'':d.toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'}); }
 
 function toggleAction(auditId,itemId,checked){
   const audit=audits.find(a=>a.id===auditId); if(!audit) return;
@@ -2806,7 +2818,7 @@ function renderResolve(){
     const isX=m.kind==='extra';
     mismatchHtml+=`<div style="border:1px solid ${isX?'var(--gold)':'var(--rose)'};border-left:3px solid ${isX?'var(--gold)':'var(--rose)'};background:${isX?'var(--gold-light)':'var(--rose-light)'};border-radius:8px;padding:10px;margin-bottom:8px">
       <div style="font-weight:600;font-size:13px">BC ${m.bc}${m.size?' · Size '+m.size:''} <span style="font-size:11px;color:${isX?'#a06800':'var(--rose)'}">${isX?'🟡 system says outward':'⚠️ wrong label'}</span></div>
-      <div style="font-size:12px;color:var(--steel)">${isX?(m.product+' · '+m.color+' — present physically, but the system marked it OUTWARD'+(m.info||'')):('Scanned in '+m.product+' · '+m.color+' — system says it belongs to '+m.belongsP+(m.belongsC?' · '+m.belongsC:''))}</div>
+      <div style="font-size:12px;color:var(--steel)">${isX?(m.product+' · '+m.color+' — present physically, but the system marked it OUTWARD'+(m.info||'')):('Scanned in '+m.product+' · '+m.color+' — system says it belongs to '+m.belongsP+(m.belongsC?' · '+m.belongsC:''))}${m.at?' · 🗓️ audited '+auditDateStr({date:m.at}):''}</div>
       <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap;align-items:center">
         ${(!isX && m.belongsP && trueStyleMissingAudit(m.bc,m.belongsP,m.belongsC))?`<button class="btn bs" style="font-size:11px;padding:6px 10px" onclick="moveScanToTrueStyle('${m.bc}',${m.auditId},'${esc(m.belongsP)}','${esc(m.belongsC)}')">✓ It is ${m.belongsP}</button>`:''}
         <button class="btn bo" style="font-size:11px;padding:6px 10px" onclick="markFixedOnSystem('${m.bc}',${m.auditId})">✓ Fixed on system</button>
@@ -2827,7 +2839,7 @@ function renderResolve(){
         <div style="flex:1;min-width:0">
           <div style="font-weight:600;font-size:13px">BC ${m.bc}${m.size?' · Size '+m.size:''}${m.isNew?' <span style="background:var(--sky);color:#fff;font-size:9px;font-weight:700;padding:1px 6px;border-radius:20px;vertical-align:middle">🆕 NEW</span>':''}${m.sample?' <span style="background:#6b3fa0;color:#fff;font-size:9px;font-weight:700;padding:1px 6px;border-radius:20px;vertical-align:middle">🧷 SAMPLE</span>':''}</div>
           <div style="font-size:12px;color:var(--steel)">${m.product} · ${m.color}${m.sku?' · '+m.sku:''}</div>
-          <div style="font-size:11px;color:var(--steel);margin-top:2px">Flagged by ${m.auditor} · ${ageTxt}</div>
+          <div style="font-size:11px;color:var(--steel);margin-top:2px">Flagged by ${m.auditor} · ${ageTxt}${m.at?' · 🗓️ audited '+auditDateStr({date:m.at}):''}</div>
           ${inwTxt?`<div style="font-size:11px;margin-top:2px;color:${m.isNew?'var(--sky)':'var(--steel)'}">📥 Inwarded ${inwTxt}${m.isNew?' · arrived after this audit — scan via ➕ Add pieces, not a loss':' · still in system'}</div>`:''}
           ${(m.tags||m.note)?`<div style="margin-top:4px;font-size:11px;color:var(--steel)">${m.tags?'🏷️ <strong>'+m.tags+'</strong>':''}${m.tags&&m.note?' · ':''}${m.note?'📝 '+m.note:''}</div>`:''}
           ${m.sample?`<div style="margin-top:4px;font-size:11px;color:#6b3fa0;background:#f1ebf8;padding:4px 8px;border-radius:7px">🧷 Sample — check the sample rack before writing off</div>`:''}
