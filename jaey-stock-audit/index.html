@@ -936,7 +936,7 @@ function setUserName(){ proceedToUserPin(); }
 // Service Worker registered via sw.js when hosted on GitHub Pages
 
 if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./sw.js').catch(()=>{});
-const APP_VER='v112'; // single source of truth — shown in both admin + team headers
+const APP_VER='v113'; // single source of truth — shown in both admin + team headers
 document.addEventListener('DOMContentLoaded',()=>{
   document.querySelectorAll('.app-ver').forEach(e=>e.textContent=APP_VER);
   loadStorage();
@@ -2365,6 +2365,7 @@ function renderAdminReview(){
           <div style="font-weight:700;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${audit.product} · ${audit.color}</div>
           <div style="font-size:11px;color:var(--steel);margin-top:2px">
             <div style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis"><span style="color:var(--sage);font-weight:600">✓ ${accounted}/${sys}</span> · ${audit.auditor}</div>
+            ${stockData.length?`<div style="color:var(--sky);font-weight:600">📦 ${withYouNow(audit)} with you now</div>`:''}
             ${ghosts?`<div style="color:var(--rose);font-weight:600">🔴 ${ghosts} missing</div>`:''}
             ${extras?`<div style="color:#c47f17">🟡 ${extras} sys mismatch</div>`:''}
             ${wrong?`<div style="color:var(--rose)">⚠️ ${wrong} wrong label</div>`:''}
