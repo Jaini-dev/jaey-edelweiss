@@ -936,7 +936,7 @@ function setUserName(){ proceedToUserPin(); }
 // Service Worker registered via sw.js when hosted on GitHub Pages
 
 if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./sw.js').catch(()=>{});
-const APP_VER='v113'; // single source of truth — shown in both admin + team headers
+const APP_VER='v114'; // single source of truth — shown in both admin + team headers
 document.addEventListener('DOMContentLoaded',()=>{
   document.querySelectorAll('.app-ver').forEach(e=>e.textContent=APP_VER);
   loadStorage();
@@ -3186,6 +3186,7 @@ function moveScanToTrueStyle(bc, fromAuditId, trueProduct, trueColor){
   markFoundCore(bc, target.id); // true style: missing → found
   if(from){
     from.scanned=(from.scanned||[]).filter(e=>String(e).split('__')[0]!==bc);
+    (from.removedBarcodes=from.removedBarcodes||[]); if(!from.removedBarcodes.map(String).includes(bc)) from.removedBarcodes.push(bc); // tombstone (see removeScanFromAudit)
     if(from.report) from.report.wrongProduct=(from.report.wrongProduct||[]).filter(e=>String(e).split('__')[0]!==bc);
     from.followUps=(from.followUps||[]).map(f=>({...f,foundBarcodes:(f.foundBarcodes||[]).filter(b=>String(b)!==bc)})).filter(f=>(f.foundBarcodes||[]).length);
     recomputeAuditReport(from);
@@ -3483,6 +3484,7 @@ function removeScanFromAudit(auditId, bc){
   if(!confirm('Remove scanned BC '+bc+' from this audit?\n\nUse this only for a barcode scanned here by mistake. It will be treated as never scanned for '+a.product+' · '+a.color+(a.systemInward&&a.systemInward.map(String).includes(bc)?'\n\n(The system expects this piece, so it will move to 🔴 missing.)':'')+'.')) return;
   a.scanned=(a.scanned||[]).filter(e=>String(e).split('__')[0]!==bc);
   a.followUps=(a.followUps||[]).map(f=>({...f,foundBarcodes:(f.foundBarcodes||[]).filter(b=>String(b)!==bc)})).filter(f=>(f.foundBarcodes||[]).length);
+  (a.removedBarcodes=a.removedBarcodes||[]); if(!a.removedBarcodes.map(String).includes(bc)) a.removedBarcodes.push(bc); // tombstone so a removal isn't mistaken for a "poorer" copy on merge
   if(a.systemUpdated) a.systemUpdated=a.systemUpdated.filter(b=>String(b)!==bc);
   if(!recomputeAuditReport(a)){ // fallback for legacy audits missing the raw arrays
     const r=a.report=a.report||{};
@@ -4566,14 +4568,20 @@ async function fetchAuditsFromSupabase(){
       all=all.concat(rows);
       from+=page; if(rows.length<page) break;
     }
-    // Reconstruct audit objects from raw_data. On conflict keep the most-recently-modified copy
-    // (guards against a stale cloud copy reverting a local complete / resolve / correction).
+    // Reconstruct audit objects from raw_data. On conflict keep the RICHEST copy (most scanned + found
+    // + removed-tombstones) so a stale low-scan copy can never clobber a real one; tie-break by newest.
     const tms=a=>new Date(a.updatedAt||a.lastUpdated||a.completedAt||a.savedAt||a.date||0).getTime();
-    const byId={};
+    const rich=a=>(a?.scanned?.length||0)+((a?.followUps||[]).reduce((n,f)=>n+(f.foundBarcodes?.length||0),0))+(a?.removedBarcodes?.length||0);
+    const better=(o,ex)=>{ if(!ex) return true; const ro=rich(o), re=rich(ex); return ro!==re ? ro>re : tms(o)>=tms(ex); };
+    const byId={}, cloudRich={};
     for(const a of audits) if(a&&a.id!=null) byId[a.id]=a;
-    for(const r of all){ try{ const o=JSON.parse(r.raw_data); if(o&&o.id!=null){ const ex=byId[o.id]; if(!ex||tms(o)>=tms(ex)) byId[o.id]=o; } }catch(e){} }
+    for(const r of all){ try{ const o=JSON.parse(r.raw_data); if(o&&o.id!=null){ cloudRich[o.id]=Math.max(cloudRich[o.id]??-1, rich(o)); if(better(o,byId[o.id])) byId[o.id]=o; } }catch(e){} }
     audits=Object.values(byId).sort((a,b)=>new Date(b.date||0)-new Date(a.date||0));
     try{localStorage.setItem('jaey_audits',JSON.stringify(audits));}catch(e){}
+    // Recovery: if our winning copy is richer than what the cloud holds, push it so other devices heal.
+    if(sbCfg.url&&sbCfg.key&&navigator.onLine){
+      for(const a of audits){ if(cloudRich[a.id]!==undefined && rich(a)>cloudRich[a.id]){ try{ pushAuditToCloud(a); }catch(e){} } }
+    }
     return audits;
   }catch(e){ console.warn('fetchAudits:',e); return audits; }
 }
