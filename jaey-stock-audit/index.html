@@ -648,7 +648,8 @@ details.review-card[open]>.rc-summary{border-bottom:1px solid var(--border)}
           <option value="found">Found-elsewhere first</option>
         </select>
       </div>
-      <input type="text" id="resolve-search" placeholder="🔍 Search barcode, style, colour or tag (e.g. sample)…" autocomplete="off" oninput="renderResolve()" style="width:100%;font-size:13px;padding:8px 11px;margin-bottom:8px">
+      <input type="text" id="resolve-search" placeholder="🔍 Type a barcode for its status, or search style / colour / tag…" autocomplete="off" oninput="renderResolve()" style="width:100%;font-size:13px;padding:8px 11px;margin-bottom:8px">
+      <button class="btn bo" onclick="openBulkStatus()" style="font-size:12px;padding:7px 11px;margin-bottom:8px;width:100%">📋 Bulk barcode status check — paste many at once</button>
       <div style="font-size:12px;color:var(--steel);margin-bottom:8px">Every unresolved piece across all styles, deduped. "Last scanned in" = it was scanned inside another style's audit (misplaced) — don't write it off.</div>
       <div id="resolve-list"></div>
     </div>
@@ -936,7 +937,7 @@ function setUserName(){ proceedToUserPin(); }
 // Service Worker registered via sw.js when hosted on GitHub Pages
 
 if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./sw.js').catch(()=>{});
-const APP_VER='v115'; // single source of truth — shown in both admin + team headers
+const APP_VER='v116'; // single source of truth — shown in both admin + team headers
 document.addEventListener('DOMContentLoaded',()=>{
   document.querySelectorAll('.app-ver').forEach(e=>e.textContent=APP_VER);
   loadStorage();
@@ -2841,14 +2842,17 @@ function renderResolve(){
   let lookupHtml='';
   if(q && /^\d+$/.test(q)){
     const qn=String(parseInt(q,10)); const lr=bcRow(qn);
+    const st=auditStatusOf(qn, buildScanIndex(), missingBcSet, mismBcSet);
+    const audLine=`<div style="font-size:12px;margin-top:3px"><strong>${st.label}</strong> <span style="color:var(--steel)">· ${st.detail}</span></div>`;
     if(lr){ const inn=lr.status==='inward';
       lookupHtml=`<div style="border:1px solid var(--sky);border-left:3px solid var(--sky);background:var(--sky-light);border-radius:8px;padding:10px;margin-bottom:8px">
         <div style="font-weight:600;font-size:13px">🔎 BC ${qn} · ${lr.product} · ${lr.color}${lr.size?' · Size '+lr.size:''}</div>
         <div style="font-size:12px;margin-top:3px;font-weight:700;color:${inn?'var(--sage)':'var(--rose)'}">${inn?'⬇ Currently INWARD (in stock today)':'⬆ Currently OUTWARD'}${lr.purpose?' · '+lr.purpose:''}${lr.scanTime?' · '+fmtMoveDate(lr.scanTime):''}</div>
+        ${audLine}
         <button class="btn bo" style="font-size:11px;padding:5px 10px;margin-top:6px" onclick="showBarcodeJourney('${qn}')">📜 Full movement history</button>
       </div>`;
     } else {
-      lookupHtml=`<div style="border:1px solid var(--gold);border-left:3px solid var(--gold);background:var(--gold-light);border-radius:8px;padding:10px;margin-bottom:8px;font-size:12px">❓ BC ${qn} isn't in the current stock CSV. <button class="btn bo" style="font-size:11px;padding:4px 9px;margin-left:4px" onclick="showBarcodeJourney('${qn}')">📜 Check history</button></div>`;
+      lookupHtml=`<div style="border:1px solid var(--gold);border-left:3px solid var(--gold);background:var(--gold-light);border-radius:8px;padding:10px;margin-bottom:8px;font-size:12px">❓ BC ${qn} isn't in the current stock CSV.${audLine}<button class="btn bo" style="font-size:11px;padding:4px 9px;margin-top:6px" onclick="showBarcodeJourney('${qn}')">📜 Check history</button></div>`;
     }
   }
   let html=lookupHtml+auditedHtml+mismatchHtml+bulkBar;
@@ -3367,11 +3371,12 @@ function stockTodayBreakdown(a){
   const ghosts=new Set((a.report?.ghosts||[]).map(String)); // audit-day missing
   const sizes={}; let foundOut=0, missingOut=0, foundIn=0, missingIn=0, foundSampleT=0, missingSampleT=0;
   const S=sz=>(sizes[sz]=sizes[sz]||{foundGross:0,foundOut:0,missingGross:0,missingOut:0,new:0,foundSample:0,missingSample:0,extra:0});
+  const foundList=[], missingList=[];
   for(const bc of sysInward){
     const row=bcRow(bc); const e=S((row&&row.size)||'—');
     const isGhost=ghosts.has(bc); const outNow=row&&row.status==='outward'; const samp=isSample(row);
-    if(isGhost){ e.missingGross++; if(outNow){ e.missingOut++; missingOut++; } else { missingIn++; if(samp){ e.missingSample++; missingSampleT++; } } }
-    else { e.foundGross++; if(outNow){ e.foundOut++; foundOut++; } else { foundIn++; if(samp){ e.foundSample++; foundSampleT++; } } }
+    if(isGhost){ e.missingGross++; missingList.push({bc:String(bc),size:(row&&row.size)||'',outNow:!!outNow}); if(outNow){ e.missingOut++; missingOut++; } else { missingIn++; if(samp){ e.missingSample++; missingSampleT++; } } }
+    else { e.foundGross++; foundList.push({bc:String(bc),size:(row&&row.size)||'',outNow:!!outNow}); if(outNow){ e.foundOut++; foundOut++; } else { foundIn++; if(samp){ e.foundSample++; foundSampleT++; } } }
   }
   // New arrivals (inward now, not part of the audit) count toward "with you now" too.
   const cur=(productMap[a.product]?.[a.color]||[]).filter(r=>r.status==='inward');
@@ -3380,9 +3385,9 @@ function stockTodayBreakdown(a){
   // Sys mismatches ("extras") = physically present here but the system still shows OUTWARD. Not in
   // systemInward and not currently inward, so they're invisible above — surface them so this popup
   // agrees with the card's "🟡 N sys mismatch" instead of looking like it dropped a found piece.
-  let extrasTotal=0;
-  for(const bc of openExtras(a)){ const row=bcRow(bc); S((row&&row.size)||'—').extra++; extrasTotal++; }
-  return {auditDayTotal:sysInward.length, foundTotal:sysInward.length-ghosts.size, missingTotal:ghosts.size, foundOut, missingOut, foundIn, missingIn, foundSampleT, missingSampleT, newArrivals, newList, extrasTotal, withYouNow:foundIn+missingIn+newArrivals, sizes};
+  let extrasTotal=0; const extraList=[];
+  for(const bc of openExtras(a)){ const row=bcRow(bc); S((row&&row.size)||'—').extra++; extrasTotal++; extraList.push({bc:String(bc),size:(row&&row.size)||''}); }
+  return {auditDayTotal:sysInward.length, foundTotal:sysInward.length-ghosts.size, missingTotal:ghosts.size, foundOut, missingOut, foundIn, missingIn, foundSampleT, missingSampleT, newArrivals, newList, extrasTotal, extraList, foundList, missingList, withYouNow:foundIn+missingIn+newArrivals, sizes};
 }
 // How many of this style the system currently shows inward = audit pieces still in + new arrivals.
 function withYouNow(a){
@@ -3405,13 +3410,13 @@ function showStockToday(id){
   const b=stockTodayBreakdown(a);
   document.getElementById('modal-title').textContent='📦 Stock today · '+a.product+' · '+a.color;
   const ad=new Date(a.savedAt||a.date); const auditDate=isNaN(ad)?'':ad.toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'});
+  const bcRows=list=>(list||[]).map(n=>`<div style="font-size:11px;font-family:monospace;padding:2px 0;cursor:pointer" onclick="showBarcodeJourney('${n.bc}')"><span style="color:var(--sky);text-decoration:underline">BC ${n.bc}</span>${n.size?' · '+n.size:''}${n.outNow?' · <span style="color:#a06800">now OUT</span>':''}${n.scanTime?' · 📥 added '+fmtMoveDate(n.scanTime):''}</div>`).join('');
   let html=`<div style="font-size:12px;line-height:1.25">
     <div style="display:flex;justify-content:space-between"><span>On audit day${auditDate?' · <strong>'+auditDate+'</strong>':''}${a.auditor?' · '+a.auditor:''}</span><strong>${b.auditDayTotal}</strong></div>
-    <div style="color:var(--sage)">✓ ${b.foundTotal} audited${b.foundOut?` <span style="color:#a06800">· ${b.foundOut} outwarded since</span>`:''}</div>
-    <div style="color:var(--rose)">🔴 ${b.missingTotal} missing${b.missingOut?` <span style="color:#a06800">· ${b.missingOut} outwarded since</span>`:''}</div>
-    ${b.newArrivals?`<details style="margin:1px 0"><summary style="color:var(--sky);cursor:pointer">🆕 ${b.newArrivals} new since (top up via Add pieces)</summary>
-      <div style="margin:3px 0 2px">${(b.newList||[]).map(n=>`<div style="font-size:11px;font-family:monospace;padding:2px 0;cursor:pointer" onclick="showBarcodeJourney('${n.bc}')"><span style="color:var(--sky);text-decoration:underline">BC ${n.bc}</span>${n.size?' · '+n.size:''}${n.scanTime?' · 📥 added '+fmtMoveDate(n.scanTime):''}</div>`).join('')}</div></details>`:''}
-    ${b.extrasTotal?`<div style="color:#ea580c">🟠 ${b.extrasTotal} found here, but system says outward — fix on system (Resolve)</div>`:''}
+    ${b.foundTotal?`<details style="margin:1px 0"><summary style="color:var(--sage);cursor:pointer">✓ ${b.foundTotal} audited${b.foundOut?` · <span style="color:#a06800">${b.foundOut} outwarded since</span>`:''}</summary><div style="margin:3px 0 2px">${bcRows(b.foundList)}</div></details>`:`<div style="color:var(--sage)">✓ 0 audited</div>`}
+    ${b.missingTotal?`<details style="margin:1px 0"><summary style="color:var(--rose);cursor:pointer">🔴 ${b.missingTotal} missing${b.missingOut?` · <span style="color:#a06800">${b.missingOut} outwarded since</span>`:''}</summary><div style="margin:3px 0 2px">${bcRows(b.missingList)}</div></details>`:''}
+    ${b.newArrivals?`<details style="margin:1px 0"><summary style="color:var(--sky);cursor:pointer">🆕 ${b.newArrivals} new since (top up via Add pieces)</summary><div style="margin:3px 0 2px">${bcRows(b.newList)}</div></details>`:''}
+    ${b.extrasTotal?`<details style="margin:1px 0"><summary style="color:#ea580c;cursor:pointer">🟠 ${b.extrasTotal} found here, but system says outward — fix on system (Resolve)</summary><div style="margin:3px 0 2px">${bcRows(b.extraList)}</div></details>`:''}
     <div style="display:flex;justify-content:space-between;padding:3px 0 1px;border-top:2px solid var(--ink);margin-top:3px;font-size:14px"><strong>With you now (per system)</strong><strong style="color:var(--sage)">${b.withYouNow}${b.extrasTotal?`<span style="font-size:11px;color:#ea580c;font-weight:600;margin-left:5px">🟠+${b.extrasTotal} to fix</span>`:''}</strong></div>
   </div>`;
   const sizes=Object.keys(b.sizes).sort((x,y)=>sizeRank(x)-sizeRank(y));
@@ -4160,6 +4165,55 @@ async function showBarcodeJourney(bc){
   body.innerHTML=html;
 }
 function journeyBtn(bc){ return `<button class="btn bo" style="font-size:11px;padding:6px 10px" onclick="showBarcodeJourney('${String(bc).replace(/'/g,"")}')">📜 History</button>`; }
+
+// Audit status of a barcode: scanned in an audit / flagged missing / mismatch / not audited yet.
+function auditStatusOf(bc, idx, missSet, mismSet){
+  bc=String(bc); idx=idx||buildScanIndex();
+  const hits=(idx[bc]||[]).slice().sort((x,y)=>new Date(y.at)-new Date(x.at));
+  if(hits.length){ const l=hits[0]; const verb=l.kind==='found'?'found in an update':l.kind==='misplaced'?'scanned (misplaced — belongs to another style)':'scanned'; return {code:'audited', label:'✓ Audited', detail:`${verb} in ${l.product} · ${l.color} by ${l.auditor||'?'} · ${formatDateTime(l.at)}`}; }
+  if(missSet&&missSet.has(bc)) return {code:'missing', label:'🔴 Missing', detail:"in an audit's expected list but not physically found"};
+  if(mismSet&&mismSet.has(bc)) return {code:'mismatch', label:'🟠 Mismatch', detail:'flagged present-but-system-outward in an audit'};
+  return {code:'none', label:'— Not audited yet', detail:'not part of any audit'};
+}
+// Paste many barcodes → table of each one's current system status + audit status.
+function openBulkStatus(){
+  document.getElementById('modal-title').textContent='📋 Bulk barcode status';
+  document.getElementById('modal-body').innerHTML=`
+    <div style="font-size:12px;color:var(--steel);margin-bottom:8px">Paste barcodes — one per line, or separated by spaces/commas. You'll get each one's status in the system today + whether it's been audited.</div>
+    <textarea id="bulk-status-in" rows="6" placeholder="Paste barcodes here…" style="width:100%;font-family:monospace;font-size:13px;padding:9px 11px;margin-bottom:9px"></textarea>
+    <button class="btn bg bb" onclick="runBulkStatus()" style="width:100%">Check status</button>
+    <div id="bulk-status-out" style="margin-top:11px"></div>`;
+  document.getElementById('modal-ov').classList.add('show');
+  setTimeout(()=>document.getElementById('bulk-status-in')?.focus(),200);
+}
+function runBulkStatus(){
+  const raw=(document.getElementById('bulk-status-in')?.value||'');
+  const bcs=[...new Set(raw.split(/[\s,]+/).map(s=>s.trim()).filter(Boolean).map(s=>/^\d+$/.test(s)?String(parseInt(s,10)):s))];
+  const out=document.getElementById('bulk-status-out'); if(!out) return;
+  if(!bcs.length){ out.innerHTML='<div style="color:var(--steel);font-size:12px">No barcodes entered.</div>'; return; }
+  if(!stockData.length){ out.innerHTML='<div style="color:var(--rose);font-size:12px">⚠️ Load the latest stock CSV first (Data tab) so the status is up to date.</div>'; return; }
+  const idx=buildScanIndex();
+  const missSet=new Set(collectMissing().map(m=>String(m.bc)));
+  const mismSet=new Set(collectMismatches().map(m=>String(m.bc)));
+  let inw=0,outw=0,nf=0,aud=0,rows='';
+  for(const bc of bcs){
+    const r=bcRow(bc); const st=auditStatusOf(bc, idx, missSet, mismSet);
+    let cell,col;
+    if(!r){ cell='❓ not in stock'; col='#a06800'; nf++; }
+    else if(r.status==='inward'){ cell='⬇ INWARD'; col='var(--sage)'; inw++; }
+    else { cell='⬆ OUTWARD'; col='var(--rose)'; outw++; }
+    if(st.code==='audited') aud++;
+    rows+=`<tr style="border-top:1px solid var(--border)">
+      <td style="padding:4px 5px;font-family:monospace;cursor:pointer" onclick="showBarcodeJourney('${bc}')"><span style="color:var(--sky);text-decoration:underline">${bc}</span>${r&&r.size?'<br><span style="font-size:10px;color:var(--steel)">'+r.size+'</span>':''}</td>
+      <td style="padding:4px 5px;color:${col};font-weight:700;white-space:nowrap">${cell}${r&&r.purpose?'<br><span style="font-size:10px;color:var(--steel);font-weight:400">'+r.purpose+'</span>':''}</td>
+      <td style="padding:4px 5px;font-size:11px">${st.label}</td></tr>`;
+  }
+  out.innerHTML=`<div style="font-size:12px;margin-bottom:6px"><strong>${bcs.length}</strong> checked · <span style="color:var(--sage)">${inw} inward</span> · <span style="color:var(--rose)">${outw} outward</span>${nf?' · <span style="color:#a06800">'+nf+' not in stock</span>':''} · ${aud} audited</div>
+    <table style="width:100%;border-collapse:collapse;font-size:12px">
+      <tr style="font-size:9px;text-transform:uppercase;color:var(--steel);letter-spacing:.04em"><th style="text-align:left;padding:3px 5px">Barcode</th><th style="text-align:left;padding:3px 5px">System today</th><th style="text-align:left;padding:3px 5px">Audit</th></tr>
+      ${rows}
+    </table>`;
+}
 
 // ── LIVE SCANNING (per-device heartbeat → admin live feed) ──
 function deviceId(){ let d=localStorage.getItem('jaey_device'); if(!d){ d='d'+Math.random().toString(36).slice(2,10); localStorage.setItem('jaey_device',d); } return d; }
