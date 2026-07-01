@@ -936,7 +936,7 @@ function setUserName(){ proceedToUserPin(); }
 // Service Worker registered via sw.js when hosted on GitHub Pages
 
 if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./sw.js').catch(()=>{});
-const APP_VER='v114'; // single source of truth — shown in both admin + team headers
+const APP_VER='v115'; // single source of truth — shown in both admin + team headers
 document.addEventListener('DOMContentLoaded',()=>{
   document.querySelectorAll('.app-ver').forEach(e=>e.textContent=APP_VER);
   loadStorage();
@@ -2836,8 +2836,23 @@ function renderResolve(){
         <button title="${isX?'Remove':'Remove from here'}" onclick="removeScanFromAudit(${m.auditId},'${m.bc}')" style="background:none;border:none;color:var(--rose);cursor:pointer;font-size:16px;line-height:1;padding:2px;margin-left:auto">🗑</button>
       </div></div>`;
   }
-  let html=auditedHtml+mismatchHtml+bulkBar;
-  if(!missing.length&&!auditedHtml&&!mism.length) html='<div class="empty"><div class="ei">'+(q?'🔍':'✅')+'</div><div>'+(q?'No pieces match “'+q+'”.':'No unresolved pieces.')+'</div></div>';
+  // Barcode status lookup — type/scan ANY barcode to see its current system status + full history,
+  // even when it isn't an open issue (which is why a plain search showed nothing).
+  let lookupHtml='';
+  if(q && /^\d+$/.test(q)){
+    const qn=String(parseInt(q,10)); const lr=bcRow(qn);
+    if(lr){ const inn=lr.status==='inward';
+      lookupHtml=`<div style="border:1px solid var(--sky);border-left:3px solid var(--sky);background:var(--sky-light);border-radius:8px;padding:10px;margin-bottom:8px">
+        <div style="font-weight:600;font-size:13px">🔎 BC ${qn} · ${lr.product} · ${lr.color}${lr.size?' · Size '+lr.size:''}</div>
+        <div style="font-size:12px;margin-top:3px;font-weight:700;color:${inn?'var(--sage)':'var(--rose)'}">${inn?'⬇ Currently INWARD (in stock today)':'⬆ Currently OUTWARD'}${lr.purpose?' · '+lr.purpose:''}${lr.scanTime?' · '+fmtMoveDate(lr.scanTime):''}</div>
+        <button class="btn bo" style="font-size:11px;padding:5px 10px;margin-top:6px" onclick="showBarcodeJourney('${qn}')">📜 Full movement history</button>
+      </div>`;
+    } else {
+      lookupHtml=`<div style="border:1px solid var(--gold);border-left:3px solid var(--gold);background:var(--gold-light);border-radius:8px;padding:10px;margin-bottom:8px;font-size:12px">❓ BC ${qn} isn't in the current stock CSV. <button class="btn bo" style="font-size:11px;padding:4px 9px;margin-left:4px" onclick="showBarcodeJourney('${qn}')">📜 Check history</button></div>`;
+    }
+  }
+  let html=lookupHtml+auditedHtml+mismatchHtml+bulkBar;
+  if(!missing.length&&!auditedHtml&&!mism.length&&!lookupHtml) html='<div class="empty"><div class="ei">'+(q?'🔍':'✅')+'</div><div>'+(q?'No pieces match “'+q+'”.':'No unresolved pieces.')+'</div></div>';
   const fixedByBc={}; for(const p of getFixedPending()) fixedByBc[String(p.bc)]=p; // barcodes already marked "fixed on system"
   for(const m of missing){
     const days=Math.floor((Date.now()-new Date(m.at))/86400000);
@@ -3360,14 +3375,14 @@ function stockTodayBreakdown(a){
   }
   // New arrivals (inward now, not part of the audit) count toward "with you now" too.
   const cur=(productMap[a.product]?.[a.color]||[]).filter(r=>r.status==='inward');
-  const sysSet=new Set(sysInward); let newArrivals=0;
-  for(const r of cur){ if(!sysSet.has(String(r.barcode))){ S(r.size||'—').new++; newArrivals++; } }
+  const sysSet=new Set(sysInward); let newArrivals=0; const newList=[];
+  for(const r of cur){ if(!sysSet.has(String(r.barcode))){ S(r.size||'—').new++; newArrivals++; newList.push({bc:String(r.barcode), size:r.size||'', scanTime:r.scanTime||''}); } }
   // Sys mismatches ("extras") = physically present here but the system still shows OUTWARD. Not in
   // systemInward and not currently inward, so they're invisible above — surface them so this popup
   // agrees with the card's "🟡 N sys mismatch" instead of looking like it dropped a found piece.
   let extrasTotal=0;
   for(const bc of openExtras(a)){ const row=bcRow(bc); S((row&&row.size)||'—').extra++; extrasTotal++; }
-  return {auditDayTotal:sysInward.length, foundTotal:sysInward.length-ghosts.size, missingTotal:ghosts.size, foundOut, missingOut, foundIn, missingIn, foundSampleT, missingSampleT, newArrivals, extrasTotal, withYouNow:foundIn+missingIn+newArrivals, sizes};
+  return {auditDayTotal:sysInward.length, foundTotal:sysInward.length-ghosts.size, missingTotal:ghosts.size, foundOut, missingOut, foundIn, missingIn, foundSampleT, missingSampleT, newArrivals, newList, extrasTotal, withYouNow:foundIn+missingIn+newArrivals, sizes};
 }
 // How many of this style the system currently shows inward = audit pieces still in + new arrivals.
 function withYouNow(a){
@@ -3394,7 +3409,8 @@ function showStockToday(id){
     <div style="display:flex;justify-content:space-between"><span>On audit day${auditDate?' · <strong>'+auditDate+'</strong>':''}${a.auditor?' · '+a.auditor:''}</span><strong>${b.auditDayTotal}</strong></div>
     <div style="color:var(--sage)">✓ ${b.foundTotal} audited${b.foundOut?` <span style="color:#a06800">· ${b.foundOut} outwarded since</span>`:''}</div>
     <div style="color:var(--rose)">🔴 ${b.missingTotal} missing${b.missingOut?` <span style="color:#a06800">· ${b.missingOut} outwarded since</span>`:''}</div>
-    ${b.newArrivals?`<div style="color:var(--sky)">🆕 ${b.newArrivals} new since (top up via Add pieces)</div>`:''}
+    ${b.newArrivals?`<details style="margin:1px 0"><summary style="color:var(--sky);cursor:pointer">🆕 ${b.newArrivals} new since (top up via Add pieces)</summary>
+      <div style="margin:3px 0 2px">${(b.newList||[]).map(n=>`<div style="font-size:11px;font-family:monospace;padding:2px 0;cursor:pointer" onclick="showBarcodeJourney('${n.bc}')"><span style="color:var(--sky);text-decoration:underline">BC ${n.bc}</span>${n.size?' · '+n.size:''}${n.scanTime?' · 📥 added '+fmtMoveDate(n.scanTime):''}</div>`).join('')}</div></details>`:''}
     ${b.extrasTotal?`<div style="color:#ea580c">🟠 ${b.extrasTotal} found here, but system says outward — fix on system (Resolve)</div>`:''}
     <div style="display:flex;justify-content:space-between;padding:3px 0 1px;border-top:2px solid var(--ink);margin-top:3px;font-size:14px"><strong>With you now (per system)</strong><strong style="color:var(--sage)">${b.withYouNow}${b.extrasTotal?`<span style="font-size:11px;color:#ea580c;font-weight:600;margin-left:5px">🟠+${b.extrasTotal} to fix</span>`:''}</strong></div>
   </div>`;
