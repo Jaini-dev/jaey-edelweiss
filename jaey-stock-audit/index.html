@@ -671,6 +671,7 @@ details.review-card[open]>.rc-summary{border-bottom:1px solid var(--border)}
       <button class="btn bo" id="rf-review" onclick="setReviewFilter('review')" style="font-size:11px;padding:5px 10px;border-color:var(--gold)">⏳ Needs Review</button>
       <button class="btn bo" id="rf-pending" onclick="setReviewFilter('pending')" style="font-size:11px;padding:5px 10px">📋 Pending</button>
       <button class="btn bo" id="rf-complete" onclick="setReviewFilter('complete')" style="font-size:11px;padding:5px 10px">✅ Completed</button>
+      <button class="btn bo" id="rf-archived" onclick="setReviewFilter('archived')" style="font-size:11px;padding:5px 10px">🗄️ Previous rounds</button>
     </div>
     <div id="review-list">
       <div class="empty"><div class="ei">✅</div><div>Nothing to review.</div></div>
@@ -937,7 +938,7 @@ function setUserName(){ proceedToUserPin(); }
 // Service Worker registered via sw.js when hosted on GitHub Pages
 
 if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./sw.js').catch(()=>{});
-const APP_VER='v116'; // single source of truth — shown in both admin + team headers
+const APP_VER='v117'; // single source of truth — shown in both admin + team headers
 document.addEventListener('DOMContentLoaded',()=>{
   document.querySelectorAll('.app-ver').forEach(e=>e.textContent=APP_VER);
   loadStorage();
@@ -1208,6 +1209,7 @@ function initUserShell(){
   renderUserHistory();
   refreshPlansUI();  // pull today's assignments from the cloud
   refreshAuditsUI(); // pull this user's past scans from any device
+  syncAuditRound();  // adopt the shared audit-round boundary so re-audits start fresh, not resume old
   // Auto-fetch stock from Supabase if not cached
   ensureStockLoaded();
 }
@@ -1513,7 +1515,7 @@ function openScan(product,color){
   // marked Complete by an admin (e.g. re-auditing the same style days later). Prevents the "same
   // style shows twice in Review" duplicates.
   const openPrior=audits
-    .filter(a=>a.product===product&&a.color===color&&(a.status||'review')!=='complete')
+    .filter(a=>a.product===product&&a.color===color&&(a.status||'review')!=='complete'&&inCurrentRound(a))
     .sort((a,b)=>new Date(b.updatedAt||b.savedAt||b.date||0)-new Date(a.updatedAt||a.savedAt||a.date||0))[0];
   if(openPrior){
     toast('↩️ Continuing the open audit for '+product+' · '+color+' — an admin must mark it Complete before a new one can start.');
@@ -2183,6 +2185,7 @@ function enterAdminShell(){
   renderAdminReview();
   syncStockDelta(); // pull the shared "pcs added" panel so every admin sees the same
   syncFixedPending(); // pull the shared "fixed on system" parked list
+  syncAuditRound();   // pull the shared audit-round boundary
   updateScanDataStatus();
   updateStockComposition();
   const pd=document.getElementById('plan-date');
@@ -2254,7 +2257,7 @@ function renderAdminReview(){
   // Total roll-up (admin-only — this whole screen is admin): audited work vs styles still to do.
   const _sEl=document.getElementById('review-summary');
   if(_sEl){
-    const real=audits.filter(a=>['review','updated','complete'].includes(a.status||'review'));
+    const real=audits.filter(a=>inCurrentRound(a)&&['review','updated','complete'].includes(a.status||'review'));
     const stylesA=new Set(real.map(a=>a.product+'|||'+a.color));
     let matched=0, missing=0;
     for(const a of real){
@@ -2271,8 +2274,10 @@ function renderAdminReview(){
     }
     const pendPcs=stockData.length>0?pend.reduce((n,it)=>n+(productMap[it.product]?.[it.color]||[]).filter(r=>r.status==='inward').length,0):null;
     const big="font-size:16px;font-family:'DM Serif Display',serif";
-    _sEl.innerHTML=(real.length||pend.length)?`<div style="background:var(--white);border:1px solid var(--border);border-radius:10px;padding:10px 14px;margin-bottom:10px;font-size:13px;display:flex;flex-direction:column;gap:5px">
-      <div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap">
+    const roundLbl=_roundStart?('🔵 Current round since '+new Date(_roundStart).toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'})):'🔵 Showing all audits (no round started yet)';
+    let canUndo=false; try{ canUndo=localStorage.getItem('jaey_audit_round_prev')!==null; }catch(e){}
+    _sEl.innerHTML=`<div style="background:var(--white);border:1px solid var(--border);border-radius:10px;padding:10px 14px;margin-bottom:10px;font-size:13px;display:flex;flex-direction:column;gap:5px">
+      ${(real.length||pend.length)?`<div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap">
         <span style="font-weight:700;color:var(--sage)">✅ Audited</span>
         <span><strong style="${big}">${stylesA.size}</strong> styles</span><span style="color:var(--border)">·</span>
         <span><strong style="${big};color:var(--sage)">${matched.toLocaleString()}</strong> pcs matched</span><span style="color:var(--border)">·</span>
@@ -2282,8 +2287,13 @@ function renderAdminReview(){
         <span style="font-weight:700;color:var(--steel)">⏳ Pending</span>
         <span><strong style="${big}">${pend.length}</strong> styles</span><span style="color:var(--border)">·</span>
         <span><strong style="${big}">${pendPcs==null?'—':pendPcs.toLocaleString()}</strong> pcs ${pendPcs==null?'(load stock)':'to audit'}</span>
+      </div>`:''}
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;${(real.length||pend.length)?'border-top:1px solid var(--border);padding-top:6px;margin-top:2px;':''}font-size:12px">
+        <span style="color:var(--steel)">${roundLbl}</span>
+        <button class="btn bo" style="font-size:11px;padding:4px 9px;margin-left:auto" onclick="startNewRound()">🆕 Start new round</button>
+        ${canUndo?`<button class="btn bo" style="font-size:11px;padding:4px 9px" onclick="undoNewRound()">↩︎ Undo</button>`:''}
       </div>
-    </div>`:'';
+    </div>`;
   }
   // Daily progress banner — styles audited + pieces counted today (shown above the list, any filter).
   const _dEl=document.getElementById('review-daily');
@@ -2323,6 +2333,8 @@ function renderAdminReview(){
   let filtered=audits.filter(a=>{
     const s=a.status||'review';
     if(!matchQ(a.product,a.color)) return false;
+    if(reviewFilter==='archived') return !inCurrentRound(a);     // previous rounds — read-only reference
+    if(!inCurrentRound(a)) return false;                          // hide archived from all active filters
     if(reviewFilter==='complete') return s==='complete';
     if(s==='scanning') return (Date.now()-new Date(a.updatedAt||a.savedAt||0).getTime())<2*3600000; // hide abandoned live scans
     return s==='review'||s==='updated'; // Needs Review = live, sent, or updated
@@ -2330,7 +2342,7 @@ function renderAdminReview(){
   filtered.sort((a,b)=>new Date(b.updatedAt||b.savedAt||b.date||0)-new Date(a.updatedAt||a.savedAt||a.date||0));
 
   if(!filtered.length){
-    el.innerHTML='<div class="empty"><div class="ei">'+(reviewFilter==='complete'?'✅':'📋')+'</div><div>'+(q?'No matches for “'+q+'”.':(reviewFilter==='complete'?'No completed audits yet.':'Nothing needs review.'))+'</div></div>';
+    el.innerHTML='<div class="empty"><div class="ei">'+(reviewFilter==='complete'?'✅':reviewFilter==='archived'?'🗄️':'📋')+'</div><div>'+(q?'No matches for “'+q+'”.':(reviewFilter==='complete'?'No completed audits yet.':reviewFilter==='archived'?'No previous rounds — nothing archived yet.':'Nothing needs review.'))+'</div></div>';
     return;
   }
 
@@ -2339,6 +2351,20 @@ function renderAdminReview(){
   const scanIdx=buildScanIndex();   // for auto-clearing wrong-labels accounted in their true style
   let html='';
   for(const audit of filtered){
+    if(!inCurrentRound(audit)){ // Previous-round audit — read-only reference card
+      const rr=audit.report||{}; const mmr=(rr.ghosts?.length||0)+(rr.extras?.length||0)+(rr.wrongProduct?.length||0);
+      const imga=getImg(audit.product,audit.color);
+      const dsa=new Date(audit.savedAt||audit.date).toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'});
+      html+=`<div class="review-card" style="padding:10px 13px;display:flex;gap:10px;align-items:center;opacity:.92">
+        ${imga?`<img src="${imga}" class="rc-sum-img" onerror="this.style.display='none'" alt="">`:`<div class="rc-sum-ph">👗</div>`}
+        <div style="flex:1;min-width:0">
+          <div style="font-weight:700;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${audit.product} · ${audit.color}</div>
+          <div style="font-size:11px;color:var(--steel)">🗄️ Previous round · ${dsa} · ${audit.auditor||''} · ${rr.totalScanned||0} scanned${mmr?` · <span style="color:var(--rose)">${mmr} unresolved</span>`:''}</div>
+        </div>
+        <button class="btn bo" style="font-size:11px;padding:6px 10px;flex-shrink:0" onclick="showFullDetail(${audit.id})">View detail</button>
+      </div>`;
+      continue;
+    }
     const d=new Date(audit.savedAt||audit.date);
     const ds=d.toLocaleDateString('en-IN',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});
     const r=audit.report||{};
@@ -2492,7 +2518,7 @@ function setAdminNote(id,val){
 // even when the plan item never got its startedAt flag (e.g. it was planned one day, audited another).
 function plannedButAudited(product,color,plannedDate){
   const since=plannedDate||'';
-  return audits.some(a=>a.product===product&&a.color===color&&String(a.savedAt||a.date||'')>=since);
+  return audits.some(a=>a.product===product&&a.color===color&&inCurrentRound(a)&&String(a.savedAt||a.date||'')>=since);
 }
 // The plan item for a style across EVERY planned date (prefer one not yet completed). Plan items are
 // bucketed by date, so today-only lookups orphaned styles planned on an earlier day.
@@ -2690,6 +2716,7 @@ function collectMissing(){
   const idx=buildScanIndex();
   const seen={};
   for(const a of audits){
+    if(!inCurrentRound(a)) continue; // previous-round audits are archived reference only
     const updated=a.systemUpdated||[];
     const parked=new Set(auditFixedPending(a.id).map(p=>String(p.bc)));
     for(const bc of effectiveGhosts(a)){
@@ -2721,6 +2748,7 @@ function outwardInfo(row){ if(!row) return ''; const p=row.purpose?(' to '+row.p
 function collectMismatches(){
   const out=[];
   for(const a of audits){
+    if(!inCurrentRound(a)) continue; // previous-round audits are archived reference only
     for(const bc of openExtras(a)){ const row=stockData.find(r=>String(r.barcode)===String(bc)); out.push({kind:'extra', bc:String(bc), auditId:a.id, product:a.product, color:a.color, size:row?.size||'', info:outwardInfo(row), at:a.savedAt||a.date}); }
     for(const e of openWrongProduct(a)){ const bc=String(e).split('__')[0]; const ts=wrongTrueStyle(e); const row=stockData.find(r=>String(r.barcode)===String(bc)); out.push({kind:'wrong', bc, auditId:a.id, product:a.product, color:a.color, size:row?.size||'', belongsP:ts.product, belongsC:ts.color, at:a.savedAt||a.date}); }
   }
@@ -2732,6 +2760,7 @@ function collectMismatches(){
 function newArrivalsByStyle(){
   const latest={};
   for(const a of audits){
+    if(!inCurrentRound(a)) continue; // archived rounds don't drive "new arrivals"
     const k=a.product+'|||'+a.color;
     if(!latest[k] || new Date(a.savedAt||a.date||0)>new Date(latest[k].savedAt||latest[k].date||0)) latest[k]=a;
   }
@@ -3137,6 +3166,34 @@ function saveStockDelta(since, added, removed, cumulative){
   try{localStorage.setItem('jaey_stock_delta',JSON.stringify(delta));}catch(e){}
   pushStockDeltaCloud(delta); // share the "pcs added" panel with every admin + the team
   if(added.length||removed.length) setTimeout(()=>toast('📦 +'+added.length+' added, '+removed.length+' left'+(cumulative&&addedTotal>added.length?' · '+addedTotal+' still to top up':'')),700);
+}
+// ══════════════════
+// AUDIT ROUNDS — a round-start date; audits before it are archived (read-only reference), so a fresh
+// day-to-day cycle isn't polluted by the previous round's open mismatches. Shared across devices.
+// ══════════════════
+let _roundStart=(function(){try{return localStorage.getItem('jaey_audit_round_start')||'';}catch(e){return '';}})();
+function getRoundStart(){ return _roundStart; }
+function setRoundStart(v){ _roundStart=v||''; try{ if(_roundStart) localStorage.setItem('jaey_audit_round_start',_roundStart); else localStorage.removeItem('jaey_audit_round_start'); }catch(e){} }
+// An audit belongs to the CURRENT round if it was created on/after the round-start (or no round set yet).
+function inCurrentRound(a){ if(!_roundStart) return true; return String((a&&(a.date||a.savedAt))||'')>=_roundStart; }
+function syncAuditRound(){ fetchAppState('audit_round_start').then(v=>{ if(v==null) return; const s=String(v); if(s!==_roundStart){ setRoundStart(s); if(typeof renderAdminReview==='function') renderAdminReview(); if(typeof renderResolve==='function') renderResolve(); if(typeof renderUserTasks==='function') renderUserTasks(); } }); }
+function startNewRound(){
+  if(!confirm('Start a NEW audit round?\n\nEvery current audit moves to a read-only “Previous round” archive (kept for reference — nothing is deleted). Review & Resolve will then show only audits from now on, and re-auditing a style starts fresh.\n\nYou can undo this.')) return;
+  try{ localStorage.setItem('jaey_audit_round_prev', _roundStart); }catch(e){}
+  setRoundStart(new Date().toISOString());
+  pushAppState('audit_round_start', _roundStart);
+  toast('🆕 New round started — previous audits archived for reference');
+  renderAdminReview(); if(typeof renderResolve==='function') renderResolve();
+}
+function undoNewRound(){
+  let prev=null; try{ prev=localStorage.getItem('jaey_audit_round_prev'); }catch(e){}
+  if(prev===null){ toast('Nothing to undo'); return; }
+  if(!confirm('Undo the new round?\n\nPrevious-round audits return to the active Review & Resolve view.')) return;
+  setRoundStart(prev);
+  try{ localStorage.removeItem('jaey_audit_round_prev'); }catch(e){}
+  pushAppState('audit_round_start', _roundStart);
+  toast('↩️ Round change undone');
+  renderAdminReview(); if(typeof renderResolve==='function') renderResolve();
 }
 // ── STOCK-DELTA CLOUD SYNC (one tiny app_state key so all devices see the same "pcs added") ──
 function pushStockDeltaCloud(delta){
