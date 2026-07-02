@@ -776,6 +776,7 @@ details.review-card[open]>.rc-summary{border-bottom:1px solid var(--border)}
       <div id="stock-delta" style="font-size:12px;margin-top:6px"></div>
       <div id="stock-composition" style="display:none;font-size:12px;line-height:1.6;background:var(--cream);border-radius:8px;padding:9px 11px;margin-bottom:10px"></div>
     <button class="btn bo" onclick="fetchStockFromSupabase()" style="font-size:12px;padding:6px 11px;margin-bottom:10px;width:100%" id="fetch-stock-btn">☁️ Fetch latest from Supabase</button>
+    <button class="btn bo" onclick="showPickList()" style="font-size:12px;padding:6px 11px;margin-bottom:10px;width:100%" id="picklist-btn">📋 Pick list (temp)</button><!-- TEMP PICKLIST button -->
       <div class="uz" onclick="document.getElementById('csv-f').click()">
         <div style="font-size:26px;margin-bottom:5px">📁</div>
         <strong>Upload barcode CSV</strong>
@@ -938,7 +939,7 @@ function setUserName(){ proceedToUserPin(); }
 // Service Worker registered via sw.js when hosted on GitHub Pages
 
 if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./sw.js').catch(()=>{});
-const APP_VER='v118'; // single source of truth — shown in both admin + team headers
+const APP_VER='v119'; // single source of truth — shown in both admin + team headers
 document.addEventListener('DOMContentLoaded',()=>{
   document.querySelectorAll('.app-ver').forEach(e=>e.textContent=APP_VER);
   loadStorage();
@@ -5165,6 +5166,33 @@ function formatDate(ds){const d=new Date(ds+'T00:00:00');return d.toLocaleDateSt
 // Date + time, e.g. "18 Jun, 2:30 PM". Accepts an ISO string or a Date.
 function formatDateTime(v){const d=(v instanceof Date)?v:new Date(v);if(isNaN(d))return '';return d.toLocaleString('en-IN',{day:'numeric',month:'short',hour:'numeric',minute:'2-digit',hour12:true});}
 function getImg(p,c){return CATALOGUE_IMAGES[p+'|||'+c]||null;}
+
+/* ===== TEMP PICK LIST (Jaini) — one-off; delete this function + its Data-tab button + the #picklist
+   hash hook in one go when done. Renders a photo picking-list; open via the Data-tab button or the
+   link  <site>/#picklist  on any device. ===== */
+function showPickList(){
+  const items=[["Alpha Grace Top","Grey","32901","4XL"],["Asymmetrical Overlap Top","Blue","10101","5XL"],["Asymmetrical Overlap Top","Green","10103","4XL"],["Backset Twill Trouser","Black","32501","42"],["Bellona Sheath Dress","Purple","28801","6XL"],["Chic Executive Pants","Blue","22801","44"],["Clearance Blazer","Purple","25501","5XL"],["Contemporary Linen Shirt","Green","32201","4XL"],["Cowl Sleeve Dress","Purple","5503","5XL"],["Cowl Sleeve Dress","Blue","5504","5XL"],["Dualmode Waistcoat","Beige","27601","6XL"],["Dualmode Waistcoat","Beige","27601","5XL"],["Flex Ease Bootcut Trouser","Blue","10201","44"],["Flex Ease Bootcut Trouser","Green","10203","44"],["Flowy Back Elasticated Trouser","Green","23001","44"],["Korean Twist Trousers","Grey","28101","44"],["Luxe Fusion Collar Waistcoat","Blue","21601","4XL"],["Overlap Blazer Dress","Black","3003","6XL"],["Panel Play Top","Grey","27501","4XL"],["Polka Dot Collar Top","White","26701","4XL"],["Relaxed Double Pleat Trouser","Black","17201","44"],["Seoul Aura Top","Black","27101","6XL"],["Seoul Fit Trousers","Beige","28001","44"],["Tripleline Trousers","Grey","33001","44"],["Tulip Sleeve Peplum Top","Purple","13501","5XL"],["Tulip Sleeve Peplum Top","Red","13502","6XL"],["Twilight Panel Dress","Blue","17001","6XL"]];
+  const CLR={grey:'#9aa0a6',gray:'#9aa0a6',blue:'#3b6fd4',green:'#3f8f5b',black:'#222',purple:'#7c3aed',beige:'#c8b08a',white:'#cfcfcf',red:'#d64545'};
+  const pic=(p,c)=>getImg(p,c)||(STYLES_DATA.find(s=>s.product===p&&s.color===c)||{}).image||'';
+  let cards='';
+  items.forEach((it,i)=>{ const p=it[0],c=it[1],iid=it[2],sz=it[3]; const img=pic(p,c); const dot=CLR[c.toLowerCase()]||'#888';
+    cards+=`<div style="position:relative;background:#fff;border:1px solid var(--border);border-radius:10px;overflow:hidden">
+      <div style="position:absolute;top:5px;left:5px;background:var(--ink);color:#fff;font-size:10px;font-weight:700;padding:1px 6px;border-radius:20px">${i+1}</div>
+      <div style="aspect-ratio:3/4;background:var(--cream);display:flex;align-items:center;justify-content:center;font-size:30px">${img?`<img src="${img}" loading="lazy" style="width:100%;height:100%;object-fit:cover" onerror="this.parentNode.textContent='👗'">`:'👗'}</div>
+      <div style="padding:7px 9px">
+        <div style="font-weight:700;font-size:13px;line-height:1.2">${p}</div>
+        <div style="font-size:11px;color:var(--steel);margin-top:2px"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${dot};vertical-align:middle;margin-right:4px;border:1px solid rgba(0,0,0,.15)"></span>${c}</div>
+        <div style="font-size:14px;margin-top:4px">Size <b>${sz}</b></div>
+        <div style="font-size:10px;color:#aaa;font-family:monospace">ID ${iid}</div>
+      </div></div>`;
+  });
+  document.getElementById('modal-title').textContent='📋 Pick list — '+items.length+' outfits';
+  document.getElementById('modal-body').innerHTML=`<div style="font-size:12px;color:var(--steel);margin-bottom:8px">Match the <b>photo + colour + Item ID</b>, pull the <b>size</b> shown. (Dualmode Waistcoat Beige is needed in two sizes.)</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:9px">${cards}</div>`;
+  document.getElementById('modal-ov').classList.add('show');
+}
+try{ window.addEventListener('load',()=>{ if(location.hash==='#picklist') setTimeout(showPickList,700); }); }catch(e){} /* TEMP PICKLIST hash opener */
+/* ===== end TEMP PICK LIST ===== */
 function esc(s){return(s||'').replace(/'/g,"\\'").replace(/"/g,'&quot;');}
 function closeModal(){document.getElementById('modal-ov').classList.remove('show');}
 document.getElementById('modal-ov').addEventListener('click',function(e){if(e.target===this)closeModal();});
