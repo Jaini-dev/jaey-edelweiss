@@ -938,7 +938,7 @@ function setUserName(){ proceedToUserPin(); }
 // Service Worker registered via sw.js when hosted on GitHub Pages
 
 if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./sw.js').catch(()=>{});
-const APP_VER='v117'; // single source of truth — shown in both admin + team headers
+const APP_VER='v118'; // single source of truth — shown in both admin + team headers
 document.addEventListener('DOMContentLoaded',()=>{
   document.querySelectorAll('.app-ver').forEach(e=>e.textContent=APP_VER);
   loadStorage();
@@ -2725,8 +2725,10 @@ function collectMissing(){
       const at=a.savedAt||a.date;
       if(seen[bc] && new Date(seen[bc].at)>=new Date(at)) continue; // keep most recent flag
       const row=stockData.find(r=>r.barcode==bc);
-      // Last physical scan of this bc in any OTHER audit = its likely current location.
-      const scans=(idx[bc]||[]).filter(s=>s.auditId!==a.id).sort((x,y)=>new Date(y.at)-new Date(x.at));
+      // Last physical scan of this bc in a DIFFERENT style = a genuine misplacement worth flagging.
+      // Scans in its own style (e.g. an earlier/previous-round audit of the same style) aren't a
+      // misplacement, so they don't get the "Last scanned in" highlight — that was just noise.
+      const scans=(idx[bc]||[]).filter(s=>s.auditId!==a.id && !(s.product===a.product && s.color===a.color)).sort((x,y)=>new Date(y.at)-new Date(x.at));
       // Inward date from the CSV (last movement). If it's after this audit first ran, it's a NEW arrival,
       // not a loss — so we can show "🆕 new" instead of "missing".
       const inwTs=row?.scanTime?Date.parse(scanTimeISO(row.scanTime)||''):NaN;
