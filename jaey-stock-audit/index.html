@@ -939,7 +939,7 @@ function setUserName(){ proceedToUserPin(); }
 // Service Worker registered via sw.js when hosted on GitHub Pages
 
 if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./sw.js').catch(()=>{});
-const APP_VER='v119'; // single source of truth — shown in both admin + team headers
+const APP_VER='v120'; // single source of truth — shown in both admin + team headers
 document.addEventListener('DOMContentLoaded',()=>{
   document.querySelectorAll('.app-ver').forEach(e=>e.textContent=APP_VER);
   loadStorage();
@@ -1246,8 +1246,10 @@ function renderUserTasks(){
 
   // Gather pending carryover from past days (not done, not complete)
   const pastPending=[];
+  const roundDay=_roundStart?_roundStart.slice(0,10):'';
   const allDates=Object.keys(plans).filter(d=>d<today).sort();
   for(const d of allDates){
+    if(roundDay && d<roundDay) continue; // a new round drops carryover from before it started
     const dayItems=plans[d]||[];
     for(const item of dayItems){
       if(name&&item.assignee&&item.assignee.toLowerCase()!==name.toLowerCase()) continue;
@@ -2144,14 +2146,13 @@ function renderUserHistory(){
   // Only flag "new pieces added" on the latest audit per style, so it shows once.
   const latestId={};
   for(const a of filtered){ const k=a.product+'|||'+a.color; if(!latestId[k]||new Date(a.savedAt||a.date||0)>new Date(latestId[k].t)) latestId[k]={id:a.id,t:new Date(a.savedAt||a.date||0)}; }
-  let html='';
-  for(const a of filtered){
+  const card=(a,readonly)=>{
     const ds=formatDateTime(a.savedAt||a.date);
     const r=a.report||{};
     const mm=(r.ghosts?.length||0)+(r.extras?.length||0)+(r.wrongProduct?.length||0);
     const status=a.status||'review';
     const img=getImg(a.product,a.color);
-    html+=`<div class="hist-item" style="display:flex;gap:9px">
+    return `<div class="hist-item" style="display:flex;gap:9px${readonly?';opacity:.9':''}">
       ${img?`<img src="${img}" onclick="zoomImg('${img}')" style="width:40px;height:48px;object-fit:cover;border-radius:5px;flex-shrink:0;cursor:zoom-in" onerror="this.style.display='none'" alt="">`:''}
       <div style="flex:1">
         <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:5px">
@@ -2164,11 +2165,14 @@ function renderUserHistory(){
           <span class="badge b-sage">✓ ${r.matched||0}</span>
           ${mm?'<span class="badge b-rose">⚠️ '+mm+'</span>':'<span class="badge b-sage">✅ Clear</span>'}
         </div>
-        ${mm&&status!=='complete'?`<button style="background:none;border:none;color:var(--rose);font-size:12px;cursor:pointer;padding:0;margin-top:4px;text-decoration:underline" onclick="openUpdateMode(${a.id})">Update →</button>`:''}
-        ${(latestId[a.product+'|||'+a.color]?.id===a.id)?(()=>{const np=newPiecesFor(a.product,a.color);return np>0?`<div style="margin-top:6px;background:var(--sage-light);border:1px solid var(--sage);border-radius:8px;padding:5px 9px;font-size:11px;display:flex;justify-content:space-between;align-items:center;gap:8px"><span style="color:#3d6b3d;font-weight:600">📦 +${np} new piece${np>1?'s':''} added</span><button class="btn bo" style="font-size:10px;padding:3px 9px" onclick="continueAudit(${a.id})">➕ Add pieces</button></div>`:'';})():''}
+        ${!readonly&&mm&&status!=='complete'?`<button style="background:none;border:none;color:var(--rose);font-size:12px;cursor:pointer;padding:0;margin-top:4px;text-decoration:underline" onclick="openUpdateMode(${a.id})">Update →</button>`:''}
+        ${!readonly&&(latestId[a.product+'|||'+a.color]?.id===a.id)?(()=>{const np=newPiecesFor(a.product,a.color);return np>0?`<div style="margin-top:6px;background:var(--sage-light);border:1px solid var(--sage);border-radius:8px;padding:5px 9px;font-size:11px;display:flex;justify-content:space-between;align-items:center;gap:8px"><span style="color:#3d6b3d;font-weight:600">📦 +${np} new piece${np>1?'s':''} added</span><button class="btn bo" style="font-size:10px;padding:3px 9px" onclick="continueAudit(${a.id})">➕ Add pieces</button></div>`:'';})():''}
       </div>
     </div>`;
-  }
+  };
+  const cur=filtered.filter(a=>inCurrentRound(a)), prev=filtered.filter(a=>!inCurrentRound(a));
+  let html=cur.length?cur.map(a=>card(a,false)).join(''):'<div style="color:var(--steel);font-size:13px;padding:10px 2px">No audits in the current round yet.</div>';
+  if(prev.length) html+=`<details style="margin-top:10px"><summary style="cursor:pointer;font-weight:700;font-size:13px;color:var(--steel)">🗄️ Previous rounds (${prev.length})</summary><div style="margin-top:8px">${prev.map(a=>card(a,true)).join('')}</div></details>`;
   el.innerHTML=html;
 }
 
@@ -3179,7 +3183,7 @@ function getRoundStart(){ return _roundStart; }
 function setRoundStart(v){ _roundStart=v||''; try{ if(_roundStart) localStorage.setItem('jaey_audit_round_start',_roundStart); else localStorage.removeItem('jaey_audit_round_start'); }catch(e){} }
 // An audit belongs to the CURRENT round if it was created on/after the round-start (or no round set yet).
 function inCurrentRound(a){ if(!_roundStart) return true; return String((a&&(a.date||a.savedAt))||'')>=_roundStart; }
-function syncAuditRound(){ fetchAppState('audit_round_start').then(v=>{ if(v==null) return; const s=String(v); if(s!==_roundStart){ setRoundStart(s); if(typeof renderAdminReview==='function') renderAdminReview(); if(typeof renderResolve==='function') renderResolve(); if(typeof renderUserTasks==='function') renderUserTasks(); } }); }
+function syncAuditRound(){ fetchAppState('audit_round_start').then(v=>{ if(v==null) return; const s=String(v); if(s!==_roundStart){ setRoundStart(s); if(typeof renderAdminReview==='function') renderAdminReview(); if(typeof renderResolve==='function') renderResolve(); if(typeof renderUserTasks==='function') renderUserTasks(); if(typeof renderUserHistory==='function') renderUserHistory(); } }); }
 function startNewRound(){
   if(!confirm('Start a NEW audit round?\n\nEvery current audit moves to a read-only “Previous round” archive (kept for reference — nothing is deleted). Review & Resolve will then show only audits from now on, and re-auditing a style starts fresh.\n\nYou can undo this.')) return;
   try{ localStorage.setItem('jaey_audit_round_prev', _roundStart); }catch(e){}
