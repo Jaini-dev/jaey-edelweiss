@@ -944,7 +944,7 @@ function setUserName(){ proceedToUserPin(); }
 // Service Worker registered via sw.js when hosted on GitHub Pages
 
 if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./sw.js').catch(()=>{});
-const APP_VER='v128'; // single source of truth — shown in both admin + team headers
+const APP_VER='v129'; // single source of truth — shown in both admin + team headers
 document.addEventListener('DOMContentLoaded',()=>{
   document.querySelectorAll('.app-ver').forEach(e=>e.textContent=APP_VER);
   loadStorage();
@@ -2946,7 +2946,7 @@ function renderResolve(){
 
   // Show "Lost CSV" export when anything was written off as Lost today.
   repairLostLog(); // restore any write-offs the old auto-recover bug hid
-  const _lostPend=getLostLog().filter(l=>!l.recovered && !l.dismissed);
+  const _lostPend=getLostLog().filter(l=>!l.recovered && !l.dismissed && !l.done);
   const _lostBtn=document.getElementById('export-lost-btn');
   if(_lostBtn){ _lostBtn.style.display=_lostPend.length?'inline-flex':'none'; _lostBtn.textContent='⬇️ Unknown CSV ('+_lostPend.length+')'; }
 
@@ -3119,7 +3119,7 @@ function showAllUnknown(){
   document.getElementById('modal-title').textContent='🗂️ All Unknown-marked pieces';
   const body=document.getElementById('modal-body');
   if(!log.length){ body.innerHTML='<div style="font-size:13px;color:var(--steel);padding:10px">Nothing marked Unknown yet.</div>'; document.getElementById('modal-ov').classList.add('show'); return; }
-  const pend=log.filter(l=>!l.recovered && !l.dismissed);
+  const pend=log.filter(l=>!l.recovered && !l.dismissed && !l.done);
   const totR=log.filter(l=>l.recovered && !l.dismissed).length;
   const groups={};
   for(const l of pend){ const k=(l.product||'?')+'|||'+(l.color||'?'); (groups[k]=groups[k]||[]).push(l); }
@@ -3133,9 +3133,14 @@ function showAllUnknown(){
       html+=`<div style="display:flex;align-items:center;gap:8px;padding:3px 0;font-size:12px"><span style="flex:1;font-family:monospace">BC ${l.barcode}${l.size?' · '+l.size:''}</span>${st}<button onclick="removeOneUnknown('${String(l.barcode).replace(/'/g,'')}')" title="Remove from Unknown" style="background:none;border:none;color:var(--rose);cursor:pointer;font-size:14px">🗑</button></div>`; }
     html+=`</div></details>`;
   }
+  const doneN=log.filter(l=>l.done && !l.dismissed).length;
+  if(doneN){ html+=`<details style="margin-top:10px;border:1px solid var(--border);border-radius:8px;padding:6px 9px"><summary style="cursor:pointer;font-weight:600;font-size:13px;color:var(--sage)">✅ Done / exported (${doneN})</summary>
+    <div style="font-size:11px;color:var(--steel);margin:4px 0">Already downloaded &amp; applied to inventory. Restore only if you need to re-export.</div>
+    <button class="btn bo" style="width:100%;font-size:11px;padding:5px 9px" onclick="restoreDoneUnknown()">↩️ Move all ${doneN} back to pending</button></details>`; }
   body.innerHTML=html;
   document.getElementById('modal-ov').classList.add('show');
 }
+function restoreDoneUnknown(){ const log=getLostLog(); const n=log.filter(l=>l.done).length; if(!n){ toast('Nothing to restore'); return; } if(!confirm('Move all '+n+' done pieces back to pending (to re-export)?')) return; for(const l of log){ if(l.done){ l.done=false; delete l.doneAt; l.exported=false; l.recovered=false; } } saveLostLog(log); toast('↩️ '+n+' back to pending'); showAllUnknown(); renderResolve(); }
 // Manually drop a piece from the Unknown list (it's actually present). Uses a 'dismissed' flag so the
 // repair/recovery logic never brings it back.
 function removeOneUnknown(bc){ bc=String(bc); const log=getLostLog(); let n=0; for(const l of log){ if(String(l.barcode)===bc && !l.dismissed){ l.dismissed=true; n++; } } if(n){ saveLostLog(log); toast('🗑 BC '+bc+' removed from Unknown'); showAllUnknown(); renderResolve(); } }
@@ -3168,8 +3173,9 @@ function restoreAllUnknown(){
 //   barcode,item_id,size_id,note,status,purpose  → note blank, status outward, purpose Unknown.
 function exportLostCSV(){
   repairLostLog(); // restore any write-offs the old auto-recover bug hid
-  const todays=getLostLog().filter(l=>!l.recovered && !l.dismissed); // all pending write-offs (any day), not just today
+  const todays=getLostLog().filter(l=>!l.recovered && !l.dismissed && !l.done); // pending write-offs not yet exported/done
   if(!todays.length){ toast('No pending Unknown pieces'); return; }
+  if(!confirm('Download the Unknown CSV for '+todays.length+' piece'+(todays.length>1?'s':'')+'?\n\nThis is what you upload to inventory, so they\'ll be marked DONE and cleared from the pending list. (You can restore them from 🗂️ All Unknown → Done if you ever need to re-export.)')) return;
   const missingIds=todays.filter(l=>!l.itemId||!l.sizeId);
   if(missingIds.length && !confirm('⚠️ '+missingIds.length+' of '+todays.length+' Unknown rows are missing Item ID / Size ID (stock CSV not loaded when marked).\n\nLoad today\'s stock CSV and re-mark for complete rows, or export now with blanks?\n\nExport now?')) return;
   // First 6 columns are what the inventory upload reads; product_name/color/size are appended for
@@ -3180,11 +3186,13 @@ function exportLostCSV(){
   const csv=rows.map(r=>r.map(cq).join(',')).join('\n');
   const b=new Blob([csv],{type:'text/csv'}); const u=URL.createObjectURL(b);
   const a=document.createElement('a'); a.href=u; a.download='jaey_unknown_'+todayStr()+'.csv'; a.click(); URL.revokeObjectURL(u);
-  // Mark exported (keeps them in the log for recovery-watch).
+  // Mark DONE — cleared from pending (applied to inventory). Kept in the log for the audit trail /
+  // restore. exported=true keeps the recovery-watch working if a piece later comes back inward.
   const log=getLostLog(); const set=new Set(todays.map(l=>l.barcode));
-  for(const l of log){ if(set.has(l.barcode)) l.exported=true; }
+  for(const l of log){ if(set.has(l.barcode)){ l.exported=true; l.done=true; l.doneAt=new Date().toISOString(); } }
   saveLostLog(log);
-  toast('⬇️ Exported '+todays.length+' Unknown piece'+(todays.length>1?'s':''));
+  toast('⬇️ Exported '+todays.length+' — marked done & cleared from pending');
+  renderResolve();
 }
 
 // After a fresh stock CSV loads, flag any previously-Lost barcode that is now inward again
