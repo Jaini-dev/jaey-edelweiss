@@ -943,7 +943,7 @@ function setUserName(){ proceedToUserPin(); }
 // Service Worker registered via sw.js when hosted on GitHub Pages
 
 if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./sw.js').catch(()=>{});
-const APP_VER='v122'; // single source of truth — shown in both admin + team headers
+const APP_VER='v123'; // single source of truth — shown in both admin + team headers
 document.addEventListener('DOMContentLoaded',()=>{
   document.querySelectorAll('.app-ver').forEach(e=>e.textContent=APP_VER);
   loadStorage();
@@ -3106,9 +3106,12 @@ function exportLostCSV(){
   if(!todays.length){ toast('No pending Unknown pieces'); return; }
   const missingIds=todays.filter(l=>!l.itemId||!l.sizeId);
   if(missingIds.length && !confirm('⚠️ '+missingIds.length+' of '+todays.length+' Unknown rows are missing Item ID / Size ID (stock CSV not loaded when marked).\n\nLoad today\'s stock CSV and re-mark for complete rows, or export now with blanks?\n\nExport now?')) return;
-  const rows=[['barcode','item_id','size_id','note','status','purpose']];
-  for(const l of todays) rows.push([l.barcode, l.itemId||'', l.sizeId||'', '', 'outward', 'Unknown']);
-  const csv=rows.map(r=>r.join(',')).join('\n');
+  // First 6 columns are what the inventory upload reads; product_name/color/size are appended for
+  // easy human checking (the upload ignores extra trailing columns).
+  const rows=[['barcode','item_id','size_id','note','status','purpose','product_name','color','size']];
+  for(const l of todays) rows.push([l.barcode, l.itemId||'', l.sizeId||'', '', 'outward', 'Unknown', l.product||'', l.color||'', l.size||'']);
+  const cq=v=>{ v=String(v==null?'':v); return /[",\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v; };
+  const csv=rows.map(r=>r.map(cq).join(',')).join('\n');
   const b=new Blob([csv],{type:'text/csv'}); const u=URL.createObjectURL(b);
   const a=document.createElement('a'); a.href=u; a.download='jaey_unknown_'+todayStr()+'.csv'; a.click(); URL.revokeObjectURL(u);
   // Mark exported (keeps them in the log for recovery-watch).
