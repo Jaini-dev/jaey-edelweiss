@@ -943,7 +943,7 @@ function setUserName(){ proceedToUserPin(); }
 // Service Worker registered via sw.js when hosted on GitHub Pages
 
 if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./sw.js').catch(()=>{});
-const APP_VER='v121'; // single source of truth — shown in both admin + team headers
+const APP_VER='v122'; // single source of truth — shown in both admin + team headers
 document.addEventListener('DOMContentLoaded',()=>{
   document.querySelectorAll('.app-ver').forEach(e=>e.textContent=APP_VER);
   loadStorage();
@@ -2942,9 +2942,10 @@ function renderResolve(){
   updateBulkBar();
 
   // Show "Lost CSV" export when anything was written off as Lost today.
-  const _lostToday=getLostLog().filter(l=>(l.at||'').startsWith(todayStr()));
+  repairLostLog(); // restore any write-offs the old auto-recover bug hid
+  const _lostPend=getLostLog().filter(l=>!l.recovered);
   const _lostBtn=document.getElementById('export-lost-btn');
-  if(_lostBtn){ _lostBtn.style.display=_lostToday.length?'inline-flex':'none'; _lostBtn.textContent='⬇️ Unknown CSV ('+_lostToday.length+')'; }
+  if(_lostBtn){ _lostBtn.style.display=_lostPend.length?'inline-flex':'none'; _lostBtn.textContent='⬇️ Unknown CSV ('+_lostPend.length+')'; }
 
   // Extras: physically present but system says outward → offer "Mark INWARD".
   const exCard=document.getElementById('resolve-extras-card'); const exEl=document.getElementById('resolve-extras');
@@ -3100,8 +3101,9 @@ function bulkMarkFound(){
 // Download today's Lost write-offs in the inventory upload format:
 //   barcode,item_id,size_id,note,status,purpose  → note blank, status outward, purpose Unknown.
 function exportLostCSV(){
-  const todays=getLostLog().filter(l=>(l.at||'').startsWith(todayStr()) && !l.recovered);
-  if(!todays.length){ toast('No pieces marked Unknown today'); return; }
+  repairLostLog(); // restore any write-offs the old auto-recover bug hid
+  const todays=getLostLog().filter(l=>!l.recovered); // all pending write-offs (any day), not just today
+  if(!todays.length){ toast('No pending Unknown pieces'); return; }
   const missingIds=todays.filter(l=>!l.itemId||!l.sizeId);
   if(missingIds.length && !confirm('⚠️ '+missingIds.length+' of '+todays.length+' Unknown rows are missing Item ID / Size ID (stock CSV not loaded when marked).\n\nLoad today\'s stock CSV and re-mark for complete rows, or export now with blanks?\n\nExport now?')) return;
   const rows=[['barcode','item_id','size_id','note','status','purpose']];
@@ -3422,9 +3424,14 @@ function recoveryCheck(rows){
   const log=getLostLog(); if(!log.length) return;
   const inward=new Set(rows.filter(r=>r.status==='inward').map(r=>String(r.barcode)));
   let n=0;
-  for(const l of log){ if(!l.recovered && inward.has(l.barcode)){ l.recovered=true; l.recoveredAt=new Date().toISOString(); n++; } }
+  // Only auto-recover a write-off that was ALREADY EXPORTED to inventory. Before export, a fresh CSV
+  // still shows the piece inward (inventory hasn't been told yet) — that's NOT a recovery, and marking
+  // it recovered would silently drop the write-off from the Unknown CSV.
+  for(const l of log){ if(!l.recovered && l.exported && inward.has(l.barcode)){ l.recovered=true; l.recoveredAt=new Date().toISOString(); n++; } }
   if(n){ saveLostLog(log); toast('♻️ '+n+' written-off piece'+(n>1?'s':'')+' recovered (now inward)'); }
 }
+// One-time repair: un-recover write-offs that were flagged "recovered" but never exported (the old bug).
+function repairLostLog(){ const log=getLostLog(); let n=0; for(const l of log){ if(l.recovered && !l.exported){ l.recovered=false; delete l.recoveredAt; n++; } } if(n) saveLostLog(log); return n; }
 
 // Collapse the many per-piece follow-ups into a single "found N pcs" trail entry.
 function followUpSummary(a){
