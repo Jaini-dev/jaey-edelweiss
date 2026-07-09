@@ -944,7 +944,7 @@ function setUserName(){ proceedToUserPin(); }
 // Service Worker registered via sw.js when hosted on GitHub Pages
 
 if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./sw.js').catch(()=>{});
-const APP_VER='v129'; // single source of truth — shown in both admin + team headers
+const APP_VER='v130'; // single source of truth — shown in both admin + team headers
 document.addEventListener('DOMContentLoaded',()=>{
   document.querySelectorAll('.app-ver').forEach(e=>e.textContent=APP_VER);
   loadStorage();
@@ -3621,6 +3621,8 @@ function showScannedBarcodes(id){
   let autoAcc=0;
   document.getElementById('modal-title').textContent='✅ Accounted · '+a.product+' · '+a.color;
   const rmBtn=bc=>`<button onclick="removeScanFromAudit(${a.id},'${bc}')" title="Remove — scanned here by mistake" style="background:none;border:none;color:var(--rose);cursor:pointer;font-size:15px;line-height:1;padding:0 2px;flex-shrink:0">🗑</button>`;
+  const scanDateOf=bc=>{ const fu=(a.followUps||[]).find(f=>(f.foundBarcodes||[]).map(String).includes(String(bc))); const t=(fu&&fu.at)||(a.scanTimes&&a.scanTimes[bc])||a.date||a.savedAt; return t?new Date(t).toLocaleDateString('en-IN',{day:'numeric',month:'short'}):''; };
+  const dateTag=bc=>{ const d=scanDateOf(bc); return d?'🗓️ '+d+' · ':''; };
   // count auto-accounted (was missing, now outward in the system)
   for(const bc of acc){ if(ghostSet.has(String(bc))) autoAcc++; }
   let html='<div style="font-size:12px;color:var(--steel);margin-bottom:6px">'+acc.length+' of '+sysTotal(a)+' in system accounted for'+(found.size?' · '+found.size+' found after first scan':'')+'</div>';
@@ -3641,15 +3643,17 @@ function showScannedBarcodes(id){
       <span style="font-family:monospace">BC ${bc}${f?' · '+f.size:''}</span>
       <span style="display:flex;align-items:center;gap:8px;flex-shrink:0"><span style="font-size:11px;color:${isFound?'var(--sky)':'var(--sage)'}">${isFound?'🔄 found in update':'✓ scanned'}</span>${rmBtn(bc)}</span></div>`;
   }
+  const histLink=bc=>`<a onclick="showBarcodeJourney('${String(bc).replace(/'/g,'')}')" style="font-size:11px;color:var(--sky);cursor:pointer;text-decoration:underline;white-space:nowrap">📜 History</a>`;
+  const nowStatus=bc=>{ const r=bcRow(bc); return r?(r.status==='inward'?' · <span style="color:var(--sage)">now IN</span>':' · <span style="color:var(--rose)">still OUT</span>'):''; };
   const extras=(a.report?.extras)||[];
   if(extras.length){ html+='<div style="font-weight:600;margin:10px 0 5px;font-size:13px">🟡 Also in hand (system says outward): '+extras.length+'</div>';
-    for(const bc of extras){ const f=stockData.find(x=>x.barcode==bc); html+=`<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:5px 9px;background:var(--gold-light);border-radius:5px;margin-bottom:4px;font-size:13px"><span style="font-family:monospace">BC ${bc}${f?' · '+f.size:''}</span>${rmBtn(bc)}</div>`; } }
+    for(const bc of extras){ const f=stockData.find(x=>x.barcode==bc); html+=`<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:5px 9px;background:var(--gold-light);border-radius:5px;margin-bottom:4px;font-size:12px"><span style="font-family:monospace">${dateTag(bc)}BC ${bc}${f?' · '+f.size:''}${nowStatus(bc)}</span><span style="display:flex;gap:8px;align-items:center;flex-shrink:0">${histLink(bc)}${rmBtn(bc)}</span></div>`; } }
   const wrong=(a.report?.wrongProduct)||[];
   if(wrong.length){ html+='<div style="font-weight:600;margin:10px 0 5px;font-size:13px">⚠️ Wrong label (belongs to another style): '+wrong.length+'</div>';
-    for(const e of wrong){ const bc=String(e).split('__')[0]; const belongs=String(e).split('__WRONG:')[1]?.split('|||')[0]||''; html+=`<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:5px 9px;background:var(--rose-light);border-radius:5px;margin-bottom:4px;font-size:13px"><span style="font-family:monospace">BC ${bc}${belongs?' · → '+belongs:''}</span>${rmBtn(bc)}</div>`; } }
+    for(const e of wrong){ const bc=String(e).split('__')[0]; const belongs=String(e).split('__WRONG:')[1]?.split('|||')[0]||''; html+=`<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:5px 9px;background:var(--rose-light);border-radius:5px;margin-bottom:4px;font-size:12px"><span style="font-family:monospace">${dateTag(bc)}BC ${bc}${belongs?' · → '+belongs:''}</span><span style="display:flex;gap:8px;align-items:center;flex-shrink:0">${histLink(bc)}${rmBtn(bc)}</span></div>`; } }
   const unknown=(a.report?.unknown)||[];
   if(unknown.length){ html+='<div style="font-weight:600;margin:10px 0 5px;font-size:13px">❓ Unknown / not in catalogue: '+unknown.length+'</div>';
-    for(const e of unknown){ const bc=String(e).split('__')[0]; html+=`<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:5px 9px;background:var(--cream);border-radius:5px;margin-bottom:4px;font-size:13px"><span style="font-family:monospace">BC ${bc}</span>${rmBtn(bc)}</div>`; } }
+    for(const e of unknown){ const bc=String(e).split('__')[0]; html+=`<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:5px 9px;background:var(--cream);border-radius:5px;margin-bottom:4px;font-size:12px"><span style="font-family:monospace">${dateTag(bc)}BC ${bc}${nowStatus(bc)}</span><span style="display:flex;gap:8px;align-items:center;flex-shrink:0">${histLink(bc)}${rmBtn(bc)}</span></div>`; } }
   document.getElementById('modal-body').innerHTML=html;
   document.getElementById('modal-ov').classList.add('show');
 }
