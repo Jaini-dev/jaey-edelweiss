@@ -944,7 +944,7 @@ function setUserName(){ proceedToUserPin(); }
 // Service Worker registered via sw.js when hosted on GitHub Pages
 
 if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./sw.js').catch(()=>{});
-const APP_VER='v126'; // single source of truth — shown in both admin + team headers
+const APP_VER='v127'; // single source of truth — shown in both admin + team headers
 document.addEventListener('DOMContentLoaded',()=>{
   document.querySelectorAll('.app-ver').forEach(e=>e.textContent=APP_VER);
   loadStorage();
@@ -3127,7 +3127,8 @@ function showAllUnknown(){
     <div style="font-size:13px;margin-bottom:8px"><b>${pend.length} pending</b>${totR?` · <span style="color:#a06800">${totR} hidden</span>`:''}</div>
     ${totR?`<button class="btn bo bb" style="width:100%;margin-bottom:10px;font-size:12px" onclick="restoreAllUnknown()">♻️ Restore all ${totR} hidden → pending</button>`:''}`;
   for(const k of Object.keys(groups).sort()){ const parts=k.split('|||'); const items=groups[k];
-    html+=`<details style="border:1px solid var(--border);border-radius:8px;margin-bottom:6px;padding:6px 9px"><summary style="cursor:pointer;font-weight:600;font-size:13px">${parts[0]} · ${parts[1]} — ${items.length}</summary><div style="margin-top:5px">`;
+    html+=`<details style="border:1px solid var(--border);border-radius:8px;margin-bottom:6px;padding:6px 9px"><summary style="cursor:pointer;font-weight:600;font-size:13px">${parts[0]} · ${parts[1]} — ${items.length}</summary><div style="margin-top:5px">
+      <button onclick="undoUnknownForStyle('${esc(parts[0])}','${esc(parts[1])}')" style="background:none;border:1px solid var(--rose);color:var(--rose);border-radius:7px;font-size:11px;padding:5px 9px;margin-bottom:6px;cursor:pointer;width:100%">↩️ Undo all ${items.length} — back to missing (re-mark cleanly)</button>`;
     for(const l of items){ const row=bcRow(l.barcode); const st=row?(row.status==='inward'?'<span style="color:var(--sage);font-weight:700">⬇ IN</span>':'<span style="color:var(--rose)">⬆ OUT</span>'):'<span style="color:#a06800">? not in stock</span>';
       html+=`<div style="display:flex;align-items:center;gap:8px;padding:3px 0;font-size:12px"><span style="flex:1;font-family:monospace">BC ${l.barcode}${l.size?' · '+l.size:''}</span>${st}<button onclick="removeOneUnknown('${String(l.barcode).replace(/'/g,'')}')" title="Remove from Unknown" style="background:none;border:none;color:var(--rose);cursor:pointer;font-size:14px">🗑</button></div>`; }
     html+=`</div></details>`;
@@ -3138,6 +3139,22 @@ function showAllUnknown(){
 // Manually drop a piece from the Unknown list (it's actually present). Uses a 'dismissed' flag so the
 // repair/recovery logic never brings it back.
 function removeOneUnknown(bc){ bc=String(bc); const log=getLostLog(); let n=0; for(const l of log){ if(String(l.barcode)===bc && !l.dismissed){ l.dismissed=true; n++; } } if(n){ saveLostLog(log); toast('🗑 BC '+bc+' removed from Unknown'); showAllUnknown(); renderResolve(); } }
+// Fully UNDO the write-off for every pending Unknown piece of a style: back to INWARD (returns to the
+// missing list), out of the Unknown CSV, and cleared from the audit — a clean slate to re-mark.
+function undoUnknownForStyle(product, color){
+  const targets=getLostLog().filter(l=>(l.product||'')===product && (l.color||'')===color && !l.recovered && !l.dismissed);
+  if(!targets.length){ toast('Nothing to undo for '+product+' · '+color); return; }
+  if(!confirm('Undo Unknown for all '+targets.length+' '+product+' · '+color+' piece(s)?\n\nThey go back to INWARD (return to the missing list) and are removed from the Unknown CSV, so you can re-mark cleanly. This does NOT change your inventory system.')) return;
+  const bcs=new Set(targets.map(l=>String(l.barcode)));
+  saveLostLog(getLostLog().filter(l=>!bcs.has(String(l.barcode))));         // 1. drop the log entries
+  for(const r of stockData){ if(bcs.has(String(r.barcode))){ r.status='inward'; if(r.purpose==='Unknown') r.purpose=''; } } // 2. local stock back inward
+  buildMap(); cacheStock();
+  if(navigator.onLine && sbCfg.url && sbCfg.key){ for(const bc of bcs){ fetch(sbCfg.url+'/rest/v1/stock_data?barcode=eq.'+encodeURIComponent(bc),{method:'PATCH',headers:sbHeaders({'Content-Type':'application/json','Prefer':'return=minimal'}),body:JSON.stringify({status:'inward',purpose:''})}).catch(()=>{}); } } // 3. cloud stock back inward
+  for(const a of audits){ if(a.systemUpdated && a.systemUpdated.some(b=>bcs.has(String(b)))){ a.systemUpdated=a.systemUpdated.filter(b=>!bcs.has(String(b))); a.updatedAt=new Date().toISOString(); saveAuditRemote(a); } } // 4. clear from audit
+  try{localStorage.setItem('jaey_audits',JSON.stringify(audits));}catch(e){}
+  toast('↩️ Undid '+targets.length+' Unknown — back in the missing list');
+  closeModal(); renderResolve(); renderAdminReview(); updateStockComposition();
+}
 function restoreAllUnknown(){
   const log=getLostLog(); const hidden=log.filter(l=>l.recovered && !l.dismissed).length;
   if(!hidden){ toast('Nothing hidden to restore'); return; }
