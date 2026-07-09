@@ -641,7 +641,8 @@ details.review-card[open]>.rc-summary{border-bottom:1px solid var(--border)}
     <div class="card" style="margin-top:11px">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
         <div class="ct" style="margin-bottom:0">🔍 Missing pieces</div>
-        <button class="btn bo" id="export-lost-btn" onclick="exportLostCSV()" style="display:none;font-size:11px;padding:5px 10px;color:var(--rose);border-color:var(--rose);margin-left:auto;margin-right:6px">⬇️ Unknown CSV</button>
+        <button class="btn bo" onclick="showAllUnknown()" style="font-size:11px;padding:5px 10px;margin-left:auto;margin-right:6px">🗂️ All Unknown</button>
+        <button class="btn bo" id="export-lost-btn" onclick="exportLostCSV()" style="display:none;font-size:11px;padding:5px 10px;color:var(--rose);border-color:var(--rose);margin-right:6px">⬇️ Unknown CSV</button>
         <select id="resolve-sort" onchange="renderResolve()" style="width:auto;font-size:12px;padding:5px 8px">
           <option value="age">Oldest first</option>
           <option value="style">By style</option>
@@ -943,7 +944,7 @@ function setUserName(){ proceedToUserPin(); }
 // Service Worker registered via sw.js when hosted on GitHub Pages
 
 if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./sw.js').catch(()=>{});
-const APP_VER='v124'; // single source of truth — shown in both admin + team headers
+const APP_VER='v125'; // single source of truth — shown in both admin + team headers
 document.addEventListener('DOMContentLoaded',()=>{
   document.querySelectorAll('.app-ver').forEach(e=>e.textContent=APP_VER);
   loadStorage();
@@ -3111,6 +3112,34 @@ function bulkMarkFound(){
   renderResolve(); renderAdminReview();
 }
 
+// Inspector: everything ever marked Unknown (this device + synced), grouped by style, with state,
+// so nothing can hide. "Hidden" = flagged recovered; can be restored to pending.
+function showAllUnknown(){
+  const log=getLostLog();
+  document.getElementById('modal-title').textContent='🗂️ All Unknown-marked pieces';
+  const body=document.getElementById('modal-body');
+  if(!log.length){ body.innerHTML='<div style="font-size:13px;color:var(--steel);padding:10px">Nothing marked Unknown yet.</div>'; document.getElementById('modal-ov').classList.add('show'); return; }
+  const groups={};
+  for(const l of log){ const k=(l.product||'?')+'|||'+(l.color||'?'); const g=(groups[k]=groups[k]||{p:0,r:0}); if(l.recovered) g.r++; else g.p++; }
+  let rows='';
+  for(const k of Object.keys(groups).sort()){ const parts=k.split('|||'); const g=groups[k];
+    rows+=`<tr style="border-top:1px solid var(--border)"><td style="padding:4px 6px">${parts[0]} · ${parts[1]}</td><td style="text-align:center;padding:4px 6px;font-weight:700">${g.p+g.r}</td><td style="text-align:center;padding:4px 6px;color:var(--sage)">${g.p}</td><td style="text-align:center;padding:4px 6px;color:#a06800">${g.r||''}</td></tr>`; }
+  const totP=log.filter(l=>!l.recovered).length, totR=log.filter(l=>l.recovered).length;
+  body.innerHTML=`<div style="font-size:12px;color:var(--steel);margin-bottom:8px"><b>Pending</b> = will be in the Unknown CSV. <b>Hidden</b> = flagged "recovered" (a CSV showed it inward again) — restore to bring back.</div>
+    <div style="font-size:13px;margin-bottom:8px"><b>${log.length}</b> total · <span style="color:var(--sage)">${totP} pending</span>${totR?` · <span style="color:#a06800">${totR} hidden</span>`:''}</div>
+    <table style="width:100%;border-collapse:collapse;font-size:12px"><tr style="font-size:9px;text-transform:uppercase;color:var(--steel)"><th style="text-align:left;padding:3px 6px">Style · Colour</th><th style="padding:3px 6px">Total</th><th style="padding:3px 6px">Pending</th><th style="padding:3px 6px">Hidden</th></tr>${rows}</table>
+    ${totR?`<button class="btn bg bb" style="width:100%;margin-top:11px" onclick="restoreAllUnknown()">♻️ Restore all ${totR} hidden → pending</button>`:''}`;
+  document.getElementById('modal-ov').classList.add('show');
+}
+function restoreAllUnknown(){
+  const log=getLostLog(); const hidden=log.filter(l=>l.recovered).length;
+  if(!hidden){ toast('Nothing hidden to restore'); return; }
+  if(!confirm('Restore all '+hidden+' hidden Unknown pieces back to pending?\n\nThey were flagged "recovered" (a CSV showed them inward). This brings them back into the Unknown CSV. Remove any that are genuinely back before uploading to inventory.')) return;
+  for(const l of log){ if(l.recovered){ l.recovered=false; delete l.recoveredAt; l.exported=false; } }
+  saveLostLog(log);
+  toast('♻️ Restored '+hidden+' → pending');
+  closeModal(); renderResolve();
+}
 // Download today's Lost write-offs in the inventory upload format:
 //   barcode,item_id,size_id,note,status,purpose  → note blank, status outward, purpose Unknown.
 function exportLostCSV(){
