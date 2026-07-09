@@ -944,7 +944,7 @@ function setUserName(){ proceedToUserPin(); }
 // Service Worker registered via sw.js when hosted on GitHub Pages
 
 if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./sw.js').catch(()=>{});
-const APP_VER='v125'; // single source of truth — shown in both admin + team headers
+const APP_VER='v126'; // single source of truth — shown in both admin + team headers
 document.addEventListener('DOMContentLoaded',()=>{
   document.querySelectorAll('.app-ver').forEach(e=>e.textContent=APP_VER);
   loadStorage();
@@ -2946,7 +2946,7 @@ function renderResolve(){
 
   // Show "Lost CSV" export when anything was written off as Lost today.
   repairLostLog(); // restore any write-offs the old auto-recover bug hid
-  const _lostPend=getLostLog().filter(l=>!l.recovered);
+  const _lostPend=getLostLog().filter(l=>!l.recovered && !l.dismissed);
   const _lostBtn=document.getElementById('export-lost-btn');
   if(_lostBtn){ _lostBtn.style.display=_lostPend.length?'inline-flex':'none'; _lostBtn.textContent='⬇️ Unknown CSV ('+_lostPend.length+')'; }
 
@@ -3119,23 +3119,30 @@ function showAllUnknown(){
   document.getElementById('modal-title').textContent='🗂️ All Unknown-marked pieces';
   const body=document.getElementById('modal-body');
   if(!log.length){ body.innerHTML='<div style="font-size:13px;color:var(--steel);padding:10px">Nothing marked Unknown yet.</div>'; document.getElementById('modal-ov').classList.add('show'); return; }
+  const pend=log.filter(l=>!l.recovered && !l.dismissed);
+  const totR=log.filter(l=>l.recovered && !l.dismissed).length;
   const groups={};
-  for(const l of log){ const k=(l.product||'?')+'|||'+(l.color||'?'); const g=(groups[k]=groups[k]||{p:0,r:0}); if(l.recovered) g.r++; else g.p++; }
-  let rows='';
-  for(const k of Object.keys(groups).sort()){ const parts=k.split('|||'); const g=groups[k];
-    rows+=`<tr style="border-top:1px solid var(--border)"><td style="padding:4px 6px">${parts[0]} · ${parts[1]}</td><td style="text-align:center;padding:4px 6px;font-weight:700">${g.p+g.r}</td><td style="text-align:center;padding:4px 6px;color:var(--sage)">${g.p}</td><td style="text-align:center;padding:4px 6px;color:#a06800">${g.r||''}</td></tr>`; }
-  const totP=log.filter(l=>!l.recovered).length, totR=log.filter(l=>l.recovered).length;
-  body.innerHTML=`<div style="font-size:12px;color:var(--steel);margin-bottom:8px"><b>Pending</b> = will be in the Unknown CSV. <b>Hidden</b> = flagged "recovered" (a CSV showed it inward again) — restore to bring back.</div>
-    <div style="font-size:13px;margin-bottom:8px"><b>${log.length}</b> total · <span style="color:var(--sage)">${totP} pending</span>${totR?` · <span style="color:#a06800">${totR} hidden</span>`:''}</div>
-    <table style="width:100%;border-collapse:collapse;font-size:12px"><tr style="font-size:9px;text-transform:uppercase;color:var(--steel)"><th style="text-align:left;padding:3px 6px">Style · Colour</th><th style="padding:3px 6px">Total</th><th style="padding:3px 6px">Pending</th><th style="padding:3px 6px">Hidden</th></tr>${rows}</table>
-    ${totR?`<button class="btn bg bb" style="width:100%;margin-top:11px" onclick="restoreAllUnknown()">♻️ Restore all ${totR} hidden → pending</button>`:''}`;
+  for(const l of pend){ const k=(l.product||'?')+'|||'+(l.color||'?'); (groups[k]=groups[k]||[]).push(l); }
+  let html=`<div style="font-size:12px;color:var(--steel);margin-bottom:8px">Tap a style to see its pieces + current system status. 🗑 Remove any that are actually present (<span style="color:var(--sage);font-weight:700">⬇ IN</span>) so they don't get written off.</div>
+    <div style="font-size:13px;margin-bottom:8px"><b>${pend.length} pending</b>${totR?` · <span style="color:#a06800">${totR} hidden</span>`:''}</div>
+    ${totR?`<button class="btn bo bb" style="width:100%;margin-bottom:10px;font-size:12px" onclick="restoreAllUnknown()">♻️ Restore all ${totR} hidden → pending</button>`:''}`;
+  for(const k of Object.keys(groups).sort()){ const parts=k.split('|||'); const items=groups[k];
+    html+=`<details style="border:1px solid var(--border);border-radius:8px;margin-bottom:6px;padding:6px 9px"><summary style="cursor:pointer;font-weight:600;font-size:13px">${parts[0]} · ${parts[1]} — ${items.length}</summary><div style="margin-top:5px">`;
+    for(const l of items){ const row=bcRow(l.barcode); const st=row?(row.status==='inward'?'<span style="color:var(--sage);font-weight:700">⬇ IN</span>':'<span style="color:var(--rose)">⬆ OUT</span>'):'<span style="color:#a06800">? not in stock</span>';
+      html+=`<div style="display:flex;align-items:center;gap:8px;padding:3px 0;font-size:12px"><span style="flex:1;font-family:monospace">BC ${l.barcode}${l.size?' · '+l.size:''}</span>${st}<button onclick="removeOneUnknown('${String(l.barcode).replace(/'/g,'')}')" title="Remove from Unknown" style="background:none;border:none;color:var(--rose);cursor:pointer;font-size:14px">🗑</button></div>`; }
+    html+=`</div></details>`;
+  }
+  body.innerHTML=html;
   document.getElementById('modal-ov').classList.add('show');
 }
+// Manually drop a piece from the Unknown list (it's actually present). Uses a 'dismissed' flag so the
+// repair/recovery logic never brings it back.
+function removeOneUnknown(bc){ bc=String(bc); const log=getLostLog(); let n=0; for(const l of log){ if(String(l.barcode)===bc && !l.dismissed){ l.dismissed=true; n++; } } if(n){ saveLostLog(log); toast('🗑 BC '+bc+' removed from Unknown'); showAllUnknown(); renderResolve(); } }
 function restoreAllUnknown(){
-  const log=getLostLog(); const hidden=log.filter(l=>l.recovered).length;
+  const log=getLostLog(); const hidden=log.filter(l=>l.recovered && !l.dismissed).length;
   if(!hidden){ toast('Nothing hidden to restore'); return; }
   if(!confirm('Restore all '+hidden+' hidden Unknown pieces back to pending?\n\nThey were flagged "recovered" (a CSV showed them inward). This brings them back into the Unknown CSV. Remove any that are genuinely back before uploading to inventory.')) return;
-  for(const l of log){ if(l.recovered){ l.recovered=false; delete l.recoveredAt; l.exported=false; } }
+  for(const l of log){ if(l.recovered && !l.dismissed){ l.recovered=false; delete l.recoveredAt; l.exported=false; } }
   saveLostLog(log);
   toast('♻️ Restored '+hidden+' → pending');
   closeModal(); renderResolve();
@@ -3144,7 +3151,7 @@ function restoreAllUnknown(){
 //   barcode,item_id,size_id,note,status,purpose  → note blank, status outward, purpose Unknown.
 function exportLostCSV(){
   repairLostLog(); // restore any write-offs the old auto-recover bug hid
-  const todays=getLostLog().filter(l=>!l.recovered); // all pending write-offs (any day), not just today
+  const todays=getLostLog().filter(l=>!l.recovered && !l.dismissed); // all pending write-offs (any day), not just today
   if(!todays.length){ toast('No pending Unknown pieces'); return; }
   const missingIds=todays.filter(l=>!l.itemId||!l.sizeId);
   if(missingIds.length && !confirm('⚠️ '+missingIds.length+' of '+todays.length+' Unknown rows are missing Item ID / Size ID (stock CSV not loaded when marked).\n\nLoad today\'s stock CSV and re-mark for complete rows, or export now with blanks?\n\nExport now?')) return;
@@ -3476,7 +3483,7 @@ function recoveryCheck(rows){
   if(n){ saveLostLog(log); toast('♻️ '+n+' written-off piece'+(n>1?'s':'')+' recovered (now inward)'); }
 }
 // One-time repair: un-recover write-offs that were flagged "recovered" but never exported (the old bug).
-function repairLostLog(){ const log=getLostLog(); let n=0; for(const l of log){ if(l.recovered && !l.exported){ l.recovered=false; delete l.recoveredAt; n++; } } if(n) saveLostLog(log); return n; }
+function repairLostLog(){ const log=getLostLog(); let n=0; for(const l of log){ if(l.recovered && !l.exported && !l.dismissed){ l.recovered=false; delete l.recoveredAt; n++; } } if(n) saveLostLog(log); return n; }
 
 // Collapse the many per-piece follow-ups into a single "found N pcs" trail entry.
 function followUpSummary(a){
