@@ -451,7 +451,8 @@ select.f,.seg{background:#fff;border:1px solid var(--line);border-radius:99px;pa
       <div class="sub">Your own dedicated Supabase project — the shared cloud store so the whole team sees one live list. Paste the Project URL + anon key from your project's API settings.</div>
       <div class="field"><label>Supabase URL</label><input type="text" id="sb-url" placeholder="https://yourproject.supabase.co" oninput="saveSB()"/></div>
       <div class="field"><label>Anon key</label><input type="text" id="sb-key" placeholder="eyJhbG…" oninput="saveSB()"/></div>
-      <div id="sb-status" style="font-size:.85rem;margin-bottom:1rem"></div>
+      <div id="sb-status" style="font-size:.85rem;margin-bottom:.6rem"></div>
+      <button class="btn ghost sm" onclick="sbTest()" style="margin-bottom:1rem">🔌 Test connection</button>
       <div class="hint" style="margin-bottom:1rem">🔒 Task visibility (you see only what you created or are assigned; admin sees all) is enforced in-app. For hard server-side security, this can move to Supabase Auth later.</div>
       <details>
         <summary style="cursor:pointer;font-weight:600;font-size:.88rem;color:var(--cta)">▸ First-time setup — run this SQL once</summary>
@@ -1291,7 +1292,22 @@ function disconnectOutlook(){
 function saveSB(){sbCfg={url:$('#sb-url').value.trim(),key:$('#sb-key').value.trim()};localStorage.setItem('jt_sb',JSON.stringify(sbCfg));setSbStatus();clearTimeout(saveSB._t);saveSB._t=setTimeout(()=>pull(true),600);}
 function saveAzure(){azureId=$('#azure-id').value.trim();localStorage.setItem('jt_azure',azureId);msalApp=null;setOutlookUI();if(azureId&&sbReady())sbUpsert('todo_config',{id:'app',azure_client_id:azureId},'id').then(()=>toast('Azure ID saved & shared with team')).catch(()=>{});}
 function saveGoogle(){googleId=$('#google-id').value.trim();localStorage.setItem('jt_google',googleId);googleTokenClient=null;setOutlookUI();if(googleId&&sbReady())sbUpsert('todo_config',{id:'app',google_client_id:googleId},'id').then(()=>toast('Google ID saved & shared with team')).catch(()=>{});}
-function setSbStatus(ok,msg){const el=$('#sb-status');if(!el)return;if(!sbCfg.url||!sbCfg.key){el.innerHTML='<span class="bad">⚠ Not configured</span>';return;}if(ok===true)el.innerHTML='<span class="ok">✓ Connected — '+TASKS.length+' tasks, '+PEOPLE.length+' people</span>';else if(ok===false)el.innerHTML='<span class="bad">⚠ '+esc(msg||'connection error')+'</span>';else el.innerHTML='<span style="color:var(--dusty)">Configured · '+sbCfg.url.replace('https://','')+'</span>';}
+function setSbStatus(ok,msg){const el=$('#sb-status');if(!el)return;if(!sbCfg.url||!sbCfg.key){el.innerHTML='<span class="bad">⚠ Not configured</span>';return;}if(ok===true)el.innerHTML='<span class="ok">✓ Connected — '+TASKS.length+' tasks, '+PEOPLE.length+' people</span>';else if(ok===false){const net=/fetch|network|load failed/i.test(msg||'');el.innerHTML='<span class="bad">⚠ '+esc(msg||'connection error')+(net?' — can’t reach the project. It may be <b>paused</b> (Supabase dashboard → Restore), still starting up, or blocked by a browser extension. Hit “Test connection”.':'')+'</span>';}else el.innerHTML='<span style="color:var(--dusty)">Configured · '+sbCfg.url.replace('https://','')+'</span>';}
+async function sbTest(){
+  const el=$('#sb-status');if(!el)return;
+  if(!sbCfg.url||!sbCfg.key){el.innerHTML='<span class="bad">⚠ Add the Project URL + anon key first</span>';return;}
+  el.innerHTML='<span style="color:var(--dusty)">Testing connection…</span>';
+  try{
+    const r=await fetch(sbCfg.url+'/rest/v1/todo_people?select=email&limit=1',{headers:sbHeaders()});
+    if(r.ok){el.innerHTML='<span class="ok">✓ Connected and tables exist. Loading…</span>';pull(true);return;}
+    const body=esc((await r.text()).slice(0,140));
+    if(r.status===404)el.innerHTML='<span class="bad">Reached the project ✓ but the <b>tables don’t exist</b> — run the setup SQL below in Supabase → SQL Editor.</span>';
+    else if(r.status===401||r.status===403)el.innerHTML='<span class="bad">Reached the project ✓ but the <b>anon key is wrong or RLS is blocking</b> ('+r.status+'). Re-copy the anon <i>public</i> key and re-run the setup SQL (it sets access policies).</span>';
+    else el.innerHTML='<span class="bad">HTTP '+r.status+' — '+body+'</span>';
+  }catch(e){
+    el.innerHTML='<span class="bad">❌ Can’t reach the project (“'+esc(e.message)+'”). Most likely the project is <b>paused</b> — open your Supabase dashboard and click <b>Restore</b>. Also possible: still provisioning (wait 2 min), wrong URL, or a browser extension blocking supabase.co (try Incognito).</span>';
+  }
+}
 function setOutlookUI(){
   const conn=calConnected();const prov=getProvider();
   const u=JSON.parse(localStorage.getItem(prov==='google'?'jt_g_user':'jt_ol_user')||'null');
@@ -1362,6 +1378,7 @@ async function boot(){
   try{await ensureMsalLib();initMsal();}catch(e){console.warn(e);}
   setOutlookUI();
   await pull(false);                  // load roster + tasks
+  if(!PEOPLE.length){PEOPLE=[{name:'Jaini',email:'jaini@jaey.in',role:'admin',pin:'6558'}];localStorage.setItem('jt_people_cache',JSON.stringify(PEOPLE));try{persistPerson(PEOPLE[0]);}catch(e){}}
   gateWho();
   if(ME&&PEOPLE.some(p=>p.email===ME.email)){
     hideGate();renderAll();setMode(viewMode);maybeCalPrompt();
