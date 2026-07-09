@@ -943,7 +943,7 @@ function setUserName(){ proceedToUserPin(); }
 // Service Worker registered via sw.js when hosted on GitHub Pages
 
 if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./sw.js').catch(()=>{});
-const APP_VER='v123'; // single source of truth — shown in both admin + team headers
+const APP_VER='v124'; // single source of truth — shown in both admin + team headers
 document.addEventListener('DOMContentLoaded',()=>{
   document.querySelectorAll('.app-ver').forEach(e=>e.textContent=APP_VER);
   loadStorage();
@@ -1215,6 +1215,7 @@ function initUserShell(){
   refreshPlansUI();  // pull today's assignments from the cloud
   refreshAuditsUI(); // pull this user's past scans from any device
   syncAuditRound();  // adopt the shared audit-round boundary so re-audits start fresh, not resume old
+  syncLostLog();     // merge write-offs (Unknown) from every device
   // Auto-fetch stock from Supabase if not cached
   ensureStockLoaded();
 }
@@ -2194,6 +2195,7 @@ function enterAdminShell(){
   renderAdminReview();
   syncStockDelta(); // pull the shared "pcs added" panel so every admin sees the same
   syncFixedPending(); // pull the shared "fixed on system" parked list
+  syncLostLog();      // merge write-offs (Unknown) from every device
   syncAuditRound();   // pull the shared audit-round boundary
   updateScanDataStatus();
   updateStockComposition();
@@ -3019,7 +3021,18 @@ async function applyCorrection(bc, auditId, newStatus){
 // (production samples kept in stock) are NOT sample-rack pieces.
 function isSample(row){ if(!row) return false; return /\bsample\b/i.test(row.tags||''); }
 function getLostLog(){ try{ return JSON.parse(localStorage.getItem('jaey_lost_log')||'[]'); }catch(e){ return []; } }
-function saveLostLog(log){ try{ localStorage.setItem('jaey_lost_log',JSON.stringify(log)); }catch(e){} }
+function saveLostLog(log){ try{ localStorage.setItem('jaey_lost_log',JSON.stringify(log)); }catch(e){} pushAppState('lost_pieces', log); }
+// Merge two write-off logs by (barcode+time). A write-off stays pending unless EVERY copy says recovered;
+// exported if any copy exported — so a write-off can never be lost just because one device is behind.
+function mergeLostLogs(a,b){
+  const byKey={}, key=l=>String(l.barcode)+'|'+(l.at||'');
+  for(const l of [...(a||[]), ...(b||[])]){ if(!l||l.barcode==null) continue; const k=key(l); const ex=byKey[k];
+    if(!ex){ byKey[k]={...l}; }
+    else { ex.exported=!!(ex.exported||l.exported); ex.recovered=!!(ex.recovered&&l.recovered);
+      for(const f of ['itemId','sizeId','product','color','size','sku','tags']) if(!ex[f]&&l[f]) ex[f]=l[f]; } }
+  return Object.values(byKey);
+}
+function syncLostLog(){ fetchAppState('lost_pieces').then(cloud=>{ if(!Array.isArray(cloud)) return; const merged=mergeLostLogs(getLostLog(), cloud); try{ localStorage.setItem('jaey_lost_log',JSON.stringify(merged)); }catch(e){} pushAppState('lost_pieces', merged); if(typeof renderResolve==='function') renderResolve(); }); }
 
 // Write off a missing piece as Lost: record it for the CSV upload, drop it from the
 // missing list, and best-effort flip the app's own stock to outward/Lost.
