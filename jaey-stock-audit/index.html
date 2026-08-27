@@ -835,6 +835,8 @@ details.review-card[open]>.rc-summary{border-bottom:1px solid var(--border)}
       <div class="fg"><label>Anon Key</label><input type="text" id="sb-key" placeholder="eyJh..." oninput="saveSB()"></div>
       <div id="sb-status" style="font-size:12px;color:var(--steel)">Configure to enable cloud sync.</div>
       <button class="btn bo bb" onclick="testSB()">Test Connection</button>
+      <button class="btn bo bb" id="push-all-audits" onclick="pushAllAuditsToCloud()" style="margin-top:8px">⬆️ Push all audits to cloud</button>
+      <div id="push-all-status" style="font-size:12px;color:var(--steel);margin-top:6px;display:none"></div>
       <div style="margin-top:10px;padding:8px 11px;background:var(--cream);border-radius:7px;font-size:11px;color:var(--steel)">
         <strong>Supabase table:</strong><br>
         <code style="word-break:break-all;font-size:10px">create table sa_stock_audits (id bigserial primary key, audit_id text unique, audit_date timestamptz, product_name text, color text, auditor text, status text, total_scanned int, matched int, ghosts text, extras text, wrong_label text, notes text, raw_data text, synced_at timestamptz default now());</code>
@@ -944,7 +946,7 @@ function setUserName(){ proceedToUserPin(); }
 // Service Worker registered via sw.js when hosted on GitHub Pages
 
 if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./sw.js').catch(()=>{});
-const APP_VER='v131'; // single source of truth — shown in both admin + team headers
+const APP_VER='v132'; // single source of truth — shown in both admin + team headers
 document.addEventListener('DOMContentLoaded',()=>{
   document.querySelectorAll('.app-ver').forEach(e=>e.textContent=APP_VER);
   loadStorage();
@@ -4788,6 +4790,30 @@ async function pushAuditToCloud(audit){
     else _lastSyncError='';
     return r.ok;
   }catch(e){ _lastSyncError=e.name==='AbortError'?'timed out (slow connection)':e.message; console.warn('Sync:',e); return false; }
+}
+// One-time migration helper: push every audit this device holds locally up to the cloud
+// (upsert on audit_id, so it's safe to run repeatedly). Used to seed a fresh backend
+// when the CSV importer can't handle the large raw_data blobs.
+async function pushAllAuditsToCloud(){
+  if(!sbCfg.url||!sbCfg.key){ toast('⚠️ Configure Supabase first'); return; }
+  if(!navigator.onLine){ toast('⚠️ You are offline'); return; }
+  let list = (audits&&audits.length)?audits.slice():[];
+  if(!list.length){ try{ list=JSON.parse(localStorage.getItem('jaey_audits')||'[]'); }catch(e){} }
+  if(!list.length){ toast('No local audits on this device to push'); return; }
+  const btn=document.getElementById('push-all-audits');
+  const st=document.getElementById('push-all-status');
+  if(btn){ btn.disabled=true; }
+  if(st){ st.style.display='block'; }
+  let ok=0, fail=0;
+  for(let i=0;i<list.length;i++){
+    if(st) st.textContent='☁️ Uploading '+(i+1)+' / '+list.length+'… ('+ok+' done'+(fail?', '+fail+' failed':'')+')';
+    try{ const r=await pushAuditToCloud(list[i]); if(r) ok++; else fail++; }
+    catch(e){ fail++; }
+  }
+  if(btn){ btn.disabled=false; }
+  if(st) st.textContent='✓ Done — '+ok+' audit'+(ok===1?'':'s')+' on cloud'+(fail?', '+fail+' failed (retry to finish)':'');
+  toast('☁️ Cloud sync: '+ok+' uploaded'+(fail?', '+fail+' failed':''));
+  if(typeof refreshAuditsUI==='function') refreshAuditsUI();
 }
 function queueAudit(audit){
   const p=JSON.parse(localStorage.getItem('jaey_pending_sync')||'[]');
