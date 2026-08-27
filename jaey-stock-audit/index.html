@@ -1010,7 +1010,7 @@ function setUserName(){ proceedToUserPin(); }
 // Service Worker registered via sw.js when hosted on GitHub Pages
 
 if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./sw.js').catch(()=>{});
-const APP_VER='v135'; // single source of truth — shown in both admin + team headers
+const APP_VER='v136'; // single source of truth — shown in both admin + team headers
 document.addEventListener('DOMContentLoaded',()=>{
   document.querySelectorAll('.app-ver').forEach(e=>e.textContent=APP_VER);
   loadStorage();
@@ -1765,7 +1765,7 @@ function openFreeFlow(){
     else toast('❌ Load the stock CSV first (Data tab).');
     return;
   }
-  freeflow={auditor:name, seen:new Set(), byStyle:{}, order:[], unknowns:[], last:null, _pendingAside:null};
+  freeflow={auditor:name, seen:new Set(), byStyle:{}, order:[], unknowns:[], log:[], last:null, _pendingAside:null};
   // Continue any open free-flow audits already on this device from the current round.
   for(const a of audits){ if(a&&a.mode==='freeflow'&&a.styleKey&&(a.status||'review')!=='complete'&&inCurrentRound(a)){
     if(freeflow.byStyle[a.styleKey]===undefined){ freeflow.byStyle[a.styleKey]=a.id; freeflow.order.push(a.styleKey); }
@@ -1795,13 +1795,8 @@ function ffExit(){
   if(typeof renderAdminReview==='function') renderAdminReview();
 }
 
-function ffFB(cls,title,sub){
-  const el=document.getElementById('ff-fb'); if(!el) return;
-  const col=cls==='ok'?'var(--sage)':cls==='mm'?'var(--rose)':'var(--gold)';
-  const bg=cls==='ok'?'var(--sage-light)':cls==='mm'?'var(--rose-light)':'#fff8e6';
-  el.className='scan-fb';
-  el.innerHTML='<div style="border-left:4px solid '+col+';background:'+bg+';padding:10px 12px;border-radius:8px"><div style="font-weight:700;font-size:15px">'+title+'</div>'+(sub?'<div style="font-size:12px;margin-top:2px">'+sub+'</div>':'')+'</div>';
-}
+// Reuse the normal scan feedback card (big size, style, colour, status badge, green/red bg).
+function ffFB(cls,title,sub,size,status){ showFB(cls,title,sub||'',size||'',status||'','ff-fb'); }
 
 // Get (or create) THIS device's free-flow audit for a style row.
 function ffGetAudit(row){
@@ -1834,6 +1829,7 @@ function ffFeed(raw){
   if(!row){
     freeflow.unknowns.push({bc,at:new Date().toISOString()});
     freeflow.seen.add(bc);
+    freeflow.log.unshift({bc, unknown:true, at:new Date().toISOString()});
     ffFB('mm','❌ Unknown barcode','BC '+bc+' — not in the system');
     freeflow.last=null;
     document.getElementById('ff-actions').style.display='none';
@@ -1847,10 +1843,11 @@ function ffFeed(raw){
   a.updatedAt=new Date().toISOString(); if(!a.savedAt) a.savedAt=a.updatedAt;
   a.report=genReport(a);
   freeflow.seen.add(bc);
+  freeflow.log.unshift({bc, product:row.product, color:row.color, size:row.size, status:row.status, aside:false, at:new Date().toISOString()});
   freeflow.last={bc, styleKey:a.styleKey, auditId:a.id, row};
   const inward=row.status==='inward';
-  ffFB(inward?'ok':'warn', inward?'✓ Match':'⚠️ System says OUTWARD',
-    '<strong>'+_ffEsc(row.product)+' · '+_ffEsc(row.color)+'</strong>'+(row.size?' · '+_ffEsc(row.size):'')+' · <span style="text-transform:uppercase;font-weight:700">'+_ffEsc(row.status||'')+'</span>');
+  ffFB(inward?'ok':'warn', inward?'✓ '+_ffEsc(row.product):'⚠️ System says OUTWARD',
+    '<strong>'+_ffEsc(row.product)+' · '+_ffEsc(row.color)+'</strong>', row.size, row.status);
   document.getElementById('ff-actions').style.display='block';
   document.getElementById('ff-aside-form').style.display='none';
   ffRender(); ffPersist();
@@ -1875,6 +1872,7 @@ function ffFlagWrong(){
   document.getElementById('ff-aside-size').value='';
   document.getElementById('ff-aside-form').style.display='block';
   document.getElementById('ff-actions').style.display='none';
+  const le=freeflow.log.find(x=>String(x.bc)===String(L.bc)); if(le) le.aside=true;
   freeflow._pendingAside={bc:L.bc, sys:{product:L.row.product,color:L.row.color,size:L.row.size,status:L.row.status}, styleKey:L.styleKey};
   freeflow.last=null;
   ffPersist(); ffRender();
@@ -1909,23 +1907,27 @@ function ffPersist(){
 
 function ffRender(){
   if(!freeflow) return;
-  let pcs=0; const items=[];
-  for(const sk of freeflow.order){ const a=audits.find(x=>x.id===freeflow.byStyle[sk]); if(!a) continue;
-    const n=(a.scanned||[]).length; pcs+=n; items.push({a,n,sys:(a.systemInward||[]).length}); }
+  let pcs=0;
+  for(const sk of freeflow.order){ const a=audits.find(x=>x.id===freeflow.byStyle[sk]); if(a) pcs+=(a.scanned||[]).length; }
   const aside=getFFAside().length, unk=freeflow.unknowns.length;
   document.getElementById('ff-nstyles').textContent=freeflow.order.length;
   document.getElementById('ff-npcs').textContent=pcs;
   document.getElementById('ff-pill').textContent=pcs;
   document.getElementById('ff-nissues').textContent=(aside||unk)?('⚠️ '+aside+' aside · '+unk+' unknown'):'';
   const el=document.getElementById('ff-styles');
-  if(!items.length&&!unk){ el.innerHTML='<div style="padding:16px;text-align:center;color:var(--steel);font-size:13px">Start scanning — styles appear here as you go</div>'; return; }
+  const log=freeflow.log||[];
+  if(!log.length){ el.innerHTML='<div style="padding:16px;text-align:center;color:var(--steel);font-size:13px">Start scanning — each piece appears here with its size</div>'; return; }
   let html='';
-  for(let k=items.length-1;k>=0;k--){ const it=items[k], col=it.n>=it.sys?'var(--sage)':'var(--gold)';
-    html+='<div style="padding:9px 11px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center">'
-      +'<div><div style="font-weight:600;font-size:13px">'+_ffEsc(it.a.product)+' · '+_ffEsc(it.a.color)+'</div>'
-      +'<div style="font-size:11px;color:var(--steel)">'+it.n+' scanned · '+it.sys+' in system</div></div>'
-      +'<span style="font-weight:700;color:'+col+'">'+it.n+'/'+it.sys+'</span></div>'; }
-  if(unk) html+='<div style="padding:9px 11px;border-bottom:1px solid var(--line);color:var(--rose);font-size:12px">❓ '+unk+' unknown barcode'+(unk>1?'s':'')+' (not in system)</div>';
+  for(const e of log.slice(0,80)){
+    let size,col,name,sub,badge='';
+    if(e.unknown){ size='?'; col='var(--rose)'; name='Unknown barcode'; sub='BC '+_ffEsc(e.bc)+' · not in system'; badge='<span style="font-size:10px;font-weight:700;color:var(--rose)">UNKNOWN</span>'; }
+    else if(e.aside){ size=e.size||'?'; col='var(--rose)'; name=_ffEsc(e.product)+' · '+_ffEsc(e.color); sub='BC '+_ffEsc(e.bc)+' · SET ASIDE'; badge='<span style="font-size:10px;font-weight:700;color:var(--rose)">SET ASIDE</span>'; }
+    else { const inw=e.status==='inward'; size=e.size||'?'; col=inw?'var(--sage)':'var(--rose)'; name=_ffEsc(e.product)+' · '+_ffEsc(e.color); sub='BC '+_ffEsc(e.bc)+' · '+(inw?'IN':'OUT'); if(!inw) badge='<span style="font-size:10px;font-weight:700;color:var(--rose)">OUTWARD</span>'; }
+    html+='<div style="display:flex;align-items:center;gap:11px;padding:8px 11px;border-bottom:1px solid var(--line)">'
+      +'<span style="font-family:\'DM Serif Display\',serif;font-size:26px;line-height:1;min-width:46px;text-align:center;color:'+col+'">'+_ffEsc(size)+'</span>'
+      +'<div style="flex:1;min-width:0"><div style="font-weight:600;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+name+'</div>'
+      +'<div style="font-size:11px;color:var(--steel)">'+sub+'</div></div>'+badge+'</div>';
+  }
   el.innerHTML=html;
 }
 
@@ -2087,8 +2089,9 @@ function addBulk(){
   toast(lines.length+' barcodes added');
 }
 
-function showFB(type,title,body,size,status){
-  const el=document.getElementById('bc-fb');
+function showFB(type,title,body,size,status,elId){
+  const el=document.getElementById(elId||'bc-fb');
+  if(!el) return;
   const realType = type==='warn' ? 'mm' : type;
   el.className='scan-fb '+realType;
   const keepAside = realType==='mm';
