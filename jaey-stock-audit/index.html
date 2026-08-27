@@ -837,7 +837,7 @@ details.review-card[open]>.rc-summary{border-bottom:1px solid var(--border)}
       <button class="btn bo bb" onclick="testSB()">Test Connection</button>
       <div style="margin-top:10px;padding:8px 11px;background:var(--cream);border-radius:7px;font-size:11px;color:var(--steel)">
         <strong>Supabase table:</strong><br>
-        <code style="word-break:break-all;font-size:10px">create table sa_stock_audits (id bigserial primary key, audit_id text unique, audit_date timestamptz, product_name text, color text, auditor text, status text, total_scanned int, matched int, ghosts text, extras text, wrong_label text, notes text, raw_data jsonb, synced_at timestamptz default now());</code>
+        <code style="word-break:break-all;font-size:10px">create table sa_stock_audits (id bigserial primary key, audit_id text unique, audit_date timestamptz, product_name text, color text, auditor text, status text, total_scanned int, matched int, ghosts text, extras text, wrong_label text, notes text, raw_data text, synced_at timestamptz default now());</code>
       </div>
     </div>
     <div class="card">
