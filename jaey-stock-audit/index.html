@@ -837,7 +837,7 @@ details.review-card[open]>.rc-summary{border-bottom:1px solid var(--border)}
       <button class="btn bo bb" onclick="testSB()">Test Connection</button>
       <div style="margin-top:10px;padding:8px 11px;background:var(--cream);border-radius:7px;font-size:11px;color:var(--steel)">
         <strong>Supabase table:</strong><br>
-        <code style="word-break:break-all;font-size:10px">create table stock_audits (id bigserial primary key, audit_id text, audit_date timestamptz, product_name text, color text, auditor text, status text, total_scanned int, matched int, ghosts text, extras text, wrong_label text, notes text, raw_data jsonb, synced_at timestamptz default now());</code>
+        <code style="word-break:break-all;font-size:10px">create table sa_stock_audits (id bigserial primary key, audit_id text unique, audit_date timestamptz, product_name text, color text, auditor text, status text, total_scanned int, matched int, ghosts text, extras text, wrong_label text, notes text, raw_data jsonb, synced_at timestamptz default now());</code>
       </div>
     </div>
     <div class="card">
@@ -925,7 +925,7 @@ let CATALOGUE_HIDDEN={"Color Block Straight Dress|||Green":1,"Color Block Straig
 // STATE
 // ══════════════════
 // Shared backend baked in so every device connects automatically (anon key is public, protected by RLS).
-const SB_DEFAULT={url:'https://uicittlmjpkzxwabwihv.supabase.co',key:'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVpY2l0dGxtanBrenh3YWJ3aWh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE4MzM2OTIsImV4cCI6MjA5NzQwOTY5Mn0.uKfrn7PiwTTcAXOYo7Dz0TgzOSgSIQIp1ChTpRpKgjI'};
+const SB_DEFAULT={url:'https://djyzaoisfslgkkfmgzuy.supabase.co',key:'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRqeXphb2lzZnNsZ2trZm1nenV5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ4NjI0NjgsImV4cCI6MjA5MDQzODQ2OH0.YC5FQjZGn1a8wMaE8ykMlOHBURNACrZRiBDtXd-TLjw'};
 let stockData=[], productMap={}, audits=[], plans={}, sbCfg={url:SB_DEFAULT.url,key:SB_DEFAULT.key};
 let _stockHasNoteTags; // learned at upload time: do the stock_data columns note/tags exist?
 let _bcIndex=null;     // barcode → stock row, rebuilt by buildMap()
@@ -944,7 +944,7 @@ function setUserName(){ proceedToUserPin(); }
 // Service Worker registered via sw.js when hosted on GitHub Pages
 
 if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./sw.js').catch(()=>{});
-const APP_VER='v130'; // single source of truth — shown in both admin + team headers
+const APP_VER='v131'; // single source of truth — shown in both admin + team headers
 document.addEventListener('DOMContentLoaded',()=>{
   document.querySelectorAll('.app-ver').forEach(e=>e.textContent=APP_VER);
   loadStorage();
@@ -2665,7 +2665,7 @@ async function deleteAudit(id){
   try{localStorage.setItem('jaey_audits',JSON.stringify(audits));}catch(e){}
   try{const p=JSON.parse(localStorage.getItem('jaey_pending_sync')||'[]'); localStorage.setItem('jaey_pending_sync',JSON.stringify(p.filter(x=>x.id!==id)));}catch(e){}
   if(sbCfg.url&&sbCfg.key&&navigator.onLine){
-    try{ await fetch(sbCfg.url+'/rest/v1/stock_audits?audit_id=eq.'+encodeURIComponent(String(id)),{method:'DELETE',headers:sbHeaders({'Prefer':'return=minimal'})}); }catch(e){}
+    try{ await fetch(sbCfg.url+'/rest/v1/sa_stock_audits?audit_id=eq.'+encodeURIComponent(String(id)),{method:'DELETE',headers:sbHeaders({'Prefer':'return=minimal'})}); }catch(e){}
   }
   toast('🗑 Audit deleted');
   renderAdminReview(); renderResolve(); if(typeof renderAdminHistory==='function') renderAdminHistory();
@@ -2997,7 +2997,7 @@ async function applyCorrection(bc, auditId, newStatus){
   const verb=newStatus==='outward'?'OUTWARD (written off / left stock)':'INWARD (back in stock)';
   if(!confirm('Update the SYSTEM: mark BC '+bc+' as '+verb+'?\n\nThis changes the master stock data so future audits won\'t re-flag it.')) return;
   try{
-    const res=await fetch(sbCfg.url+'/rest/v1/stock_data?barcode=eq.'+encodeURIComponent(bc),{
+    const res=await fetch(sbCfg.url+'/rest/v1/sa_stock_data?barcode=eq.'+encodeURIComponent(bc),{
       method:'PATCH',
       headers:sbHeaders({'Content-Type':'application/json','Prefer':'return=minimal'}),
       body:JSON.stringify({status:newStatus})
@@ -3054,7 +3054,7 @@ function writeOffUnknownCore(bc, auditId){
   if(audit){ (audit.systemUpdated=audit.systemUpdated||[]).push(bc); audit.updatedAt=new Date().toISOString(); try{localStorage.setItem('jaey_audits',JSON.stringify(audits));}catch(e){} saveAuditRemote(audit); }
   for(const r of stockData){ if(r.barcode==bc){ r.status='outward'; r.purpose='Unknown'; } }
   if(navigator.onLine && sbCfg.url && sbCfg.key){
-    fetch(sbCfg.url+'/rest/v1/stock_data?barcode=eq.'+encodeURIComponent(bc),{
+    fetch(sbCfg.url+'/rest/v1/sa_stock_data?barcode=eq.'+encodeURIComponent(bc),{
       method:'PATCH', headers:sbHeaders({'Content-Type':'application/json','Prefer':'return=minimal'}),
       body:JSON.stringify({status:'outward', purpose:'Unknown'})
     }).catch(()=>{});
@@ -3154,7 +3154,7 @@ function undoUnknownForStyle(product, color){
   saveLostLog(getLostLog().filter(l=>!bcs.has(String(l.barcode))));         // 1. drop the log entries
   for(const r of stockData){ if(bcs.has(String(r.barcode))){ r.status='inward'; if(r.purpose==='Unknown') r.purpose=''; } } // 2. local stock back inward
   buildMap(); cacheStock();
-  if(navigator.onLine && sbCfg.url && sbCfg.key){ for(const bc of bcs){ fetch(sbCfg.url+'/rest/v1/stock_data?barcode=eq.'+encodeURIComponent(bc),{method:'PATCH',headers:sbHeaders({'Content-Type':'application/json','Prefer':'return=minimal'}),body:JSON.stringify({status:'inward',purpose:''})}).catch(()=>{}); } } // 3. cloud stock back inward
+  if(navigator.onLine && sbCfg.url && sbCfg.key){ for(const bc of bcs){ fetch(sbCfg.url+'/rest/v1/sa_stock_data?barcode=eq.'+encodeURIComponent(bc),{method:'PATCH',headers:sbHeaders({'Content-Type':'application/json','Prefer':'return=minimal'}),body:JSON.stringify({status:'inward',purpose:''})}).catch(()=>{}); } } // 3. cloud stock back inward
   for(const a of audits){ if(a.systemUpdated && a.systemUpdated.some(b=>bcs.has(String(b)))){ a.systemUpdated=a.systemUpdated.filter(b=>!bcs.has(String(b))); a.updatedAt=new Date().toISOString(); saveAuditRemote(a); } } // 4. clear from audit
   try{localStorage.setItem('jaey_audits',JSON.stringify(audits));}catch(e){}
   toast('↩️ Undid '+targets.length+' Unknown — back in the missing list');
@@ -3304,14 +3304,14 @@ function undoNewRound(){
 function pushStockDeltaCloud(delta){
   if(!sbCfg.url||!sbCfg.key||!navigator.onLine) return;
   const body=JSON.stringify([{key:'stock_delta', value:JSON.stringify(delta), updated_at:new Date().toISOString()}]);
-  fetch(sbCfg.url+'/rest/v1/app_state?on_conflict=key',{method:'POST',
+  fetch(sbCfg.url+'/rest/v1/sa_app_state?on_conflict=key',{method:'POST',
     headers:sbHeaders({'Content-Type':'application/json','Prefer':'resolution=merge-duplicates,return=minimal'}),
     body}).catch(()=>{});
 }
 async function fetchStockDeltaCloud(){
   if(!sbCfg.url||!sbCfg.key||!navigator.onLine) return;
   try{
-    const res=await fetch(sbCfg.url+'/rest/v1/app_state?select=value&key=eq.stock_delta',{headers:sbHeaders()});
+    const res=await fetch(sbCfg.url+'/rest/v1/sa_app_state?select=value&key=eq.stock_delta',{headers:sbHeaders()});
     if(!res.ok) return; // table not created yet → keep whatever is local
     const rows=await res.json();
     if(rows&&rows.length&&rows[0].value){ try{localStorage.setItem('jaey_stock_delta', rows[0].value);}catch(e){} }
@@ -3331,12 +3331,12 @@ function syncStockDelta(){
 function pushAppState(key,obj){
   if(!sbCfg.url||!sbCfg.key||!navigator.onLine) return;
   const body=JSON.stringify([{key, value:JSON.stringify(obj), updated_at:new Date().toISOString()}]);
-  fetch(sbCfg.url+'/rest/v1/app_state?on_conflict=key',{method:'POST',
+  fetch(sbCfg.url+'/rest/v1/sa_app_state?on_conflict=key',{method:'POST',
     headers:sbHeaders({'Content-Type':'application/json','Prefer':'resolution=merge-duplicates,return=minimal'}),body}).catch(()=>{});
 }
 async function fetchAppState(key){
   if(!sbCfg.url||!sbCfg.key||!navigator.onLine) return null;
-  try{ const res=await fetch(sbCfg.url+'/rest/v1/app_state?select=value&key=eq.'+encodeURIComponent(key),{headers:sbHeaders()});
+  try{ const res=await fetch(sbCfg.url+'/rest/v1/sa_app_state?select=value&key=eq.'+encodeURIComponent(key),{headers:sbHeaders()});
     if(!res.ok) return null; const rows=await res.json();
     return rows&&rows[0]&&rows[0].value?JSON.parse(rows[0].value):null; }catch(e){ return null; }
 }
@@ -4259,10 +4259,10 @@ async function persistScanEvents(events, fname){
   for(let i=0;i<rows.length;i+=BATCH){
     const batch=rows.slice(i,i+BATCH);
     try{
-      const res=await fetch(sbCfg.url+'/rest/v1/scan_events?on_conflict=dedup_key',{method:'POST',
+      const res=await fetch(sbCfg.url+'/rest/v1/sa_scan_events?on_conflict=dedup_key',{method:'POST',
         headers:sbHeaders({'Content-Type':'application/json','Prefer':'resolution=merge-duplicates,return=minimal'}),
         body:JSON.stringify(batch)});
-      if(!res.ok){ if(statusEl){statusEl.style.display='block';statusEl.innerHTML='⚠️ Movement journal not saved (HTTP '+res.status+'). Create the <code>scan_events</code> table — see setup.';} return; }
+      if(!res.ok){ if(statusEl){statusEl.style.display='block';statusEl.innerHTML='⚠️ Movement journal not saved (HTTP '+res.status+'). Create the <code>sa_scan_events</code> table — see setup.';} return; }
     }catch(e){ console.warn('persistScanEvents',e); return; }
     done+=batch.length;
     if(statusEl){statusEl.style.display='block';statusEl.innerHTML='💾 Saving movement journal… '+Math.round(done/rows.length*100)+'%';}
@@ -4277,7 +4277,7 @@ async function recomputeTiersFromCloud(){
     const cutoff=new Date(Date.now()-90*86400000).toISOString();
     let all=[], from=0, page=1000;
     while(true){
-      const res=await fetch(sbCfg.url+'/rest/v1/scan_events?select=product,color,status,purpose,scan_time&scan_time=gte.'+encodeURIComponent(cutoff)+'&order=scan_time&offset='+from+'&limit='+page,{headers:sbHeaders()});
+      const res=await fetch(sbCfg.url+'/rest/v1/sa_scan_events?select=product,color,status,purpose,scan_time&scan_time=gte.'+encodeURIComponent(cutoff)+'&order=scan_time&offset='+from+'&limit='+page,{headers:sbHeaders()});
       if(!res.ok) return false;
       const pg=await res.json(); if(!pg.length) break;
       all=all.concat(pg); from+=page; if(pg.length<page) break;
@@ -4296,7 +4296,7 @@ async function showBarcodeJourney(bc){
   document.getElementById('modal-ov').classList.add('show');
   let events=[];
   try{
-    const res=await fetch(sbCfg.url+'/rest/v1/scan_events?select=status,purpose,scan_time,scanned_by,product,color,size&barcode=eq.'+encodeURIComponent(bc)+'&order=scan_time.desc&limit=500',{headers:sbHeaders()});
+    const res=await fetch(sbCfg.url+'/rest/v1/sa_scan_events?select=status,purpose,scan_time,scanned_by,product,color,size&barcode=eq.'+encodeURIComponent(bc)+'&order=scan_time.desc&limit=500',{headers:sbHeaders()});
     if(res.ok) events=await res.json();
   }catch(e){}
   const body=document.getElementById('modal-body');
@@ -4416,7 +4416,7 @@ function liveHeartbeat(result){
     _lastHB=Date.now(); _hbTimer=null;
     const row={device_id:deviceId(),name:currentScan.auditor||'Unknown',product:currentScan.product,color:currentScan.color,
       last_bc:_hbResult?String(_hbResult.bc):'',last_result:_hbResult?_hbResult.type:'',scan_count:currentScan.scanned.length,updated_at:new Date().toISOString()};
-    fetch(sbCfg.url+'/rest/v1/live_scans?on_conflict=device_id',{method:'POST',
+    fetch(sbCfg.url+'/rest/v1/sa_live_scans?on_conflict=device_id',{method:'POST',
       headers:sbHeaders({'Content-Type':'application/json','Prefer':'resolution=merge-duplicates,return=minimal'}),
       body:JSON.stringify([row])}).catch(()=>{});
   };
@@ -4428,7 +4428,7 @@ function liveHeartbeat(result){
 function liveStop(){
   if(_hbTimer){ clearTimeout(_hbTimer); _hbTimer=null; }
   if(!sbCfg.url||!sbCfg.key||!navigator.onLine) return;
-  fetch(sbCfg.url+'/rest/v1/live_scans?device_id=eq.'+deviceId(),{method:'DELETE',headers:sbHeaders()}).catch(()=>{});
+  fetch(sbCfg.url+'/rest/v1/sa_live_scans?device_id=eq.'+deviceId(),{method:'DELETE',headers:sbHeaders()}).catch(()=>{});
 }
 
 let _liveTimer=null,_liveTick=0;
@@ -4476,8 +4476,8 @@ async function renderLiveFeed(){
   const el=document.getElementById('live-feed'); if(!el) return;
   if(!sbCfg.url||!sbCfg.key){ el.innerHTML='<div class="card" style="color:var(--steel);font-size:13px">Connect Supabase (Data tab) to see live scanning.</div>'; return; }
   let rows=[];
-  try{ const res=await fetch(sbCfg.url+'/rest/v1/live_scans?select=*&order=updated_at.desc',{headers:sbHeaders()});
-    if(res.ok) rows=await res.json(); else if(res.status===404){ el.innerHTML='<div class="card" style="color:var(--steel);font-size:13px">⚠️ Create the <code>live_scans</code> table (see setup) to enable the live feed.</div>'; return; }
+  try{ const res=await fetch(sbCfg.url+'/rest/v1/sa_live_scans?select=*&order=updated_at.desc',{headers:sbHeaders()});
+    if(res.ok) rows=await res.json(); else if(res.status===404){ el.innerHTML='<div class="card" style="color:var(--steel);font-size:13px">⚠️ Create the <code>sa_live_scans</code> table (see setup) to enable the live feed.</div>'; return; }
   }catch(e){ return; }
   const now=Date.now();
   const active=rows.filter(r=>now-new Date(r.updated_at).getTime()<40000);
@@ -4626,7 +4626,7 @@ async function uploadStockToSupabase(rows, fname){
     // We'll use the filter ?uploaded_at=lt.{future_date} to delete all existing rows
     try{
       const cutoff=new Date(Date.now()+86400000).toISOString(); // tomorrow
-      const del=await fetch(sbCfg.url+'/rest/v1/stock_data?uploaded_at=lt.'+encodeURIComponent(cutoff),{
+      const del=await fetch(sbCfg.url+'/rest/v1/sa_stock_data?uploaded_at=lt.'+encodeURIComponent(cutoff),{
         method:'DELETE',
         headers:{'apikey':sbCfg.key,'Authorization':'Bearer '+sbCfg.key,'Prefer':'return=minimal'}
       });
@@ -4648,7 +4648,7 @@ async function uploadStockToSupabase(rows, fname){
       }; if(withNT){ o.note=String(r.note||''); o.tags=String(r.tags||''); o.scan_time=String(r.scanTime||''); o.scanned_by=String(r.scannedBy||''); o.item_id=String(r.itemId||''); o.size_id=String(r.sizeId||''); } return o; };
     for(let i=0;i<rows.length;i+=BATCH){
       const slice=rows.slice(i,i+BATCH);
-      const post=withNT=>fetch(sbCfg.url+'/rest/v1/stock_data',{
+      const post=withNT=>fetch(sbCfg.url+'/rest/v1/sa_stock_data',{
         method:'POST',
         headers:{'Content-Type':'application/json','apikey':sbCfg.key,'Authorization':'Bearer '+sbCfg.key,'Prefer':'return=minimal'},
         body:JSON.stringify(slice.map(r=>mkRow(r,withNT)))
@@ -4690,7 +4690,7 @@ async function fetchStockFromSupabase(){
     let cols='barcode,product_name,color,size,status,sku,purpose,uploaded_at,note,tags,scan_time,scanned_by,item_id,size_id';
     while(true){
       const get=()=>fetch(
-        sbCfg.url+'/rest/v1/stock_data?select='+cols+'&order=id&offset='+from+'&limit='+pageSize,
+        sbCfg.url+'/rest/v1/sa_stock_data?select='+cols+'&order=id&offset='+from+'&limit='+pageSize,
         {headers:{'apikey':sbCfg.key,'Authorization':'Bearer '+sbCfg.key,'Range-Unit':'items','Range':from+'-'+(from+pageSize-1),'Prefer':'count=none'}}
       );
       let res=await get();
@@ -4766,8 +4766,8 @@ function bcRow(bc){ return _bcIndex?_bcIndex.get(String(bc)):stockData.find(r=>S
 function saveSB(){sbCfg.url=document.getElementById('sb-url').value.trim();sbCfg.key=document.getElementById('sb-key').value.trim();localStorage.setItem('jaey_supabase',JSON.stringify(sbCfg));}
 async function testSB(){
   if(!sbCfg.url||!sbCfg.key)return toast('Enter URL and key');
-  try{const r=await fetch(sbCfg.url+'/rest/v1/stock_audits?limit=1',{headers:{'apikey':sbCfg.key,'Authorization':'Bearer '+sbCfg.key}});
-  document.getElementById('sb-status').textContent=r.ok?'✅ Connected!':(r.status===406?'⚠️ Connected — create table stock_audits first':'❌ HTTP '+r.status);
+  try{const r=await fetch(sbCfg.url+'/rest/v1/sa_stock_audits?limit=1',{headers:{'apikey':sbCfg.key,'Authorization':'Bearer '+sbCfg.key}});
+  document.getElementById('sb-status').textContent=r.ok?'✅ Connected!':(r.status===406?'⚠️ Connected — create table sa_stock_audits first':'❌ HTTP '+r.status);
   toast(r.ok?'✅ Connected!':'⚠️ Check config');}catch(e){document.getElementById('sb-status').textContent='❌ '+e.message;}
 }
 // Push one audit to Supabase. Returns true only if the cloud actually accepted it.
@@ -4781,9 +4781,9 @@ async function pushAuditToCloud(audit){
   };
   try{
     // Correct upsert: on_conflict belongs in the query string, not a header.
-    let r=await post(sbCfg.url+'/rest/v1/stock_audits?on_conflict=audit_id','resolution=merge-duplicates,return=minimal');
+    let r=await post(sbCfg.url+'/rest/v1/sa_stock_audits?on_conflict=audit_id','resolution=merge-duplicates,return=minimal');
     // If the table has no audit_id unique constraint, the upsert target 400s — fall back to a plain insert.
-    if(!r.ok && (r.status===400||r.status===404)) r=await post(sbCfg.url+'/rest/v1/stock_audits','return=minimal');
+    if(!r.ok && (r.status===400||r.status===404)) r=await post(sbCfg.url+'/rest/v1/sa_stock_audits','return=minimal');
     if(!r.ok){ _lastSyncError='HTTP '+r.status+(r.status===401||r.status===403?' (permission/RLS)':r.status===409?' (duplicate)':''); try{const t=await r.text(); if(t) _lastSyncError+=' · '+t.slice(0,120);}catch(e){} }
     else _lastSyncError='';
     return r.ok;
@@ -4821,7 +4821,7 @@ async function fetchAuditsFromSupabase(){
   try{
     let all=[], from=0, page=1000;
     while(true){
-      const res=await fetch(sbCfg.url+'/rest/v1/stock_audits?select=raw_data&order=synced_at.desc&offset='+from+'&limit='+page,{headers:sbHeaders()});
+      const res=await fetch(sbCfg.url+'/rest/v1/sa_stock_audits?select=raw_data&order=synced_at.desc&offset='+from+'&limit='+page,{headers:sbHeaders()});
       if(!res.ok) throw new Error('HTTP '+res.status);
       const rows=await res.json();
       if(!rows.length) break;
@@ -4902,9 +4902,9 @@ async function startFresh(){
   toast('🧹 Clearing all data…');
 
   const report=[];
-  report.push(await sbWipeTable('stock_audits','id','Audits'));
-  report.push(await sbWipeTable('audit_plans','id','Assignments'));
-  report.push(await sbWipeTable('team_members','name','Team members'));
+  report.push(await sbWipeTable('sa_stock_audits','id','Audits'));
+  report.push(await sbWipeTable('sa_audit_plans','id','Assignments'));
+  report.push(await sbWipeTable('sa_team_members','name','Team members'));
 
   // Clear local caches on this device.
   audits=[]; plans={};
@@ -4970,7 +4970,7 @@ function savePlans(){try{localStorage.setItem('jaey_plans',JSON.stringify(plans)
 async function fetchPlansFromSupabase(){
   if(!sbCfg.url||!sbCfg.key||!navigator.onLine) return plans;
   try{
-    const res=await fetch(sbCfg.url+'/rest/v1/audit_plans?select=id,plan_date,product,color,assignee,added_at,started_at,completed_at&order=added_at',{headers:sbHeaders()});
+    const res=await fetch(sbCfg.url+'/rest/v1/sa_audit_plans?select=id,plan_date,product,color,assignee,added_at,started_at,completed_at&order=added_at',{headers:sbHeaders()});
     if(!res.ok) throw new Error('HTTP '+res.status);
     const rows=await res.json();
     const np={};
@@ -4987,7 +4987,7 @@ async function pushPlanToSupabase(item){
   if(!sbCfg.url||!sbCfg.key) return false;
   const row={id:item.id,plan_date:item.plannedDate,product:item.product,color:item.color,assignee:item.assignee||'',added_at:item.addedAt||new Date().toISOString(),started_at:item.startedAt||null,completed_at:item.completedAt||null,updated_at:new Date().toISOString()};
   try{
-    const res=await fetch(sbCfg.url+'/rest/v1/audit_plans?on_conflict=id',{
+    const res=await fetch(sbCfg.url+'/rest/v1/sa_audit_plans?on_conflict=id',{
       method:'POST',
       headers:sbHeaders({'Content-Type':'application/json','Prefer':'resolution=merge-duplicates,return=minimal'}),
       body:JSON.stringify(row)
@@ -4999,7 +4999,7 @@ async function pushPlanToSupabase(item){
 async function deletePlanFromSupabase(id){
   if(!sbCfg.url||!sbCfg.key) return false;
   try{
-    const res=await fetch(sbCfg.url+'/rest/v1/audit_plans?id=eq.'+encodeURIComponent(id),
+    const res=await fetch(sbCfg.url+'/rest/v1/sa_audit_plans?id=eq.'+encodeURIComponent(id),
       {method:'DELETE',headers:sbHeaders({'Prefer':'return=minimal'})});
     return res.ok;
   }catch(e){ console.warn('deletePlan:',e); return false; }
@@ -5062,7 +5062,7 @@ function sbHeaders(extra){ return Object.assign({'apikey':sbCfg.key,'Authorizati
 async function fetchUsersFromSupabase(){
   if(!sbCfg.url||!sbCfg.key||!navigator.onLine) return getUsers();
   try{
-    const res=await fetch(sbCfg.url+'/rest/v1/team_members?select=name,pin,role,added_at&order=added_at',
+    const res=await fetch(sbCfg.url+'/rest/v1/sa_team_members?select=name,pin,role,added_at&order=added_at',
       {headers:sbHeaders()});
     if(!res.ok) throw new Error('HTTP '+res.status);
     const rows=await res.json();
@@ -5083,7 +5083,7 @@ async function pushUserToSupabase(u){
   if(!sbCfg.url||!sbCfg.key) return false;
   const row={name:u.name,pin:String(u.pin),role:u.role||'team',added_at:u.addedAt||new Date().toISOString(),updated_at:new Date().toISOString()};
   try{
-    const res=await fetch(sbCfg.url+'/rest/v1/team_members?on_conflict=name',{
+    const res=await fetch(sbCfg.url+'/rest/v1/sa_team_members?on_conflict=name',{
       method:'POST',
       headers:sbHeaders({'Content-Type':'application/json','Prefer':'resolution=merge-duplicates,return=minimal'}),
       body:JSON.stringify(row)
@@ -5096,7 +5096,7 @@ async function pushUserToSupabase(u){
 async function deleteUserFromSupabase(name){
   if(!sbCfg.url||!sbCfg.key) return false;
   try{
-    const res=await fetch(sbCfg.url+'/rest/v1/team_members?name=eq.'+encodeURIComponent(name),
+    const res=await fetch(sbCfg.url+'/rest/v1/sa_team_members?name=eq.'+encodeURIComponent(name),
       {method:'DELETE',headers:sbHeaders({'Prefer':'return=minimal'})});
     return res.ok;
   }catch(e){ console.warn('deleteUser:',e); return false; }
@@ -5253,8 +5253,8 @@ function loadStorage(){
     updateStockComposition();}
   const sb=localStorage.getItem('jaey_supabase');
   if(sb){try{const c=JSON.parse(sb); if(c&&c.url&&c.key) sbCfg=c;}catch(e){}}
-  // Force-migrate any device still pointing at the old project (or with no/invalid config) to the new backend.
-  if(!sbCfg.url||!sbCfg.key||/djyzaoisfslgkkfmgzuy/.test(sbCfg.url)){
+  // Force-migrate any device still pointing at the old (paused) project (or with no/invalid config) to the shared backend.
+  if(!sbCfg.url||!sbCfg.key||/uicittlmjpkzxwabwihv/.test(sbCfg.url)){
     sbCfg={url:SB_DEFAULT.url,key:SB_DEFAULT.key};
     try{localStorage.setItem('jaey_supabase',JSON.stringify(sbCfg));}catch(e){}
   }
@@ -5275,7 +5275,7 @@ async function ensureStockLoaded(){
 async function refreshStockIfStale(){
   if(!sbCfg.url||!sbCfg.key||!navigator.onLine) return;
   try{
-    const res=await fetch(sbCfg.url+'/rest/v1/stock_data?select=uploaded_at&order=uploaded_at.desc&limit=1',{headers:sbHeaders()});
+    const res=await fetch(sbCfg.url+'/rest/v1/sa_stock_data?select=uploaded_at&order=uploaded_at.desc&limit=1',{headers:sbHeaders()});
     if(!res.ok) return;
     const rows=await res.json();
     const cloudAt=rows&&rows[0]&&rows[0].uploaded_at;
