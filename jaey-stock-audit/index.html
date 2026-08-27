@@ -836,6 +836,7 @@ details.review-card[open]>.rc-summary{border-bottom:1px solid var(--border)}
       <div id="sb-status" style="font-size:12px;color:var(--steel)">Configure to enable cloud sync.</div>
       <button class="btn bo bb" onclick="testSB()">Test Connection</button>
       <button class="btn bo bb" id="push-all-audits" onclick="pushAllAuditsToCloud()" style="margin-top:8px">⬆️ Push all audits to cloud</button>
+      <button class="btn bo bb" id="migrate-old-audits" onclick="migrateAuditsFromOldProject()" style="margin-top:8px">⬇️ Migrate audits from old project</button>
       <div id="push-all-status" style="font-size:12px;color:var(--steel);margin-top:6px;display:none"></div>
       <div style="margin-top:10px;padding:8px 11px;background:var(--cream);border-radius:7px;font-size:11px;color:var(--steel)">
         <strong>Supabase table:</strong><br>
@@ -946,7 +947,7 @@ function setUserName(){ proceedToUserPin(); }
 // Service Worker registered via sw.js when hosted on GitHub Pages
 
 if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./sw.js').catch(()=>{});
-const APP_VER='v132'; // single source of truth — shown in both admin + team headers
+const APP_VER='v133'; // single source of truth — shown in both admin + team headers
 document.addEventListener('DOMContentLoaded',()=>{
   document.querySelectorAll('.app-ver').forEach(e=>e.textContent=APP_VER);
   loadStorage();
@@ -4814,6 +4815,46 @@ async function pushAllAuditsToCloud(){
   if(st) st.textContent='✓ Done — '+ok+' audit'+(ok===1?'':'s')+' on cloud'+(fail?', '+fail+' failed (retry to finish)':'');
   toast('☁️ Cloud sync: '+ok+' uploaded'+(fail?', '+fail+' failed':''));
   if(typeof refreshAuditsUI==='function') refreshAuditsUI();
+}
+// One-time migration: read every audit straight from the OLD (now-unpaused) project,
+// merge into local (keeping the richest copy of each), then push the full set to the
+// current backend. Bypasses the CSV importer, which can't handle the raw_data blobs.
+async function migrateAuditsFromOldProject(){
+  if(!navigator.onLine){ toast('⚠️ You are offline'); return; }
+  const OLD={url:'https://uicittlmjpkzxwabwihv.supabase.co',key:'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVpY2l0dGxtanBrenh3YWJ3aWh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE4MzM2OTIsImV4cCI6MjA5NzQwOTY5Mn0.uKfrn7PiwTTcAXOYo7Dz0TgzOSgSIQIp1ChTpRpKgjI'};
+  const btn=document.getElementById('migrate-old-audits');
+  const st=document.getElementById('push-all-status');
+  if(btn) btn.disabled=true;
+  if(st){ st.style.display='block'; st.textContent='⬇️ Reading audits from the old project…'; }
+  let all=[], from=0, page=1000;
+  try{
+    while(true){
+      const res=await fetch(OLD.url+'/rest/v1/stock_audits?select=raw_data&order=synced_at.desc&offset='+from+'&limit='+page,{headers:{'apikey':OLD.key,'Authorization':'Bearer '+OLD.key}});
+      if(!res.ok) throw new Error('HTTP '+res.status);
+      const rows=await res.json();
+      if(!rows.length) break;
+      all=all.concat(rows); from+=page; if(rows.length<page) break;
+      if(st) st.textContent='⬇️ Read '+all.length+' from old project…';
+    }
+  }catch(e){
+    if(btn) btn.disabled=false;
+    if(st) st.textContent='❌ Could not read old project ('+e.message+'). Make sure it is un-paused, then retry.';
+    toast('❌ Old project unreachable — is it un-paused?');
+    return;
+  }
+  // Merge into local audits, richest copy wins (same rule the cloud fetch uses).
+  const tms=a=>new Date(a.updatedAt||a.lastUpdated||a.completedAt||a.savedAt||a.date||0).getTime();
+  const rich=a=>(a?.scanned?.length||0)+((a?.followUps||[]).reduce((n,f)=>n+(f.foundBarcodes?.length||0),0))+(a?.removedBarcodes?.length||0);
+  const better=(o,ex)=>{ if(!ex) return true; const ro=rich(o),re=rich(ex); return ro!==re?ro>re:tms(o)>=tms(ex); };
+  const byId={};
+  for(const a of audits) if(a&&a.id!=null) byId[a.id]=a;
+  let added=0;
+  for(const r of all){ try{ const o=JSON.parse(r.raw_data); if(o&&o.id!=null){ if(byId[o.id]===undefined) added++; if(better(o,byId[o.id])) byId[o.id]=o; } }catch(e){} }
+  audits=Object.values(byId).sort((a,b)=>new Date(b.date||0)-new Date(a.date||0));
+  try{localStorage.setItem('jaey_audits',JSON.stringify(audits));}catch(e){}
+  if(st) st.textContent='✓ Read '+all.length+' from old ('+added+' new here). Pushing '+audits.length+' to the new cloud…';
+  await pushAllAuditsToCloud();
+  if(btn) btn.disabled=false;
 }
 function queueAudit(audit){
   const p=JSON.parse(localStorage.getItem('jaey_pending_sync')||'[]');
