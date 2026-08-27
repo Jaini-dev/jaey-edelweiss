@@ -651,6 +651,7 @@ details.review-card[open]>.rc-summary{border-bottom:1px solid var(--border)}
     </div>
     <div id="ff-footer-sum" style="display:none">
       <button class="btn bs bb" onclick="ffResume()">↩️ Resume scanning</button>
+      <button class="btn bo bb" onclick="ffClearTestData()" style="margin-top:8px;border-color:var(--rose);color:var(--rose)">🧹 Clear stock-take data</button>
     </div>
   </div>
 </div>
@@ -1009,7 +1010,7 @@ function setUserName(){ proceedToUserPin(); }
 // Service Worker registered via sw.js when hosted on GitHub Pages
 
 if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./sw.js').catch(()=>{});
-const APP_VER='v134'; // single source of truth — shown in both admin + team headers
+const APP_VER='v135'; // single source of truth — shown in both admin + team headers
 document.addEventListener('DOMContentLoaded',()=>{
   document.querySelectorAll('.app-ver').forEach(e=>e.textContent=APP_VER);
   loadStorage();
@@ -1941,6 +1942,27 @@ async function ffFinish(){
   }
   ffShowSummary();
   if(foot) foot.innerHTML='<button class="btn bg bb bl" onclick="ffFinish()">🔄 Refresh summary</button>';
+}
+
+// Wipe every free-flow stock-take audit + the set-aside list (local AND cloud).
+// Normal style-by-style audits are untouched (they have no mode:'freeflow').
+async function ffClearTestData(){
+  const ff=audits.filter(a=>a&&a.mode==='freeflow');
+  const asideN=getFFAside().length;
+  if(!ff.length && !asideN){ toast('Nothing to clear — no stock-take data'); return; }
+  if(!confirm('Delete ALL free-flow stock-take data?\n\n• '+ff.length+' style audit(s)\n• '+asideN+' set-aside piece(s)\n\nThis removes them from this device and the cloud. Your normal style-by-style audits are NOT affected.')) return;
+  if(_ffPushT){ clearTimeout(_ffPushT); _ffPushT=null; }
+  for(const a of ff){
+    if(sbCfg.url&&sbCfg.key&&navigator.onLine){ try{ await fetch(sbCfg.url+'/rest/v1/sa_stock_audits?audit_id=eq.'+encodeURIComponent(String(a.id)),{method:'DELETE',headers:sbHeaders({'Prefer':'return=minimal'})}); }catch(e){} }
+  }
+  audits=audits.filter(a=>!(a&&a.mode==='freeflow'));
+  try{localStorage.setItem('jaey_audits',JSON.stringify(audits));}catch(e){}
+  saveFFAside([]);                 // clears local + cloud (ff_aside)
+  freeflow=null;
+  toast('🧹 Stock-take data cleared ('+ff.length+' audits)');
+  document.getElementById('ff-screen').classList.remove('active');
+  if(typeof renderAdminReview==='function') renderAdminReview();
+  if(typeof renderUserTasks==='function') renderUserTasks();
 }
 
 function ffResume(){
