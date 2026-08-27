@@ -893,6 +893,12 @@ details.review-card[open]>.rc-summary{border-bottom:1px solid var(--border)}
       <button class="btn bp bb" onclick="loadPaste()">Load</button>
     </div>
     <div class="card">
+      <div class="ct">🚶 Free-Flow Stock Take</div>
+      <div id="ff-admin-status" style="font-size:12px;color:var(--steel);margin-bottom:8px">No stock-take data.</div>
+      <button class="btn bo bb" onclick="ffClearTestData()" style="border-color:var(--rose);color:var(--rose)">🧹 Clear all stock-take data</button>
+      <div style="font-size:11px;color:var(--steel);margin-top:6px">Removes every free-flow audit + the set-aside list (this device + cloud). Your normal style-by-style audits are <strong>not</strong> affected.</div>
+    </div>
+    <div class="card">
       <div class="ct">☁️ Supabase Sync</div>
       <div class="fg"><label>URL</label><input type="text" id="sb-url" placeholder="https://xxx.supabase.co" oninput="saveSB()"></div>
       <div class="fg"><label>Anon Key</label><input type="text" id="sb-key" placeholder="eyJh..." oninput="saveSB()"></div>
@@ -1010,7 +1016,7 @@ function setUserName(){ proceedToUserPin(); }
 // Service Worker registered via sw.js when hosted on GitHub Pages
 
 if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./sw.js').catch(()=>{});
-const APP_VER='v136'; // single source of truth — shown in both admin + team headers
+const APP_VER='v137'; // single source of truth — shown in both admin + team headers
 document.addEventListener('DOMContentLoaded',()=>{
   document.querySelectorAll('.app-ver').forEach(e=>e.textContent=APP_VER);
   loadStorage();
@@ -1948,6 +1954,12 @@ async function ffFinish(){
 
 // Wipe every free-flow stock-take audit + the set-aside list (local AND cloud).
 // Normal style-by-style audits are untouched (they have no mode:'freeflow').
+function updateFFAdminStatus(){
+  const el=document.getElementById('ff-admin-status'); if(!el) return;
+  const n=audits.filter(a=>a&&a.mode==='freeflow').length;
+  const aside=getFFAside().length;
+  el.textContent = (n||aside) ? (n+' stock-take audit'+(n===1?'':'s')+' · '+aside+' set aside') : 'No stock-take data.';
+}
 async function ffClearTestData(){
   const ff=audits.filter(a=>a&&a.mode==='freeflow');
   const asideN=getFFAside().length;
@@ -1963,6 +1975,7 @@ async function ffClearTestData(){
   freeflow=null;
   toast('🧹 Stock-take data cleared ('+ff.length+' audits)');
   document.getElementById('ff-screen').classList.remove('active');
+  updateFFAdminStatus();
   if(typeof renderAdminReview==='function') renderAdminReview();
   if(typeof renderUserTasks==='function') renderUserTasks();
 }
@@ -2621,6 +2634,7 @@ function showAdminTab(name,tab){
   if(name==='a-history'){ renderAdminHistory(); refreshAuditsUI(); }
   if(name==='plan'){ populatePlanDropdowns(); renderPlanList(); refreshRosterUI(); refreshPlansUI(); }
   if(name==='users'){ renderUserMgmt(); refreshRosterUI(); }
+  if(name==='data'){ updateFFAdminStatus(); }
 }
 
 // Admin access is via the login screen (Admin tab)
