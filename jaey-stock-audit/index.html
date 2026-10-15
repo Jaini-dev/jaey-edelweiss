@@ -1016,7 +1016,7 @@ function setUserName(){ proceedToUserPin(); }
 // Service Worker registered via sw.js when hosted on GitHub Pages
 
 if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./sw.js').catch(()=>{});
-const APP_VER='v137'; // single source of truth — shown in both admin + team headers
+const APP_VER='v138'; // single source of truth — shown in both admin + team headers
 document.addEventListener('DOMContentLoaded',()=>{
   document.querySelectorAll('.app-ver').forEach(e=>e.textContent=APP_VER);
   loadStorage();
@@ -5503,7 +5503,7 @@ function userLogout(){
 // USER MANAGEMENT
 // ══════════════════
 // localStorage is only an offline cache — Supabase (team_members) is the source of truth.
-function getUsers(){ return JSON.parse(localStorage.getItem('jaey_users')||'[]'); }
+function getUsers(){ try{ return (JSON.parse(localStorage.getItem('jaey_users')||'[]')||[]).filter(u=>u&&u.name!=null&&String(u.name).trim()!==''); }catch(e){ return []; } }
 function saveUsers(users){ localStorage.setItem('jaey_users',JSON.stringify(users)); }
 
 // ── ROSTER CLOUD SYNC ──
@@ -5517,7 +5517,7 @@ async function fetchUsersFromSupabase(){
       {headers:sbHeaders()});
     if(!res.ok) throw new Error('HTTP '+res.status);
     const rows=await res.json();
-    let users=rows.map(r=>({name:r.name,pin:String(r.pin),role:r.role||'team',addedAt:r.added_at||new Date().toISOString()}));
+    let users=rows.filter(r=>r&&r.name!=null&&String(r.name).trim()!=='').map(r=>({name:r.name,pin:String(r.pin),role:r.role||'team',addedAt:r.added_at||new Date().toISOString()}));
     // Root admin must always exist — seed her to the cloud if missing.
     if(!users.find(u=>u.name==='Jaini')){
       const jaini={name:'Jaini',pin:'6558',role:'admin',addedAt:new Date().toISOString()};
@@ -5640,8 +5640,9 @@ function saveNewUser(){
   if(!name){ errEl.textContent='Enter a name'; return; }
   if(!/^\d{4}$/.test(pin)){ errEl.textContent='PIN must be exactly 4 digits'; return; }
   const users=getUsers();
-  if(users.find(u=>u.name.toLowerCase()===name.toLowerCase())){ errEl.textContent='Name already exists'; return; }
-  if(users.find(u=>u.pin===pin)){ errEl.textContent='That PIN is already used by '+users.find(u=>u.pin===pin).name+'. Pick a different PIN.'; return; }
+  if(users.find(u=>String(u.name||'').toLowerCase()===name.toLowerCase())){ errEl.textContent='Name already exists'; return; }
+  const pinClash=users.find(u=>String(u.pin||'')===pin);
+  if(pinClash){ errEl.textContent='That PIN is already used by '+(pinClash.name||'another member')+'. Pick a different PIN.'; return; }
   const role=document.getElementById('new-user-role')?.value||'team';
   const newUser={name, pin, role, addedAt:new Date().toISOString()};
   users.push(newUser);
