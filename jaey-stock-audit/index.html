@@ -1016,7 +1016,7 @@ function setUserName(){ proceedToUserPin(); }
 // Service Worker registered via sw.js when hosted on GitHub Pages
 
 if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./sw.js').catch(()=>{});
-const APP_VER='v138'; // single source of truth — shown in both admin + team headers
+const APP_VER='v139'; // single source of truth — shown in both admin + team headers
 document.addEventListener('DOMContentLoaded',()=>{
   document.querySelectorAll('.app-ver').forEach(e=>e.textContent=APP_VER);
   loadStorage();
@@ -5634,15 +5634,17 @@ function showAddUserForm(){
 function hideAddUserForm(){ document.getElementById('add-user-card').style.display='none'; }
 
 function saveNewUser(){
+ try{
   const name=document.getElementById('new-user-name').value.trim();
   const pin=document.getElementById('new-user-pin').value.trim();
   const errEl=document.getElementById('add-user-err');
-  if(!name){ errEl.textContent='Enter a name'; return; }
-  if(!/^\d{4}$/.test(pin)){ errEl.textContent='PIN must be exactly 4 digits'; return; }
+  const bad=(m)=>{ if(errEl) errEl.textContent=m; toast('⚠️ '+m); };
+  if(!name){ bad('Enter a name'); return; }
+  if(!/^\d{4}$/.test(pin)){ bad('PIN must be exactly 4 digits'); return; }
   const users=getUsers();
-  if(users.find(u=>String(u.name||'').toLowerCase()===name.toLowerCase())){ errEl.textContent='Name already exists'; return; }
+  if(users.find(u=>String(u.name||'').toLowerCase()===name.toLowerCase())){ bad('Name "'+name+'" already exists'); return; }
   const pinClash=users.find(u=>String(u.pin||'')===pin);
-  if(pinClash){ errEl.textContent='That PIN is already used by '+(pinClash.name||'another member')+'. Pick a different PIN.'; return; }
+  if(pinClash){ bad('PIN '+pin+' is already used by '+(pinClash.name||'another member')+' — pick a different PIN'); return; }
   const role=document.getElementById('new-user-role')?.value||'team';
   const newUser={name, pin, role, addedAt:new Date().toISOString()};
   users.push(newUser);
@@ -5653,6 +5655,11 @@ function saveNewUser(){
   renderUserMgmt();
   syncUserChange({op:'upsert',user:newUser});
   toast('✓ '+name+' added');
+ }catch(e){
+  console.error('saveNewUser failed',e);
+  try{ const errEl=document.getElementById('add-user-err'); if(errEl) errEl.textContent='Error: '+(e&&e.message||e); }catch(_){}
+  toast('⚠️ Add failed: '+(e&&e.message||e));
+ }
 }
 
 function resetUserPin(name){
