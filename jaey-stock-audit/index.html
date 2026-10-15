@@ -1016,7 +1016,7 @@ function setUserName(){ proceedToUserPin(); }
 // Service Worker registered via sw.js when hosted on GitHub Pages
 
 if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./sw.js').catch(()=>{});
-const APP_VER='v139'; // single source of truth — shown in both admin + team headers
+const APP_VER='v140'; // single source of truth — shown in both admin + team headers
 document.addEventListener('DOMContentLoaded',()=>{
   document.querySelectorAll('.app-ver').forEach(e=>e.textContent=APP_VER);
   loadStorage();
@@ -1606,7 +1606,7 @@ function openScan(product,color){
 
   currentScan={
     id:Date.now(), date:new Date().toISOString(), product, color,
-    auditor:name, systemBarcodes:rows,
+    auditor:name,
     systemInward:sysInward.map(r=>r.barcode),
     scanned:[], notes:'', status:'scanning'
   };
@@ -1670,7 +1670,6 @@ function continueAudit(auditId){
   const audit=audits.find(a=>a.id===auditId); if(!audit) return;
   if(stockData.length===0){ toast('⚠️ Load the latest stock CSV first (Data tab)'); return; }
   const rows=productMap[audit.product]?.[audit.color]||[];
-  audit.systemBarcodes=rows;
   audit.systemInward=rows.filter(r=>r.status==='inward').map(r=>r.barcode);  // reconcile against the latest CSV
   audit._priorStatus=audit.status||'review';   // restore on exit (so it doesn't become a draft)
   audit._adding=true;
@@ -1693,7 +1692,7 @@ function closeScanScreen(){
     currentScan.status=(currentScan._priorStatus==='complete' && !hasOpen)?'complete':'updated';
     currentScan.updatedAt=new Date().toISOString();
     delete currentScan._adding; delete currentScan._priorStatus;
-    try{localStorage.setItem('jaey_audits',JSON.stringify(audits));}catch(e){}
+    try{persistAudits();}catch(e){}
     saveAuditRemote(currentScan); clearDraft();
     document.getElementById('scan-screen').classList.remove('active');
     liveStop(); currentScan=null; updateDraftBanner();
@@ -1795,7 +1794,7 @@ function openFreeFlow(){
 
 function ffExit(){
   document.getElementById('ff-screen').classList.remove('active');
-  try{localStorage.setItem('jaey_audits',JSON.stringify(audits));}catch(e){}
+  try{persistAudits();}catch(e){}
   if(typeof liveStop==='function') liveStop();
   if(typeof renderUserTasks==='function') renderUserTasks();
   if(typeof renderAdminReview==='function') renderAdminReview();
@@ -1815,7 +1814,7 @@ function ffGetAudit(row){
     a={ id:Date.now()*1000+Math.floor(Math.random()*1000), date:new Date().toISOString(),
         product:row.product, color:row.color, auditor:freeflow.auditor,
         mode:'freeflow', styleKey,
-        systemBarcodes:rows, systemInward:rows.filter(r=>r.status==='inward').map(r=>r.barcode),
+        systemInward:rows.filter(r=>r.status==='inward').map(r=>r.barcode),
         scanned:[], scanTimes:{}, notes:'', status:'scanning' };
     audits.unshift(a);
     freeflow.byStyle[styleKey]=a.id;
@@ -1893,7 +1892,7 @@ function ffAsideCommit(withDetails){
   saveFFAside(list);
   freeflow.seen.add(String(p.bc));
   const a=audits.find(x=>x.mode==='freeflow'&&x.styleKey===p.styleKey);
-  if(a){ try{localStorage.setItem('jaey_audits',JSON.stringify(audits));}catch(e){} if(sbCfg.url&&sbCfg.key&&navigator.onLine) pushAuditToCloud(a); }
+  if(a){ try{persistAudits();}catch(e){} if(sbCfg.url&&sbCfg.key&&navigator.onLine) pushAuditToCloud(a); }
   freeflow._pendingAside=null;
   document.getElementById('ff-aside-form').style.display='none';
   toast('⚠️ Set aside — BC '+p.bc);
@@ -1903,7 +1902,7 @@ function ffAsideSave(){ ffAsideCommit(true); }
 function ffAsideSkip(){ ffAsideCommit(false); }
 
 function ffPersist(){
-  try{localStorage.setItem('jaey_audits',JSON.stringify(audits));}catch(e){}
+  try{persistAudits();}catch(e){}
   if(_ffPushT) return;
   _ffPushT=setTimeout(()=>{ _ffPushT=null;
     if(!(sbCfg.url&&sbCfg.key&&navigator.onLine)||!freeflow) return;
@@ -1941,7 +1940,7 @@ async function ffFinish(){
   if(!freeflow) return;
   for(const sk of freeflow.order){ const a=audits.find(x=>x.id===freeflow.byStyle[sk]); if(!a) continue;
     a.report=genReport(a); if((a.status||'')==='scanning') a.status='review'; a.updatedAt=new Date().toISOString(); }
-  try{localStorage.setItem('jaey_audits',JSON.stringify(audits));}catch(e){}
+  try{persistAudits();}catch(e){}
   const foot=document.getElementById('ff-footer-scan');
   if(foot) foot.innerHTML='<div style="text-align:center;color:var(--steel);font-size:13px;padding:9px">Building summary…</div>';
   if(sbCfg.url&&sbCfg.key&&navigator.onLine){
@@ -1970,7 +1969,7 @@ async function ffClearTestData(){
     if(sbCfg.url&&sbCfg.key&&navigator.onLine){ try{ await fetch(sbCfg.url+'/rest/v1/sa_stock_audits?audit_id=eq.'+encodeURIComponent(String(a.id)),{method:'DELETE',headers:sbHeaders({'Prefer':'return=minimal'})}); }catch(e){} }
   }
   audits=audits.filter(a=>!(a&&a.mode==='freeflow'));
-  try{localStorage.setItem('jaey_audits',JSON.stringify(audits));}catch(e){}
+  try{persistAudits();}catch(e){}
   saveFFAside([]);                 // clears local + cloud (ff_aside)
   freeflow=null;
   toast('🧹 Stock-take data cleared ('+ff.length+' audits)');
@@ -2078,7 +2077,7 @@ function liveSyncAudit(){
     if(!['review','updated','complete'].includes(currentScan.status)) currentScan.status='scanning';
     currentScan.updatedAt=new Date().toISOString();
     if(!currentScan.savedAt) currentScan.savedAt=currentScan.updatedAt;
-    try{localStorage.setItem('jaey_audits',JSON.stringify(audits));}catch(e){}
+    try{persistAudits();}catch(e){}
     if(sbCfg.url&&sbCfg.key&&navigator.onLine) pushAuditToCloud(currentScan); // fire-and-forget
   };
   const dt=Date.now()-_liveAuditLast;
@@ -2087,7 +2086,7 @@ function liveSyncAudit(){
 // Debounced push for an already-stored audit (used by live update mode).
 const _auditPushTimers={};
 function liveSyncPush(audit){
-  try{localStorage.setItem('jaey_audits',JSON.stringify(audits));}catch(e){}
+  try{persistAudits();}catch(e){}
   if(!sbCfg.url||!sbCfg.key||!navigator.onLine||!audit) return;
   if(_auditPushTimers[audit.id]) return;
   _auditPushTimers[audit.id]=setTimeout(()=>{ delete _auditPushTimers[audit.id]; pushAuditToCloud(audit); },2000);
@@ -2184,7 +2183,7 @@ function sendForReview(){
 
   if(_liveAuditTimer){ clearTimeout(_liveAuditTimer); _liveAuditTimer=null; } // cancel pending live push
   if(!audits.find(a=>a.id===currentScan.id)) audits.unshift(currentScan); // may already be tracked from live sync
-  try{localStorage.setItem('jaey_audits',JSON.stringify(audits));}catch(e){console.warn('Storage full, audit in memory only');}
+  try{persistAudits();}catch(e){console.warn('Storage full, audit in memory only');}
   saveAuditRemote(currentScan);
 
   // Switch scan screen to report mode
@@ -2209,6 +2208,15 @@ function sendForReview(){
   renderAdminIfActive();
   toast('✅ Sent for review');
   setTimeout(()=>document.getElementById('found-in').focus(),300);
+}
+
+// Drop the heavy, never-read systemBarcodes copy before persisting/pushing an audit,
+// so a large migrated history can't blow the ~5MB localStorage quota.
+function _slimAudit(a){ if(!a||!a.systemBarcodes) return a; const c=Object.assign({},a); delete c.systemBarcodes; return c; }
+function persistAudits(){
+  for(const a of audits){ if(a&&a.systemBarcodes) delete a.systemBarcodes; } // shrink in place (frees space)
+  try{ localStorage.setItem('jaey_audits', JSON.stringify(audits)); return true; }
+  catch(e){ console.warn('persistAudits: localStorage quota', e); return false; }
 }
 
 function genReport(scan){
@@ -2480,7 +2488,7 @@ function renderFoundList(){
 function saveUpdate(){
   const audit=audits.find(a=>a.id===activeScanId); if(!audit) return;
   audit.lastUpdated=new Date().toISOString();
-  try{localStorage.setItem('jaey_audits',JSON.stringify(audits));}catch(e){console.warn('Storage full, audit in memory only');}
+  try{persistAudits();}catch(e){console.warn('Storage full, audit in memory only');}
   saveAuditRemote(audit); // immediate final push (safety, in case a debounced push was pending)
 
   toast('✓ Saved'+(foundBuffer.length?(' — '+foundBuffer.length+' piece(s) marked found'):''));
@@ -2518,7 +2526,7 @@ function quickFoundIt(bc, auditId){
   audit.status='updated';
   audit.lastUpdated=new Date().toISOString();
   
-  try{localStorage.setItem('jaey_audits',JSON.stringify(audits));}catch(err){}
+  try{persistAudits();}catch(err){}
   saveAuditRemote(audit);
   
   toast('✓ BC '+bc+' marked as found');
@@ -2910,7 +2918,7 @@ function renderAdminReview(){
 function setAdminNote(id,val){
   const a=audits.find(x=>x.id===id); if(!a) return;
   a.adminNote=val;
-  try{localStorage.setItem('jaey_audits',JSON.stringify(audits));}catch(e){}
+  try{persistAudits();}catch(e){}
 }
 
 // A planned style counts as DONE (not pending) once it has an audit created on/after it was planned —
@@ -3041,7 +3049,7 @@ function toggleAction(auditId,itemId,checked){
   if(!audit.checkedActions) audit.checkedActions=[];
   if(checked&&!audit.checkedActions.includes(itemId)) audit.checkedActions.push(itemId);
   else if(!checked) audit.checkedActions=audit.checkedActions.filter(x=>x!==itemId);
-  try{localStorage.setItem('jaey_audits',JSON.stringify(audits));}catch(e){console.warn('Storage full, audit in memory only');}
+  try{persistAudits();}catch(e){console.warn('Storage full, audit in memory only');}
 }
 
 // Admin: permanently delete an audit (e.g. a test) from this device + the cloud.
@@ -3049,7 +3057,7 @@ async function deleteAudit(id){
   const a=audits.find(x=>x.id===id);
   if(!confirm('Delete this audit'+(a?' for '+a.product+' · '+a.color:'')+'?\n\nIt is removed from every device and cannot be undone.')) return;
   audits=audits.filter(x=>x.id!==id);
-  try{localStorage.setItem('jaey_audits',JSON.stringify(audits));}catch(e){}
+  try{persistAudits();}catch(e){}
   try{const p=JSON.parse(localStorage.getItem('jaey_pending_sync')||'[]'); localStorage.setItem('jaey_pending_sync',JSON.stringify(p.filter(x=>x.id!==id)));}catch(e){}
   if(sbCfg.url&&sbCfg.key&&navigator.onLine){
     try{ await fetch(sbCfg.url+'/rest/v1/sa_stock_audits?audit_id=eq.'+encodeURIComponent(String(id)),{method:'DELETE',headers:sbHeaders({'Prefer':'return=minimal'})}); }catch(e){}
@@ -3072,7 +3080,7 @@ function completeAudit(id){
   // Add to trail
   if(!audit.trail) audit.trail=[];
   audit.trail.push({at:audit.completedAt,by:audit.completedBy,action:'completed',note:audit.adminNote});
-  try{localStorage.setItem('jaey_audits',JSON.stringify(audits));}catch(e){console.warn('Storage full, audit in memory only');}
+  try{persistAudits();}catch(e){console.warn('Storage full, audit in memory only');}
   saveAuditRemote(audit);
   toast('✅ Audit completed');
   renderAdminReview();
@@ -3085,7 +3093,7 @@ function reopenAudit(id){
   audit.updatedAt=new Date().toISOString();
   if(!audit.trail) audit.trail=[];
   audit.trail.push({at:audit.updatedAt,by:localStorage.getItem('jaey_admin_name')||localStorage.getItem('jaey_user_name')||'Admin',action:'reopened'});
-  try{localStorage.setItem('jaey_audits',JSON.stringify(audits));}catch(e){console.warn('Storage full, audit in memory only');}
+  try{persistAudits();}catch(e){console.warn('Storage full, audit in memory only');}
   saveAuditRemote(audit);
   toast('Audit reopened');
   renderAdminReview();
@@ -3368,7 +3376,7 @@ function markFoundCore(bc,auditId){
   audit.report.matched=(audit.report.matched||0)+1;
   if(audit.status!=='complete') audit.status='updated';
   audit.updatedAt=new Date().toISOString();
-  try{localStorage.setItem('jaey_audits',JSON.stringify(audits));}catch(e){}
+  try{persistAudits();}catch(e){}
   saveAuditRemote(audit);
   return true;
 }
@@ -3396,7 +3404,7 @@ async function applyCorrection(bc, auditId, newStatus){
   buildMap();
   cacheStock();
   const audit=audits.find(a=>a.id===auditId);
-  if(audit){ (audit.systemUpdated=audit.systemUpdated||[]).push(bc); audit.updatedAt=new Date().toISOString(); try{localStorage.setItem('jaey_audits',JSON.stringify(audits));}catch(e){} saveAuditRemote(audit); }
+  if(audit){ (audit.systemUpdated=audit.systemUpdated||[]).push(bc); audit.updatedAt=new Date().toISOString(); try{persistAudits();}catch(e){} saveAuditRemote(audit); }
   toast('✓ System updated — BC '+bc+' set '+newStatus);
   renderResolve(); renderAdminReview(); updateStockComposition();
 }
@@ -3438,7 +3446,7 @@ function writeOffUnknownCore(bc, auditId){
     saveLostLog(log);
   }
   const audit=audits.find(a=>a.id===auditId);
-  if(audit){ (audit.systemUpdated=audit.systemUpdated||[]).push(bc); audit.updatedAt=new Date().toISOString(); try{localStorage.setItem('jaey_audits',JSON.stringify(audits));}catch(e){} saveAuditRemote(audit); }
+  if(audit){ (audit.systemUpdated=audit.systemUpdated||[]).push(bc); audit.updatedAt=new Date().toISOString(); try{persistAudits();}catch(e){} saveAuditRemote(audit); }
   for(const r of stockData){ if(r.barcode==bc){ r.status='outward'; r.purpose='Unknown'; } }
   if(navigator.onLine && sbCfg.url && sbCfg.key){
     fetch(sbCfg.url+'/rest/v1/sa_stock_data?barcode=eq.'+encodeURIComponent(bc),{
@@ -3543,7 +3551,7 @@ function undoUnknownForStyle(product, color){
   buildMap(); cacheStock();
   if(navigator.onLine && sbCfg.url && sbCfg.key){ for(const bc of bcs){ fetch(sbCfg.url+'/rest/v1/sa_stock_data?barcode=eq.'+encodeURIComponent(bc),{method:'PATCH',headers:sbHeaders({'Content-Type':'application/json','Prefer':'return=minimal'}),body:JSON.stringify({status:'inward',purpose:''})}).catch(()=>{}); } } // 3. cloud stock back inward
   for(const a of audits){ if(a.systemUpdated && a.systemUpdated.some(b=>bcs.has(String(b)))){ a.systemUpdated=a.systemUpdated.filter(b=>!bcs.has(String(b))); a.updatedAt=new Date().toISOString(); saveAuditRemote(a); } } // 4. clear from audit
-  try{localStorage.setItem('jaey_audits',JSON.stringify(audits));}catch(e){}
+  try{persistAudits();}catch(e){}
   toast('↩️ Undid '+targets.length+' Unknown — back in the missing list');
   closeModal(); renderResolve(); renderAdminReview(); updateStockComposition();
 }
@@ -3760,7 +3768,7 @@ function moveScanToTrueStyle(bc, fromAuditId, trueProduct, trueColor){
     recomputeAuditReport(from);
     from.updatedAt=new Date().toISOString();
     (from.trail=from.trail||[]).push({at:from.updatedAt, by:localStorage.getItem('jaey_admin_name')||'Admin', action:'moved BC '+bc+' to '+trueProduct+' (found there)', note:''});
-    try{localStorage.setItem('jaey_audits',JSON.stringify(audits));}catch(e){}
+    try{persistAudits();}catch(e){}
     saveAuditRemote(from);
   }
   toast('✓ BC '+bc+' moved to '+trueProduct+' — found there, removed here');
@@ -3775,7 +3783,7 @@ function markFixedOnSystem(bc, auditId, kind){
     saveFixedPending(arr);
   }
   (a.trail=a.trail||[]).push({at:new Date().toISOString(), by:localStorage.getItem('jaey_admin_name')||'Admin', action:'marked BC '+bc+' fixed on system (awaiting CSV)', note:''});
-  try{localStorage.setItem('jaey_audits',JSON.stringify(audits));}catch(e){}
+  try{persistAudits();}catch(e){}
   saveAuditRemote(a);
   toast('🔧 BC '+bc+' parked — auto-confirms on the next stock CSV');
   renderAdminReview(); if(typeof renderResolve==='function') renderResolve();
@@ -3793,7 +3801,7 @@ function confirmFixOnAudit(a, bc){
   if(a.report) a.report.wrongProduct=(a.report.wrongProduct||[]).filter(e=>String(e).split('__')[0]!==bc);
   recomputeAuditReport(a);
   (a.trail=a.trail||[]).push({at:new Date().toISOString(), by:'System', action:'BC '+bc+' confirmed fixed on system — now a match in '+a.product, note:''});
-  try{localStorage.setItem('jaey_audits',JSON.stringify(audits));}catch(e){}
+  try{persistAudits();}catch(e){}
   saveAuditRemote(a);
 }
 // Confirm a parked missing piece: the system now agrees it's gone, so the ghost is resolved.
@@ -3803,7 +3811,7 @@ function confirmMissingFixedOnAudit(a, bc){
   (a.systemUpdated=a.systemUpdated||[]).push(bc);
   a.updatedAt=new Date().toISOString();
   (a.trail=a.trail||[]).push({at:a.updatedAt, by:'System', action:'BC '+bc+' confirmed fixed on system — now outward/gone', note:''});
-  try{localStorage.setItem('jaey_audits',JSON.stringify(audits));}catch(e){}
+  try{persistAudits();}catch(e){}
   saveAuditRemote(a);
 }
 // Run after any fresh stock load: confirm parked fixes that the new CSV now backs up.
@@ -4075,7 +4083,7 @@ function removeScanFromAudit(auditId, bc){
   }
   a.updatedAt=new Date().toISOString();
   (a.trail=a.trail||[]).push({at:a.updatedAt, by:localStorage.getItem('jaey_admin_name')||'Admin', action:'removed mis-scan BC '+bc, note:''});
-  try{localStorage.setItem('jaey_audits',JSON.stringify(audits));}catch(e){}
+  try{persistAudits();}catch(e){}
   saveAuditRemote(a);
   toast('🗑 BC '+bc+' removed from audit');
   renderAdminReview();
@@ -5161,7 +5169,7 @@ async function testSB(){
 let _lastSyncError='';
 async function pushAuditToCloud(audit){
   if(!sbCfg.url||!sbCfg.key||!navigator.onLine){ _lastSyncError=!navigator.onLine?'no internet':'Supabase not configured'; return false; }
-  const body=JSON.stringify({audit_id:audit.id.toString(),audit_date:audit.date,product_name:audit.product,color:audit.color,auditor:audit.auditor,status:audit.status||'review',total_scanned:audit.report?.totalScanned||0,matched:audit.report?.matched||0,ghosts:JSON.stringify(audit.report?.ghosts||[]),extras:JSON.stringify(audit.report?.extras||[]),wrong_label:JSON.stringify(audit.report?.wrongProduct||[]),notes:audit.notes||'',raw_data:JSON.stringify(audit)});
+  const body=JSON.stringify({audit_id:audit.id.toString(),audit_date:audit.date,product_name:audit.product,color:audit.color,auditor:audit.auditor,status:audit.status||'review',total_scanned:audit.report?.totalScanned||0,matched:audit.report?.matched||0,ghosts:JSON.stringify(audit.report?.ghosts||[]),extras:JSON.stringify(audit.report?.extras||[]),wrong_label:JSON.stringify(audit.report?.wrongProduct||[]),notes:audit.notes||'',raw_data:JSON.stringify(_slimAudit(audit))});
   const post=(url,prefer)=>{
     const ctrl=new AbortController(); const t=setTimeout(()=>ctrl.abort(),15000);
     return fetch(url,{method:'POST',headers:{'Content-Type':'application/json','apikey':sbCfg.key,'Authorization':'Bearer '+sbCfg.key,'Prefer':prefer},body,signal:ctrl.signal}).finally(()=>clearTimeout(t));
@@ -5235,7 +5243,7 @@ async function migrateAuditsFromOldProject(){
   let added=0;
   for(const r of all){ try{ const o=JSON.parse(r.raw_data); if(o&&o.id!=null){ if(byId[o.id]===undefined) added++; if(better(o,byId[o.id])) byId[o.id]=o; } }catch(e){} }
   audits=Object.values(byId).sort((a,b)=>new Date(b.date||0)-new Date(a.date||0));
-  try{localStorage.setItem('jaey_audits',JSON.stringify(audits));}catch(e){}
+  try{persistAudits();}catch(e){}
   if(st) st.textContent='✓ Read '+all.length+' from old ('+added+' new here). Pushing '+audits.length+' to the new cloud…';
   await pushAllAuditsToCloud();
   if(btn) btn.disabled=false;
@@ -5288,7 +5296,7 @@ async function fetchAuditsFromSupabase(){
     for(const a of audits) if(a&&a.id!=null) byId[a.id]=a;
     for(const r of all){ try{ const o=JSON.parse(r.raw_data); if(o&&o.id!=null){ cloudRich[o.id]=Math.max(cloudRich[o.id]??-1, rich(o)); if(better(o,byId[o.id])) byId[o.id]=o; } }catch(e){} }
     audits=Object.values(byId).sort((a,b)=>new Date(b.date||0)-new Date(a.date||0));
-    try{localStorage.setItem('jaey_audits',JSON.stringify(audits));}catch(e){}
+    try{persistAudits();}catch(e){}
     // Recovery: if our winning copy is richer than what the cloud holds, push it so other devices heal.
     if(sbCfg.url&&sbCfg.key&&navigator.onLine){
       for(const a of audits){ if(cloudRich[a.id]!==undefined && rich(a)>cloudRich[a.id]){ try{ pushAuditToCloud(a); }catch(e){} } }
@@ -5504,7 +5512,7 @@ function userLogout(){
 // ══════════════════
 // localStorage is only an offline cache — Supabase (team_members) is the source of truth.
 function getUsers(){ try{ return (JSON.parse(localStorage.getItem('jaey_users')||'[]')||[]).filter(u=>u&&u.name!=null&&String(u.name).trim()!==''); }catch(e){ return []; } }
-function saveUsers(users){ localStorage.setItem('jaey_users',JSON.stringify(users)); }
+function saveUsers(users){ try{ localStorage.setItem('jaey_users',JSON.stringify(users)); }catch(e){ console.warn('saveUsers quota',e); persistAudits(); localStorage.setItem('jaey_users',JSON.stringify(users)); } }
 
 // ── ROSTER CLOUD SYNC ──
 function sbHeaders(extra){ return Object.assign({'apikey':sbCfg.key,'Authorization':'Bearer '+sbCfg.key}, extra||{}); }
@@ -5704,6 +5712,7 @@ function loadStorage(){
     }
   } catch(e){}
   const sa=localStorage.getItem('jaey_audits');if(sa)audits=JSON.parse(sa);
+  persistAudits(); // rewrite without the old heavy systemBarcodes blobs → frees localStorage space
   const sp=localStorage.getItem('jaey_plans');if(sp)plans=JSON.parse(sp);
   const ss=localStorage.getItem('jaey_stock');
   if(ss){stockData=JSON.parse(ss);buildMap();
