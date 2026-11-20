@@ -508,6 +508,8 @@ details.review-card[open]>.rc-summary{border-bottom:1px solid var(--border)}
     <div style="font-size:11px;color:var(--steel);text-align:center;margin-top:6px">Free? Audit any style from the catalogue — fast-movers first.</div>
     <button class="btn bg bb" onclick="openFreeFlow()" style="margin-top:12px">🚶 Free-Flow Stock Take</button>
     <div style="font-size:11px;color:var(--steel);text-align:center;margin-top:6px">Scan everything in the godown in any order — the tool sorts each piece into its style automatically.</div>
+    <button class="btn bo bb" onclick="reloadStockNow(this)" style="margin-top:14px">↻ Reload stock from cloud</button>
+    <div style="font-size:11px;color:var(--steel);text-align:center;margin-top:6px">Barcodes showing as “not found”? Tap this to pull the latest stock.</div>
   </div>
 
   <!-- MY HISTORY -->
@@ -1016,7 +1018,7 @@ function setUserName(){ proceedToUserPin(); }
 // Service Worker registered via sw.js when hosted on GitHub Pages
 
 if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./sw.js').catch(()=>{});
-const APP_VER='v140'; // single source of truth — shown in both admin + team headers
+const APP_VER='v141'; // single source of truth — shown in both admin + team headers
 document.addEventListener('DOMContentLoaded',()=>{
   document.querySelectorAll('.app-ver').forEach(e=>e.textContent=APP_VER);
   loadStorage();
@@ -5154,6 +5156,23 @@ function cacheStock(){
   try{ localStorage.removeItem('jaey_stock'); }catch(e){}
 }
 function bcRow(bc){ return _bcIndex?_bcIndex.get(String(bc)):stockData.find(r=>String(r.barcode)===String(bc)); }
+
+// Team-member-accessible force refresh: team members have no Data tab, so when their cached
+// stock goes stale (barcodes show "not found") this pulls the current cloud stock, overwriting
+// the local copy. Clears the "already latest" guard so it never short-circuits.
+async function reloadStockNow(btn){
+  if(!sbCfg.url||!sbCfg.key){ toast('⚠️ Backend not configured'); return; }
+  if(!navigator.onLine){ toast('⚠️ You are offline'); return; }
+  const old=btn?btn.textContent:'';
+  if(btn){ btn.disabled=true; btn.textContent='↻ Reloading…'; }
+  try{
+    try{ localStorage.removeItem('jaey_stock_synced_at'); }catch(e){} // force a real re-pull
+    const ok=await fetchStockFromSupabase();
+    if(ok) toast('✓ Stock reloaded — '+stockData.length.toLocaleString()+' barcodes');
+    else toast('⚠️ No stock in the cloud — ask admin to upload the CSV');
+  }catch(e){ toast('⚠️ Reload failed: '+(e&&e.message||e)); }
+  if(btn){ btn.disabled=false; btn.textContent=old||'↻ Reload stock from cloud'; }
+}
 
 // ══════════════════
 // SUPABASE
