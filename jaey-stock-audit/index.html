@@ -1018,7 +1018,7 @@ function setUserName(){ proceedToUserPin(); }
 // Service Worker registered via sw.js when hosted on GitHub Pages
 
 if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./sw.js').catch(()=>{});
-const APP_VER='v141'; // single source of truth — shown in both admin + team headers
+const APP_VER='v142'; // single source of truth — shown in both admin + team headers
 document.addEventListener('DOMContentLoaded',()=>{
   document.querySelectorAll('.app-ver').forEach(e=>e.textContent=APP_VER);
   loadStorage();
@@ -4993,6 +4993,18 @@ function parseCSV(text,fname){
       if(row.barcode&&row.product)rows.push(row);
     }
     if(!rows.length)throw new Error('No valid rows found');
+    // Safety net: a stock upload REPLACES all stock everywhere. Warn before a tiny file wipes a
+    // much larger inventory (the classic mistake: a "latest/movements" export instead of the full
+    // barcode_inout_stock_till_date file).
+    const prevCount=stockData.length;
+    if(prevCount>=200 && rows.length < prevCount*0.5){
+      const gone=prevCount-rows.length;
+      if(!confirm('⚠️ WAIT — this looks like the wrong file.\n\nThis CSV has only '+rows.length.toLocaleString()+' barcodes, but your current stock has '+prevCount.toLocaleString()+'.\n\nUploading it will REPLACE the full stock and remove about '+gone.toLocaleString()+' pieces for everyone. This usually means you picked a "latest/movements" export instead of the full barcode_inout_stock_till_date file.\n\nUpload anyway?')){
+        try{document.getElementById('data-status').innerHTML='⚠️ Upload cancelled — stock unchanged ('+prevCount.toLocaleString()+' barcodes kept).';}catch(_){}
+        toast('Upload cancelled — stock unchanged');
+        return;
+      }
+    }
     stockData=rows;buildMap();
     stockDeltaVsLast(rows);  // compare to the previous upload → "+X added / −Y left since <date>"
     recoveryCheck(rows);   // flag any previously-Lost barcode that is now inward again
