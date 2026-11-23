@@ -1021,7 +1021,7 @@ function setUserName(){ proceedToUserPin(); }
 // Service Worker registered via sw.js when hosted on GitHub Pages
 
 if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./sw.js').catch(()=>{});
-const APP_VER='v143'; // single source of truth — shown in both admin + team headers
+const APP_VER='v144'; // single source of truth — shown in both admin + team headers
 document.addEventListener('DOMContentLoaded',()=>{
   document.querySelectorAll('.app-ver').forEach(e=>e.textContent=APP_VER);
   loadStorage();
@@ -4712,6 +4712,17 @@ async function showBarcodeJourney(bc){
     if(det) head+=`<div style="font-size:11px;color:var(--steel);margin-top:3px;font-family:monospace">${det}</div>`;
     const inn=row.status==='inward';
     head+=`<div style="font-size:12px;margin-top:6px;font-weight:700;color:${inn?'var(--sage)':'var(--rose)'}">${inn?'⬇ Currently INWARD (with you)':'⬆ Currently OUTWARD'}${row.purpose?' · '+row.purpose:''}</div>`;
+    // Reconcile: if the journal has a LATER movement that disagrees with the stock file's status,
+    // the stock snapshot is simply behind (exported before that movement). Flag it so the gap is clear.
+    const _latest=events[0];
+    if(_latest&&_latest.status){
+      const jrnInn=_latest.status==='inward';
+      const _sS=scanTimeISO(row.scanTime), _sJ=scanTimeISO(_latest.scan_time);
+      const _tS=_sS?Date.parse(_sS):NaN, _tJ=_sJ?Date.parse(_sJ):NaN;
+      if(jrnInn!==inn && !isNaN(_tS) && !isNaN(_tJ) && _tJ>_tS){
+        head+=`<div style="font-size:11px;margin-top:8px;background:#fff8e6;border:1px solid var(--gold);border-radius:7px;padding:8px 10px;line-height:1.55">⚠️ <strong>Stock file is behind the journal.</strong> The stock export says <strong>${inn?'INWARD':'OUTWARD'}</strong>${row.scanTime?' (as of '+fmtMoveDate(row.scanTime)+')':''}, but a later <strong style="color:${jrnInn?'var(--sage)':'var(--rose)'}">${jrnInn?'INWARD':'OUTWARD'}</strong>${_latest.purpose?' · '+_latest.purpose:''} movement is recorded on ${fmtMoveDate(_latest.scan_time)}. The piece is effectively <strong style="color:${jrnInn?'var(--sage)':'var(--rose)'}">${jrnInn?'INWARD':'OUTWARD'}</strong> — upload a fresh stock export to sync.</div>`;
+      }
+    }
     if(row.tags) head+=`<div style="font-size:11px;color:var(--steel);margin-top:3px">🏷️ ${row.tags}</div>`;
     if(row.note) head+=`<div style="font-size:11px;color:var(--steel);margin-top:2px">📝 ${row.note}</div>`;
   }
