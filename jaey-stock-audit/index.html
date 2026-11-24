@@ -1021,7 +1021,7 @@ function setUserName(){ proceedToUserPin(); }
 // Service Worker registered via sw.js when hosted on GitHub Pages
 
 if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./sw.js').catch(()=>{});
-const APP_VER='v144'; // single source of truth — shown in both admin + team headers
+const APP_VER='v145'; // single source of truth — shown in both admin + team headers
 document.addEventListener('DOMContentLoaded',()=>{
   document.querySelectorAll('.app-ver').forEach(e=>e.textContent=APP_VER);
   loadStorage();
@@ -1381,15 +1381,12 @@ function renderUserTasks(){
     const inCount=stockData.length>0?(productMap[item.product]?.[item.color]||[]).filter(r=>r.status==='inward').length:null;
     // For carryover: find audit from the original planned date; for today: check today
     const checkDate=item._carryoverFrom||today;
-    const auditToday=audits.filter(a=>a.product===item.product&&a.color===item.color&&a.savedAt&&(a.savedAt.startsWith(checkDate)||a.savedAt.startsWith(today)))
+    const auditToday=audits.filter(a=>a.mode!=='freeflow'&&a.product===item.product&&a.color===item.color&&a.savedAt&&(a.savedAt.startsWith(checkDate)||a.savedAt.startsWith(today)))
       .sort((a,b)=>new Date(b.savedAt)-new Date(a.savedAt))[0];
     const status=auditToday?.status||null;
 
     let pillHtml='', actionBtn='';
-    if(!status){
-      pillHtml='';
-      actionBtn=`<button class="sc-btn sc-btn-start" onclick="openScan('${esc(item.product)}','${esc(item.color)}')">Start →</button>`;
-    } else if(status==='review'){
+    if(status==='review'){
       pillHtml=`<span class="sp sp-review">📤 Sent</span>`;
       const hasGhosts=(auditToday.report?.ghosts?.length||0)>0;
       actionBtn=hasGhosts?`<button class="sc-btn sc-btn-update" onclick="openUpdateMode(${auditToday.id})">🔍 Update</button>`
@@ -1400,6 +1397,11 @@ function renderUserTasks(){
     } else if(status==='complete'){
       pillHtml=`<span class="sp sp-complete">✅ Complete</span>`;
       actionBtn=`<button class="sc-btn" style="background:var(--cream);color:var(--steel);font-size:11px" onclick="openScan('${esc(item.product)}','${esc(item.color)}')">Re-audit</button>`;
+    } else {
+      // null (not started) OR 'scanning' (unsent in-progress scan) OR any unexpected state → always
+      // offer a way in, so a card can never be left button-less.
+      pillHtml = status==='scanning' ? `<span class="sp sp-pending">✍️ In progress</span>` : '';
+      actionBtn=`<button class="sc-btn sc-btn-start" onclick="openScan('${esc(item.product)}','${esc(item.color)}')">${status==='scanning'?'Continue →':'Start →'}</button>`;
     }
 
     const recent=recentlyAuditedBy(item.product,item.color);
@@ -1601,7 +1603,7 @@ function openScan(product,color){
   // marked Complete by an admin (e.g. re-auditing the same style days later). Prevents the "same
   // style shows twice in Review" duplicates.
   const openPrior=audits
-    .filter(a=>a.product===product&&a.color===color&&(a.status||'review')!=='complete'&&inCurrentRound(a))
+    .filter(a=>a.mode!=='freeflow'&&a.product===product&&a.color===color&&(a.status||'review')!=='complete'&&inCurrentRound(a))
     .sort((a,b)=>new Date(b.updatedAt||b.savedAt||b.date||0)-new Date(a.updatedAt||a.savedAt||a.date||0))[0];
   if(openPrior){
     toast('↩️ Continuing the open audit for '+product+' · '+color+' — an admin must mark it Complete before a new one can start.');
