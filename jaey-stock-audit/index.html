@@ -1023,7 +1023,7 @@ function setUserName(){ proceedToUserPin(); }
 // Service Worker registered via sw.js when hosted on GitHub Pages
 
 if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./sw.js').catch(()=>{});
-const APP_VER='v152'; // single source of truth — shown in both admin + team headers
+const APP_VER='v153'; // single source of truth — shown in both admin + team headers
 document.addEventListener('DOMContentLoaded',()=>{
   document.querySelectorAll('.app-ver').forEach(e=>e.textContent=APP_VER);
   loadStorage();
@@ -2848,7 +2848,10 @@ function renderAdminReview(){
         const isWrong=ai.bc&&ai.id&&ai.id.indexOf('w-')===0;   // ⚠️ wrong label → Fixed-on-system / Remove
         const isExtra=ai.bc&&ai.id&&ai.id.indexOf('x-')===0;   // 🟡 system mismatch → Fixed-on-system
         let btns='';
-        if(isMissing) btns=`<button class="btn bs" style="font-size:11px;padding:6px 11px;flex-shrink:0" onclick="resolveFound('${ai.bc}',${audit.id})">✓ Found</button>`;
+        if(isMissing) btns=`<div style="display:flex;gap:5px;flex-shrink:0">
+          <button class="btn bs" style="font-size:11px;padding:6px 11px" onclick="resolveFound('${ai.bc}',${audit.id})">✓ Found</button>
+          <button class="btn bo" style="font-size:11px;padding:6px 10px;color:var(--rose);border-color:var(--rose)" onclick="markLost('${ai.bc}',${audit.id},${ai.foundIn?1:0})">🔴 Unknown</button>
+        </div>`;
         else if(isWrong){
           const canMove=ai.trueP&&trueStyleMissingAudit(ai.bc,ai.trueP,ai.trueC);
           btns=`<div style="display:flex;flex-direction:column;gap:5px;flex-shrink:0;align-items:stretch">
