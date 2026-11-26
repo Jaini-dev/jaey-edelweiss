@@ -1023,7 +1023,7 @@ function setUserName(){ proceedToUserPin(); }
 // Service Worker registered via sw.js when hosted on GitHub Pages
 
 if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./sw.js').catch(()=>{});
-const APP_VER='v154'; // single source of truth — shown in both admin + team headers
+const APP_VER='v155'; // single source of truth — shown in both admin + team headers
 document.addEventListener('DOMContentLoaded',()=>{
   document.querySelectorAll('.app-ver').forEach(e=>e.textContent=APP_VER);
   loadStorage();
@@ -2804,7 +2804,7 @@ function renderAdminReview(){
     const checked=audit.checkedActions||[];
     // "Live" = actively being worked on right now (scanning or updating) — updated within 45s.
     const recentlyActive=(Date.now()-new Date(audit.updatedAt||audit.savedAt||audit.date||0).getTime())<45000;
-    const live=status!=='complete'&&recentlyActive;
+    const live=status==='scanning'&&recentlyActive; // "live" = actively being SCANNED, not just edited by admin
     const statusLbl=status==='complete'?'✅ Complete':live?'🟢 Live':status==='scanning'?'🟢 Scanning…':status==='updated'?'🔄 Updated':'📤 For Review';
 
     // Accordion: collapsed by default; expanded state preserved across live re-renders.
@@ -3230,21 +3230,25 @@ async function combineDuplicateAudits(){
 
 function completeAudit(id){
   const audit=audits.find(a=>a.id===id); if(!audit) return;
-  const r=audit.report||{};
   const open=effectiveGhosts(audit).length+openExtras(audit).length+openWrongProduct(audit).length;
   if(open>0&&!confirm(`${open} unresolved item(s) still open (resolve them in the 🔧 Resolve tab). Complete anyway?`)) return;
   const noteEl=document.getElementById('admin-note-'+id);
-  audit.adminNote=noteEl?.value.trim()||audit.adminNote||'';
-  audit.status='complete';
-  audit.completedAt=new Date().toISOString();
-  audit.updatedAt=audit.completedAt;
-  audit.completedBy=localStorage.getItem('jaey_admin_name')||localStorage.getItem('jaey_user_name')||'Admin';
-  // Add to trail
-  if(!audit.trail) audit.trail=[];
-  audit.trail.push({at:audit.completedAt,by:audit.completedBy,action:'completed',note:audit.adminNote});
+  const note=noteEl?.value.trim()||audit.adminNote||'';
+  const by=localStorage.getItem('jaey_admin_name')||localStorage.getItem('jaey_user_name')||'Admin';
+  const now=new Date().toISOString();
+  // Complete the whole style: every current-round audit with the same product+colour+SKU variant — so a
+  // duplicate card (e.g. a free-flow copy) can never keep the style stuck in Needs Review.
+  const keyOf=a=>(a.product||'').trim().toLowerCase()+'|||'+(a.color||'').trim().toLowerCase()+'|||'+auditVariantKey(a);
+  const key=keyOf(audit);
+  const group=audits.filter(a=>a&&inCurrentRound(a)&&keyOf(a)===key);
+  for(const a of group){
+    a.adminNote=note||a.adminNote||'';
+    a.status='complete'; a.completedAt=now; a.updatedAt=now; a.completedBy=by;
+    (a.trail=a.trail||[]).push({at:now,by,action:'completed',note:a.adminNote});
+  }
   try{persistAudits();}catch(e){console.warn('Storage full, audit in memory only');}
-  saveAuditRemote(audit);
-  toast('✅ Audit completed');
+  for(const a of group) saveAuditRemote(a);
+  toast(group.length>1?('✅ Completed '+group.length+' cards for this style'):'✅ Audit completed');
   renderAdminReview();
   renderUserTasks();
 }
