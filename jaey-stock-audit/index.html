@@ -1023,7 +1023,7 @@ function setUserName(){ proceedToUserPin(); }
 // Service Worker registered via sw.js when hosted on GitHub Pages
 
 if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./sw.js').catch(()=>{});
-const APP_VER='v156'; // single source of truth — shown in both admin + team headers
+const APP_VER='v157'; // single source of truth — shown in both admin + team headers
 document.addEventListener('DOMContentLoaded',()=>{
   document.querySelectorAll('.app-ver').forEach(e=>e.textContent=APP_VER);
   loadStorage();
@@ -3774,11 +3774,22 @@ function restoreAllUnknown(){
 //   barcode,item_id,size_id,note,status,purpose  → note blank, status outward, purpose Unknown.
 function exportLostCSV(){
   repairLostLog(); // restore any write-offs the old auto-recover bug hid
-  const todays=getLostLog().filter(l=>!l.recovered && !l.dismissed && !l.done); // pending write-offs not yet exported/done
+  const log=getLostLog();
+  const todays=log.filter(l=>!l.recovered && !l.dismissed && !l.done); // pending write-offs not yet exported/done
   if(!todays.length){ toast('No pending Unknown pieces'); return; }
+  // Backfill Item ID / Size ID (and names) from the currently-loaded stock for any piece that was
+  // marked Unknown before the stock CSV was loaded — so the inventory upload has complete codes.
+  for(const l of todays){ const row=bcRow(l.barcode); if(row){
+    if(!l.itemId && row.itemId) l.itemId=row.itemId;
+    if(!l.sizeId && row.sizeId) l.sizeId=row.sizeId;
+    if(!l.product && row.product) l.product=row.product;
+    if(!l.color && row.color) l.color=row.color;
+    if(!l.size && row.size) l.size=row.size;
+  } }
+  saveLostLog(log); // persist the backfilled codes
   if(!confirm('Download the Unknown CSV for '+todays.length+' piece'+(todays.length>1?'s':'')+'?\n\nThis is what you upload to inventory, so they\'ll be marked DONE and cleared from the pending list. (You can restore them from 🗂️ All Unknown → Done if you ever need to re-export.)')) return;
   const missingIds=todays.filter(l=>!l.itemId||!l.sizeId);
-  if(missingIds.length && !confirm('⚠️ '+missingIds.length+' of '+todays.length+' Unknown rows are missing Item ID / Size ID (stock CSV not loaded when marked).\n\nLoad today\'s stock CSV and re-mark for complete rows, or export now with blanks?\n\nExport now?')) return;
+  if(missingIds.length && !confirm('⚠️ '+missingIds.length+' of '+todays.length+' rows still have no Item ID / Size ID — those barcodes aren\'t in the loaded stock CSV, so your inventory system will reject them.\n\nTip: load the full stock CSV in the Data tab, then re-export and they\'ll fill in. Export now anyway (blanks included)?')) return;
   // First 6 columns are what the inventory upload reads; product_name/color/size are appended for
   // easy human checking (the upload ignores extra trailing columns).
   const rows=[['barcode','item_id','size_id','note','status','purpose','product_name','color','size']];
@@ -3789,7 +3800,7 @@ function exportLostCSV(){
   const a=document.createElement('a'); a.href=u; a.download='jaey_unknown_'+todayStr()+'.csv'; a.click(); URL.revokeObjectURL(u);
   // Mark DONE — cleared from pending (applied to inventory). Kept in the log for the audit trail /
   // restore. exported=true keeps the recovery-watch working if a piece later comes back inward.
-  const log=getLostLog(); const set=new Set(todays.map(l=>l.barcode));
+  const set=new Set(todays.map(l=>l.barcode));
   for(const l of log){ if(set.has(l.barcode)){ l.exported=true; l.done=true; l.doneAt=new Date().toISOString(); } }
   saveLostLog(log);
   toast('⬇️ Exported '+todays.length+' — marked done & cleared from pending');
