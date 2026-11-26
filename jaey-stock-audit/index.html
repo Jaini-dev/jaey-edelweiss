@@ -716,9 +716,10 @@ details.review-card[open]>.rc-summary{border-bottom:1px solid var(--border)}
       </div>
       <input type="text" id="resolve-search" placeholder="🔍 Type a barcode for its status, or search style / colour / tag…" autocomplete="off" oninput="renderResolve()" style="width:100%;font-size:13px;padding:8px 11px;margin-bottom:8px">
       <div style="display:flex;gap:6px;margin-bottom:8px">
-        <select id="resolve-style" onchange="renderResolve()" style="flex:1;min-width:0;font-size:12px;padding:6px 8px"><option value="">All styles</option></select>
+        <select id="resolve-style" onchange="addResolveStyle(this.value)" style="flex:1;min-width:0;font-size:12px;padding:6px 8px"><option value="">+ Add style…</option></select>
         <select id="resolve-color" onchange="renderResolve()" style="flex:1;min-width:0;font-size:12px;padding:6px 8px"><option value="">All colours</option></select>
       </div>
+      <div id="resolve-style-chips" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px"></div>
       <button class="btn bo" onclick="openBulkStatus()" style="font-size:12px;padding:7px 11px;margin-bottom:8px;width:100%">📋 Bulk barcode status check — paste many at once</button>
       <div style="font-size:12px;color:var(--steel);margin-bottom:8px">Every unresolved piece across all styles, deduped. "Last scanned in" = it was scanned inside another style's audit (misplaced) — don't write it off.</div>
       <div id="resolve-list"></div>
@@ -1008,7 +1009,7 @@ let _stockHasNoteTags; // learned at upload time: do the stock_data columns note
 let _bcIndex=null;     // barcode → stock row, rebuilt by buildMap()
 let currentScan=null; // active scan session
 let foundBuffer=[], activeScanId=null;
-let selectedStyles=new Set(), assigneeRows=[{name:''}], planFilter='all', reviewFilter='review';
+let selectedStyles=new Set(), assigneeRows=[{name:''}], planFilter='all', reviewFilter='review', resolveStyleSel=new Set();
 let pinBuf='', pinCb=null;
 const DEFAULT_PIN='6558';
 const getPin=()=>localStorage.getItem('jaey_pin')||DEFAULT_PIN;
@@ -1021,7 +1022,7 @@ function setUserName(){ proceedToUserPin(); }
 // Service Worker registered via sw.js when hosted on GitHub Pages
 
 if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./sw.js').catch(()=>{});
-const APP_VER='v148'; // single source of truth — shown in both admin + team headers
+const APP_VER='v149'; // single source of truth — shown in both admin + team headers
 document.addEventListener('DOMContentLoaded',()=>{
   document.querySelectorAll('.app-ver').forEach(e=>e.textContent=APP_VER);
   loadStorage();
@@ -3346,6 +3347,17 @@ function newArrivalsByStyle(){
   return out;
 }
 
+// Multi-select style filter for the Missing-pieces worklist: pick several styles, shown as chips.
+function addResolveStyle(v){ v=(v||'').trim(); if(v){ resolveStyleSel.add(v); } renderResolve(); }
+function removeResolveStyle(v){ resolveStyleSel.delete(v); renderResolve(); }
+function clearResolveStyles(){ resolveStyleSel.clear(); renderResolve(); }
+function renderResolveStyleChips(){
+  const el=document.getElementById('resolve-style-chips'); if(!el) return;
+  if(!resolveStyleSel.size){ el.innerHTML=''; return; }
+  el.innerHTML=[...resolveStyleSel].sort().map(s=>`<span style="display:inline-flex;align-items:center;gap:4px;background:var(--cream);border:1px solid var(--border);border-radius:16px;padding:3px 5px 3px 11px;font-size:12px;font-weight:600">${_ffEsc(s)}<button onclick="removeResolveStyle('${esc(s)}')" style="background:none;border:none;color:var(--rose);cursor:pointer;font-size:15px;line-height:1;padding:0 3px">×</button></span>`).join('')
+    +`<button onclick="clearResolveStyles()" style="background:none;border:none;color:var(--steel);font-size:11px;cursor:pointer;text-decoration:underline;align-self:center">clear</button>`;
+}
+
 function renderResolve(){
   const sEl=document.getElementById('resolve-summary'); const lEl=document.getElementById('resolve-list');
   if(!lEl) return;
@@ -3383,13 +3395,14 @@ function renderResolve(){
   const _allRes=[...missing, ...mismAll];
   const _styleSel=document.getElementById('resolve-style'), _colorSel=document.getElementById('resolve-color');
   const styleOpts=[...new Set(_allRes.map(m=>m.product).filter(Boolean))].sort();
-  let selStyle=_styleSel?_styleSel.value:''; if(selStyle && !styleOpts.includes(selStyle)) selStyle='';
-  const colorOpts=[...new Set(_allRes.filter(m=>!selStyle||m.product===selStyle).map(m=>m.color).filter(Boolean))].sort();
+  for(const s of [...resolveStyleSel]) if(!styleOpts.includes(s)) resolveStyleSel.delete(s); // drop styles with no open pieces
+  const colorOpts=[...new Set(_allRes.filter(m=>resolveStyleSel.size===0||resolveStyleSel.has(m.product)).map(m=>m.color).filter(Boolean))].sort();
   let selColor=_colorSel?_colorSel.value:''; if(selColor && !colorOpts.includes(selColor)) selColor='';
   const _opt=(list,sel)=>list.map(v=>`<option value="${String(v).replace(/"/g,'&quot;')}"${v===sel?' selected':''}>${String(v).replace(/&/g,'&amp;').replace(/</g,'&lt;')}</option>`).join('');
-  if(_styleSel) _styleSel.innerHTML='<option value="">All styles</option>'+_opt(styleOpts,selStyle);
+  if(_styleSel) _styleSel.innerHTML='<option value="">+ Add style…</option>'+_opt(styleOpts.filter(s=>!resolveStyleSel.has(s)),'');
   if(_colorSel) _colorSel.innerHTML='<option value="">All colours</option>'+_opt(colorOpts,selColor);
-  if(selStyle){ missing=missing.filter(m=>m.product===selStyle); }
+  renderResolveStyleChips();
+  if(resolveStyleSel.size){ missing=missing.filter(m=>resolveStyleSel.has(m.product)); }
   if(selColor){ missing=missing.filter(m=>m.color===selColor); }
   if(q) missing=missing.filter(m=>String(m.bc).includes(q)||(m.product||'').toLowerCase().includes(q)||(m.color||'').toLowerCase().includes(q)||(m.sku||'').toLowerCase().includes(q)||(m.tags||'').toLowerCase().includes(q)||(m.note||'').toLowerCase().includes(q)||(m.sample&&q.length>=3&&'sample'.includes(q)));
   const sort=document.getElementById('resolve-sort')?.value||'age';
@@ -3428,7 +3441,7 @@ function renderResolve(){
     </div>`:'';
   // Mismatch cards (system-mismatch + wrong-label) — resolvable right here, searchable like missing.
   let mism=mismAll;
-  if(selStyle) mism=mism.filter(m=>m.product===selStyle);
+  if(resolveStyleSel.size) mism=mism.filter(m=>resolveStyleSel.has(m.product));
   if(selColor) mism=mism.filter(m=>m.color===selColor);
   if(q) mism=mism.filter(m=>String(m.bc).includes(q)||(m.product||'').toLowerCase().includes(q)||(m.color||'').toLowerCase().includes(q)||(m.tags||'').toLowerCase().includes(q)||(m.note||'').toLowerCase().includes(q));
   let mismatchHtml='';
