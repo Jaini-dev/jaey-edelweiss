@@ -1021,7 +1021,7 @@ function setUserName(){ proceedToUserPin(); }
 // Service Worker registered via sw.js when hosted on GitHub Pages
 
 if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./sw.js').catch(()=>{});
-const APP_VER='v146'; // single source of truth — shown in both admin + team headers
+const APP_VER='v147'; // single source of truth — shown in both admin + team headers
 document.addEventListener('DOMContentLoaded',()=>{
   document.querySelectorAll('.app-ver').forEach(e=>e.textContent=APP_VER);
   loadStorage();
@@ -3080,13 +3080,27 @@ async function deleteAudit(id){
   renderAdminReview(); renderResolve(); if(typeof renderAdminHistory==='function') renderAdminHistory();
 }
 
+// A style can have two colour variants under the same product+colour (e.g. a different secondary
+// colour), distinguished only by their item/SKU code. Derive that code from an audit's scanned
+// pieces (dominant item_id, else SKU) so we don't merge two genuinely different variants.
+function auditVariantKey(a){
+  if(!a||!Array.isArray(a.scanned)||!a.scanned.length) return '';
+  const counts={};
+  for(const e of a.scanned){
+    const row=bcRow(String(e).split('__')[0]);
+    const k=row?(String(row.itemId||'').trim()||String(row.sku||'').trim()):'';
+    if(k) counts[k]=(counts[k]||0)+1;
+  }
+  let best='',bestN=0; for(const k in counts){ if(counts[k]>bestN){ bestN=counts[k]; best=k; } }
+  return best;
+}
 // How many current-round styles have more than one (settled) audit — drives the "Combine" banner.
 function countDuplicateStyles(){
   const seen={};
   for(const a of audits){ if(!a||!inCurrentRound(a)) continue;
     const liveScan=(a.status==='scanning')&&(Date.now()-new Date(a.updatedAt||a.savedAt||a.date||0).getTime()<120000);
     if(liveScan) continue;
-    const key=(a.product||'').trim().toLowerCase()+'|||'+(a.color||'').trim().toLowerCase();
+    const key=(a.product||'').trim().toLowerCase()+'|||'+(a.color||'').trim().toLowerCase()+'|||'+auditVariantKey(a);
     seen[key]=(seen[key]||0)+1;
   }
   return Object.values(seen).filter(n=>n>1).length;
@@ -3100,7 +3114,7 @@ async function combineDuplicateAudits(){
   for(const a of audits){ if(!a||!inCurrentRound(a)) continue;
     const liveScan=(a.status==='scanning')&&(Date.now()-new Date(a.updatedAt||a.savedAt||a.date||0).getTime()<120000);
     if(liveScan) continue;
-    const key=(a.product||'').trim().toLowerCase()+'|||'+(a.color||'').trim().toLowerCase();
+    const key=(a.product||'').trim().toLowerCase()+'|||'+(a.color||'').trim().toLowerCase()+'|||'+auditVariantKey(a);
     (groups[key]=groups[key]||[]).push(a);
   }
   const rich=a=>(a?.scanned?.length||0)+((a?.followUps||[]).reduce((n,f)=>n+(f.foundBarcodes?.length||0),0))+(a?.removedBarcodes?.length||0);
