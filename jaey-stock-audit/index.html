@@ -1023,7 +1023,7 @@ function setUserName(){ proceedToUserPin(); }
 // Service Worker registered via sw.js when hosted on GitHub Pages
 
 if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./sw.js').catch(()=>{});
-const APP_VER='v155'; // single source of truth — shown in both admin + team headers
+const APP_VER='v156'; // single source of truth — shown in both admin + team headers
 document.addEventListener('DOMContentLoaded',()=>{
   document.querySelectorAll('.app-ver').forEach(e=>e.textContent=APP_VER);
   loadStorage();
@@ -3187,7 +3187,7 @@ async function combineDuplicateAudits(){
     const bcMap={}, times=Object.assign({},prime.scanTimes||{});
     const rem=new Set((prime.removedBarcodes||[]).map(String)), sysUp=new Set((prime.systemUpdated||[]).map(String)), sysIn=new Set((prime.systemInward||[]).map(String));
     const fups=[...(prime.followUps||[])], checked=new Set(prime.checkedActions||[]), auditors=new Set([prime.auditor].filter(Boolean));
-    let allComplete=true, anyUpdated=false;
+    let anyComplete=false, anyUpdated=false, doneAt=null, doneBy=null;
     for(const a of g){
       for(const e of (a.scanned||[])){ const bc=String(e).split('__')[0]; if(bcMap[bc]===undefined) bcMap[bc]=e; }
       for(const [bc,t] of Object.entries(a.scanTimes||{})) if(times[bc]===undefined) times[bc]=t;
@@ -3197,7 +3197,7 @@ async function combineDuplicateAudits(){
       if(a!==prime) for(const f of (a.followUps||[])) fups.push(f);
       for(const c of (a.checkedActions||[])) checked.add(c);
       if(a.auditor) auditors.add(a.auditor);
-      const s=a.status||'review'; if(s!=='complete') allComplete=false; if(s==='updated') anyUpdated=true;
+      const s=a.status||'review'; if(s==='complete'){ anyComplete=true; if(a.completedAt){ doneAt=a.completedAt; doneBy=a.completedBy; } } if(s==='updated') anyUpdated=true;
     }
     for(const bc of rem) delete bcMap[bc]; // honour tombstones — don't resurrect a removed piece
     prime.scanned=Object.values(bcMap);
@@ -3209,7 +3209,9 @@ async function combineDuplicateAudits(){
     prime.checkedActions=[...checked];
     prime.auditor=[...auditors].join(', ');
     delete prime.mode; // a combined audit is a normal review audit
-    prime.status=allComplete?'complete':(anyUpdated?'updated':'review');
+    // A completed style STAYS completed after merging in a stray duplicate — never un-complete it.
+    if(anyComplete){ prime.status='complete'; prime.completedAt=doneAt||prime.completedAt||new Date().toISOString(); prime.completedBy=doneBy||prime.completedBy||'Admin'; }
+    else { prime.status=anyUpdated?'updated':'review'; }
     prime.updatedAt=new Date().toISOString();
     prime.report=genReport(prime);
     primes.push(prime); mergedGroups++;
