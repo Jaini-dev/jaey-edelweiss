@@ -1023,7 +1023,7 @@ function setUserName(){ proceedToUserPin(); }
 // Service Worker registered via sw.js when hosted on GitHub Pages
 
 if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./sw.js').catch(()=>{});
-const APP_VER='v153'; // single source of truth — shown in both admin + team headers
+const APP_VER='v154'; // single source of truth — shown in both admin + team headers
 document.addEventListener('DOMContentLoaded',()=>{
   document.querySelectorAll('.app-ver').forEach(e=>e.textContent=APP_VER);
   loadStorage();
@@ -2842,7 +2842,10 @@ function renderAdminReview(){
 
     if(status!=='complete'&&actionItems.length){
       html+=`<div class="rc-actions-section">
-        <div style="font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--steel);margin-bottom:7px">Open items — resolve in the 🔧 Resolve tab</div>`;
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:7px">
+          <div style="font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--steel)">Open items — resolve in the 🔧 Resolve tab</div>
+          ${ghosts>0?`<button class="btn bo" style="font-size:11px;padding:5px 9px;color:var(--rose);border-color:var(--rose);flex-shrink:0;white-space:nowrap" onclick="markAllMissingUnknown(${audit.id})">🔴 All ${ghosts} Unknown</button>`:''}
+        </div>`;
       for(const ai of actionItems){
         const isMissing=ai.bc&&ai.id&&ai.id.indexOf('g-')===0; // 🔴 missing → Found button
         const isWrong=ai.bc&&ai.id&&ai.id.indexOf('w-')===0;   // ⚠️ wrong label → Fixed-on-system / Remove
@@ -3651,6 +3654,22 @@ function markLost(bc, auditId, hasFoundIn){
   writeOffUnknownCore(bc, auditId);
   buildMap(); cacheStock();
   toast('🔴 BC '+bc+' marked Unknown');
+  renderResolve(); renderAdminReview(); updateStockComposition();
+}
+
+// Write off EVERY still-missing piece of one style in one tap (from the Review card).
+function markAllMissingUnknown(auditId){
+  const audit=audits.find(a=>a.id===auditId); if(!audit) return;
+  const parked=new Set((auditFixedPending(auditId)||[]).map(p=>String(p.bc)));
+  const bcs=[...new Set(effectiveGhosts(audit).map(String))].filter(b=>!parked.has(b));
+  if(!bcs.length){ toast('No missing pieces to mark'); return; }
+  const samples=bcs.filter(b=>{ const r=stockData.find(x=>String(x.barcode)===b); return r&&isSample(r); }).length;
+  let msg='Mark ALL '+bcs.length+' missing piece'+(bcs.length>1?'s':'')+' of '+audit.product+' · '+audit.color+' as UNKNOWN?\n\nThey will be added to today\'s Unknown CSV and removed from the missing list.';
+  if(samples) msg+='\n\n⚠️ '+samples+' of these are SAMPLES — usually sitting in the sample rack, not lost.';
+  if(!confirm(msg)) return;
+  for(const bc of bcs) writeOffUnknownCore(bc, auditId);
+  buildMap(); cacheStock();
+  toast('🔴 '+bcs.length+' piece'+(bcs.length>1?'s':'')+' marked Unknown');
   renderResolve(); renderAdminReview(); updateStockComposition();
 }
 
