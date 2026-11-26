@@ -1021,7 +1021,7 @@ function setUserName(){ proceedToUserPin(); }
 // Service Worker registered via sw.js when hosted on GitHub Pages
 
 if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./sw.js').catch(()=>{});
-const APP_VER='v145'; // single source of truth — shown in both admin + team headers
+const APP_VER='v146'; // single source of truth — shown in both admin + team headers
 document.addEventListener('DOMContentLoaded',()=>{
   document.querySelectorAll('.app-ver').forEach(e=>e.textContent=APP_VER);
   loadStorage();
@@ -2764,6 +2764,13 @@ function renderAdminReview(){
   const openIds=new Set([...el.querySelectorAll('details[open]')].map(d=>d.getAttribute('data-aid')));
   const scanIdx=buildScanIndex();   // for auto-clearing wrong-labels accounted in their true style
   let html='';
+  const _dup=countDuplicateStyles();
+  if(_dup>0 && reviewFilter!=='archived'){
+    html+=`<div class="card" style="background:#fff8e6;border:1px solid var(--gold);margin-bottom:10px;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:11px 13px">
+      <div style="font-size:12px;color:#8a6d1a;line-height:1.4">🔗 <strong>${_dup} style${_dup>1?'s':''}</strong> ${_dup>1?'have':'has'} more than one audit (e.g. a free-flow + a normal scan). Tap to merge each into one card.</div>
+      <button class="btn bp" style="font-size:12px;padding:7px 12px;flex-shrink:0;white-space:nowrap" onclick="combineDuplicateAudits()">Combine</button>
+    </div>`;
+  }
   for(const audit of filtered){
     if(!inCurrentRound(audit)){ // Previous-round audit — read-only reference card
       const rr=audit.report||{}; const mmr=(rr.ghosts?.length||0)+(rr.extras?.length||0)+(rr.wrongProduct?.length||0);
@@ -3071,6 +3078,79 @@ async function deleteAudit(id){
   }
   toast('🗑 Audit deleted');
   renderAdminReview(); renderResolve(); if(typeof renderAdminHistory==='function') renderAdminHistory();
+}
+
+// How many current-round styles have more than one (settled) audit — drives the "Combine" banner.
+function countDuplicateStyles(){
+  const seen={};
+  for(const a of audits){ if(!a||!inCurrentRound(a)) continue;
+    const liveScan=(a.status==='scanning')&&(Date.now()-new Date(a.updatedAt||a.savedAt||a.date||0).getTime()<120000);
+    if(liveScan) continue;
+    const key=(a.product||'').trim().toLowerCase()+'|||'+(a.color||'').trim().toLowerCase();
+    seen[key]=(seen[key]||0)+1;
+  }
+  return Object.values(seen).filter(n=>n>1).length;
+}
+
+// Merge same-style audits (current round) into one card: union every scan, follow-up, tombstone and
+// system-update, then remove the redundant copies locally AND in the cloud. Audits being actively
+// scanned right now are left alone so in-flight work isn't disturbed.
+async function combineDuplicateAudits(){
+  const groups={};
+  for(const a of audits){ if(!a||!inCurrentRound(a)) continue;
+    const liveScan=(a.status==='scanning')&&(Date.now()-new Date(a.updatedAt||a.savedAt||a.date||0).getTime()<120000);
+    if(liveScan) continue;
+    const key=(a.product||'').trim().toLowerCase()+'|||'+(a.color||'').trim().toLowerCase();
+    (groups[key]=groups[key]||[]).push(a);
+  }
+  const rich=a=>(a?.scanned?.length||0)+((a?.followUps||[]).reduce((n,f)=>n+(f.foundBarcodes?.length||0),0))+(a?.removedBarcodes?.length||0);
+  let mergedGroups=0, removed=0; const toDelete=[], primes=[];
+  for(const key in groups){
+    const g=groups[key]; if(g.length<2) continue;
+    g.sort((a,b)=>rich(b)-rich(a) || (new Date(b.updatedAt||b.savedAt||b.date||0)-new Date(a.updatedAt||a.savedAt||a.date||0)));
+    const prime=g[0];
+    const bcMap={}, times=Object.assign({},prime.scanTimes||{});
+    const rem=new Set((prime.removedBarcodes||[]).map(String)), sysUp=new Set((prime.systemUpdated||[]).map(String)), sysIn=new Set((prime.systemInward||[]).map(String));
+    const fups=[...(prime.followUps||[])], checked=new Set(prime.checkedActions||[]), auditors=new Set([prime.auditor].filter(Boolean));
+    let allComplete=true, anyUpdated=false;
+    for(const a of g){
+      for(const e of (a.scanned||[])){ const bc=String(e).split('__')[0]; if(bcMap[bc]===undefined) bcMap[bc]=e; }
+      for(const [bc,t] of Object.entries(a.scanTimes||{})) if(times[bc]===undefined) times[bc]=t;
+      for(const b of (a.removedBarcodes||[])) rem.add(String(b));
+      for(const b of (a.systemUpdated||[])) sysUp.add(String(b));
+      for(const b of (a.systemInward||[])) sysIn.add(String(b));
+      if(a!==prime) for(const f of (a.followUps||[])) fups.push(f);
+      for(const c of (a.checkedActions||[])) checked.add(c);
+      if(a.auditor) auditors.add(a.auditor);
+      const s=a.status||'review'; if(s!=='complete') allComplete=false; if(s==='updated') anyUpdated=true;
+    }
+    for(const bc of rem) delete bcMap[bc]; // honour tombstones — don't resurrect a removed piece
+    prime.scanned=Object.values(bcMap);
+    prime.scanTimes=times;
+    prime.removedBarcodes=[...rem];
+    prime.systemUpdated=[...sysUp];
+    if(sysIn.size) prime.systemInward=[...sysIn];
+    prime.followUps=fups;
+    prime.checkedActions=[...checked];
+    prime.auditor=[...auditors].join(', ');
+    delete prime.mode; // a combined audit is a normal review audit
+    prime.status=allComplete?'complete':(anyUpdated?'updated':'review');
+    prime.updatedAt=new Date().toISOString();
+    prime.report=genReport(prime);
+    primes.push(prime); mergedGroups++;
+    for(let i=1;i<g.length;i++){ toDelete.push(g[i].id); removed++; }
+  }
+  if(!mergedGroups){ toast('No duplicate styles to combine'); return; }
+  const delSet=new Set(toDelete.map(String));
+  audits=audits.filter(a=>!delSet.has(String(a.id)));
+  try{persistAudits();}catch(e){}
+  try{const p=JSON.parse(localStorage.getItem('jaey_pending_sync')||'[]'); localStorage.setItem('jaey_pending_sync',JSON.stringify(p.filter(x=>!delSet.has(String(x.id)))));}catch(e){}
+  if(sbCfg.url&&sbCfg.key&&navigator.onLine){
+    for(const pr of primes){ try{ await pushAuditToCloud(pr); }catch(e){} }
+    for(const id of toDelete){ try{ await fetch(sbCfg.url+'/rest/v1/sa_stock_audits?audit_id=eq.'+encodeURIComponent(String(id)),{method:'DELETE',headers:sbHeaders({'Prefer':'return=minimal'})}); }catch(e){} }
+  }
+  toast('🔗 Combined '+mergedGroups+' style'+(mergedGroups>1?'s':'')+' · removed '+removed+' duplicate'+(removed>1?'s':''));
+  renderAdminReview(); if(typeof renderResolve==='function') renderResolve(); if(typeof renderAdminHistory==='function') renderAdminHistory();
 }
 
 function completeAudit(id){
