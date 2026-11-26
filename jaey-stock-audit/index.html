@@ -1023,7 +1023,7 @@ function setUserName(){ proceedToUserPin(); }
 // Service Worker registered via sw.js when hosted on GitHub Pages
 
 if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./sw.js').catch(()=>{});
-const APP_VER='v151'; // single source of truth — shown in both admin + team headers
+const APP_VER='v152'; // single source of truth — shown in both admin + team headers
 document.addEventListener('DOMContentLoaded',()=>{
   document.querySelectorAll('.app-ver').forEach(e=>e.textContent=APP_VER);
   loadStorage();
@@ -5509,15 +5509,22 @@ async function fetchAuditsFromSupabase(){
     // + removed-tombstones) so a stale low-scan copy can never clobber a real one; tie-break by newest.
     const tms=a=>new Date(a.updatedAt||a.lastUpdated||a.completedAt||a.savedAt||a.date||0).getTime();
     const rich=a=>(a?.scanned?.length||0)+((a?.followUps||[]).reduce((n,f)=>n+(f.foundBarcodes?.length||0),0))+(a?.removedBarcodes?.length||0);
-    const better=(o,ex)=>{ if(!ex) return true; const ro=rich(o), re=rich(ex); return ro!==re ? ro>re : tms(o)>=tms(ex); };
-    const byId={}, cloudRich={};
+    const isDone=a=>a&&a.status==='complete';
+    // "Complete" is sticky: once an admin marks a style done, a non-complete copy from another device
+    // must NOT revert it — only genuinely MORE pieces (a real re-audit) reopen it.
+    const better=(o,ex)=>{ if(!ex) return true;
+      if(isDone(ex)&&!isDone(o)) return rich(o)>rich(ex);   // keep complete unless challenger is richer
+      if(isDone(o)&&!isDone(ex)) return rich(o)>=rich(ex);  // prefer complete on ties
+      const ro=rich(o), re=rich(ex); return ro!==re ? ro>re : tms(o)>=tms(ex); };
+    const byId={}, cloudRich={}, cloudDone={};
     for(const a of audits) if(a&&a.id!=null) byId[a.id]=a;
-    for(const r of all){ try{ const o=JSON.parse(r.raw_data); if(o&&o.id!=null){ cloudRich[o.id]=Math.max(cloudRich[o.id]??-1, rich(o)); if(better(o,byId[o.id])) byId[o.id]=o; } }catch(e){} }
+    for(const r of all){ try{ const o=JSON.parse(r.raw_data); if(o&&o.id!=null){ cloudRich[o.id]=Math.max(cloudRich[o.id]??-1, rich(o)); cloudDone[o.id]=cloudDone[o.id]||isDone(o); if(better(o,byId[o.id])) byId[o.id]=o; } }catch(e){} }
     audits=Object.values(byId).sort((a,b)=>new Date(b.date||0)-new Date(a.date||0));
     try{persistAudits();}catch(e){}
-    // Recovery: if our winning copy is richer than what the cloud holds, push it so other devices heal.
+    // Recovery: push our winning copy when it is richer than the cloud, OR when we hold it complete but
+    // the cloud copy was reverted to non-complete — so "done" heals back across all devices.
     if(sbCfg.url&&sbCfg.key&&navigator.onLine){
-      for(const a of audits){ if(cloudRich[a.id]!==undefined && rich(a)>cloudRich[a.id]){ try{ pushAuditToCloud(a); }catch(e){} } }
+      for(const a of audits){ if((cloudRich[a.id]!==undefined && rich(a)>cloudRich[a.id]) || (isDone(a)&&cloudDone[a.id]===false)){ try{ pushAuditToCloud(a); }catch(e){} } }
     }
     return audits;
   }catch(e){ console.warn('fetchAudits:',e); return audits; }
