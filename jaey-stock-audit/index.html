@@ -848,6 +848,7 @@ details.review-card[open]>.rc-summary{border-bottom:1px solid var(--border)}
       <div id="stock-delta" style="font-size:12px;margin-top:6px"></div>
       <div id="stock-composition" style="display:none;font-size:12px;line-height:1.6;background:var(--cream);border-radius:8px;padding:9px 11px;margin-bottom:10px"></div>
     <button class="btn bo" onclick="fetchStockFromSupabase()" style="font-size:12px;padding:6px 11px;margin-bottom:10px;width:100%" id="fetch-stock-btn">☁️ Fetch latest from Supabase</button>
+    <button class="btn bo" onclick="showSizeMismatches()" style="font-size:12px;padding:6px 11px;margin-bottom:10px;width:100%" id="size-check-btn">🔎 Size check — tops/bottoms with the wrong size</button>
     <button class="btn bo" onclick="showPickList()" style="font-size:12px;padding:6px 11px;margin-bottom:10px;width:100%" id="picklist-btn">📋 Pick list (temp)</button><!-- TEMP PICKLIST button -->
       <div class="uz" onclick="document.getElementById('csv-f').click()">
         <div style="font-size:26px;margin-bottom:5px">📁</div>
@@ -1023,7 +1024,7 @@ function setUserName(){ proceedToUserPin(); }
 // Service Worker registered via sw.js when hosted on GitHub Pages
 
 if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./sw.js').catch(()=>{});
-const APP_VER='v157'; // single source of truth — shown in both admin + team headers
+const APP_VER='v158'; // single source of truth — shown in both admin + team headers
 document.addEventListener('DOMContentLoaded',()=>{
   document.querySelectorAll('.app-ver').forEach(e=>e.textContent=APP_VER);
   loadStorage();
@@ -3334,6 +3335,57 @@ function collectMismatches(){
 
 // Already-audited styles that have gained pieces since: a barcode currently inward, inwarded AFTER the
 // style's latest audit and not yet scanned in it. Drives the "new arrivals" heads-up.
+// ── SIZE SANITY: catch mislabels like a Top with a trouser size (e.g. 40) ──
+function _sizeKind(s){
+  s=String(s||'').trim().toUpperCase();
+  if(!s) return '?';
+  if(/^\d{1,3}$/.test(s)) return 'num';                       // 24, 28, 40…
+  if(/^(XXS|XS|S|M|L|XL|XXL|[2-9]XL|\dXL)$/.test(s)) return 'letter';
+  return 'free';                                              // SizeYOU, Free, One Size… → don't judge
+}
+const _BOTTOM_RE=/\b(trouser|trousers|pant|pants|skirt|short|shorts|bermuda|culotte|culottes|jogger|joggers|jean|jeans|legging|leggings|palazzo|cargo|jegging|dhoti)\b/i;
+const _TOP_RE=/\b(top|shirt|dress|blouse|kurti|kurta|tunic|blazer|waistcoat|jacket|coat|cami|camisole|peplum|crop|sweater|cardigan|bodysuit|bustier|corset|shrug|cape|poncho|bralette|tee|co.?ord)\b/i;
+function sizeLooksWrong(product,size){
+  const kind=_sizeKind(size); if(kind==='?'||kind==='free') return false;
+  const p=String(product||''); const bottom=_BOTTOM_RE.test(p), top=_TOP_RE.test(p);
+  if(top && !bottom && kind==='num') return 'A top/dress with a number (trouser) size';
+  if(bottom && !top && kind==='letter') return 'A trouser/skirt with a letter size';
+  return false;
+}
+function sizeMismatchList(){
+  const seen=new Set(), out=[];
+  for(const r of stockData){ const bc=String(r.barcode); if(seen.has(bc)) continue; seen.add(bc);
+    const why=sizeLooksWrong(r.product,r.size);
+    if(why) out.push({barcode:bc, product:r.product, color:r.color, size:r.size, status:r.status, sku:r.sku||'', itemId:r.itemId||'', why});
+  }
+  return out.sort((a,b)=>(a.product+a.color).localeCompare(b.product+b.color));
+}
+function showSizeMismatches(){
+  const list=sizeMismatchList();
+  const t=document.getElementById('modal-title'), body=document.getElementById('modal-body');
+  if(t) t.textContent='🔎 Size check';
+  if(!list.length){ body.innerHTML='<div style="padding:16px;text-align:center;color:var(--sage);font-size:14px">✓ No size mismatches — every top has a letter size and every trouser/skirt a number size.</div>'; document.getElementById('modal-ov').classList.add('show'); return; }
+  let h='<div style="font-size:12px;color:var(--steel);margin-bottom:10px">'+list.length+' piece'+(list.length>1?'s':'')+' where the size doesn\'t fit the garment (likely a mislabel in inventory — fix the size there).</div>';
+  for(const m of list){
+    h+='<div style="display:flex;align-items:center;gap:11px;padding:8px 10px;border-bottom:1px solid var(--line)">'
+      +'<span style="font-family:\'DM Serif Display\',serif;font-size:22px;min-width:52px;text-align:center;color:var(--rose)">'+_ffEsc(m.size)+'</span>'
+      +'<div style="flex:1;min-width:0"><div style="font-weight:600;font-size:13px">'+_ffEsc(m.product)+' · '+_ffEsc(m.color)+'</div>'
+      +'<div style="font-size:11px;color:var(--steel)">BC '+_ffEsc(m.barcode)+(m.sku?' · '+_ffEsc(m.sku):'')+' · '+_ffEsc(m.why)+'</div></div></div>';
+  }
+  h+='<button class="btn bo bb" onclick="exportSizeMismatches()" style="margin-top:10px;color:var(--rose);border-color:var(--rose)">⬇️ Download CSV</button>';
+  body.innerHTML=h;
+  document.getElementById('modal-ov').classList.add('show');
+}
+function exportSizeMismatches(){
+  const list=sizeMismatchList(); if(!list.length){ toast('No size mismatches'); return; }
+  const rows=[['barcode','item_id','product_name','color','size','status','issue']];
+  for(const m of list) rows.push([m.barcode,m.itemId,m.product,m.color,m.size,m.status,m.why]);
+  const cq=v=>{ v=String(v==null?'':v); return /[",\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v; };
+  const csv=rows.map(r=>r.map(cq).join(',')).join('\n');
+  const b=new Blob([csv],{type:'text/csv'}); const u=URL.createObjectURL(b);
+  const a=document.createElement('a'); a.href=u; a.download='jaey_size_mismatches_'+todayStr()+'.csv'; a.click(); URL.revokeObjectURL(u);
+  toast('⬇️ Exported '+list.length+' size mismatch'+(list.length>1?'es':''));
+}
 function newArrivalsByStyle(){
   const latest={};
   for(const a of audits){
@@ -5243,6 +5295,7 @@ function parseCSV(text,fname){
     renderUserTasks();
     updateStockComposition();
     toast('✓ '+rows.length.toLocaleString()+' barcodes loaded');
+    try{ const _sm=sizeMismatchList().length; if(_sm) setTimeout(()=>toast('⚠️ '+_sm+' piece'+(_sm>1?'s':'')+' have a size that doesn\'t fit the garment (e.g. a Top sized 40) — Data tab → 🔎 Size check'),1400); }catch(e){}
     // Upload to Supabase so all devices get it, and feed the movement journal.
     if(sbCfg.url&&sbCfg.key){ uploadStockToSupabase(rows, fname); persistScanEvents(extractEvents(recs, idx), fname); }
   }catch(e){toast('❌ '+e.message);}
