@@ -1021,7 +1021,7 @@ function setUserName(){ proceedToUserPin(); }
 // Service Worker registered via sw.js when hosted on GitHub Pages
 
 if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./sw.js').catch(()=>{});
-const APP_VER='v147'; // single source of truth — shown in both admin + team headers
+const APP_VER='v148'; // single source of truth — shown in both admin + team headers
 document.addEventListener('DOMContentLoaded',()=>{
   document.querySelectorAll('.app-ver').forEach(e=>e.textContent=APP_VER);
   loadStorage();
@@ -2810,7 +2810,7 @@ function renderAdminReview(){
       <summary class="rc-summary">
         ${img?`<img src="${img}" class="rc-sum-img" onerror="this.style.display='none'" alt="">`:`<div class="rc-sum-ph">👗</div>`}
         <div style="flex:1;min-width:0">
-          <div style="font-weight:700;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${audit.product} · ${audit.color}</div>
+          <div style="font-weight:700;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${audit.product} · ${audit.color}${audit.variantSku?` · <span style="font-size:11px;color:var(--steel);font-weight:600">SKU ${esc(audit.variantSku)}</span>`:''}</div>
           <div style="font-size:11px;color:var(--steel);margin-top:2px">
             <div style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis"><span style="color:var(--sage);font-weight:600">✓ ${accounted}/${sys}</span> · ${audit.auditor}</div>
             ${stockData.length?`<div style="color:var(--sky);font-weight:600">📦 ${withYouNow(audit)} with you now</div>`:''}
@@ -2833,6 +2833,7 @@ function renderAdminReview(){
           ${stray?'<span class="badge b-gold">🟡 '+stray+' to remove</span>':''}
           ${(!mm&&!stray)?'<span class="badge b-sage">✅ No mismatches</span>':''}
         </div>
+        ${auditVariants(audit).length>1?`<div style="margin-bottom:8px"><button class="btn bo" style="font-size:11px;padding:6px 10px;border-color:var(--gold);color:#8a6d1a" onclick="splitAuditByVariant(${audit.id})">✂️ Split by SKU — this card holds ${auditVariants(audit).length} different SKUs</button></div>`:''}
         <div class="rc-meta" style="font-size:11px;color:var(--steel);margin-bottom:6px">${ds} · <strong>${audit.auditor}</strong></div>
         ${live?`<div style="padding:2px 0 6px;font-size:12px;color:var(--sage);font-weight:600">🟢 Active now — ${audit.auditor} is ${status==='scanning'?'scanning':'updating'}, count updating live</div>`:''}
         ${totalFound?`<div style="padding:2px 0 6px;font-size:12px;color:var(--sky)">🔄 ${totalFound} piece${totalFound>1?'s':''} found after the first scan</div>`:''}`;
@@ -3080,20 +3081,72 @@ async function deleteAudit(id){
   renderAdminReview(); renderResolve(); if(typeof renderAdminHistory==='function') renderAdminHistory();
 }
 
-// A style can have two colour variants under the same product+colour (e.g. a different secondary
-// colour), distinguished only by their item/SKU code. Derive that code from an audit's scanned
-// pieces (dominant item_id, else SKU) so we don't merge two genuinely different variants.
+// A style can have two variants under the SAME product+colour (e.g. Charm Waistcoat "Blue" = teal +
+// cobalt), told apart only by SKU. _variantOfBc returns a per-variant code for a barcode: its SKU with
+// the trailing size stripped (so sizes of one variant stay together), falling back to item_id.
+function _variantOfBc(bc){
+  const r=bcRow(bc); if(!r) return '';
+  let s=String(r.sku||'').trim();
+  if(s){ const sz=String(r.size||'').trim(); if(sz && s.length>sz.length && s.toUpperCase().endsWith(sz.toUpperCase())) s=s.slice(0,s.length-sz.length).replace(/[-_ ]+$/,''); return s; }
+  return String(r.itemId||'').trim();
+}
+// Dominant variant code across an audit's scanned pieces (used to key duplicate detection/merge).
 function auditVariantKey(a){
   if(!a||!Array.isArray(a.scanned)||!a.scanned.length) return '';
   const counts={};
-  for(const e of a.scanned){
-    const row=bcRow(String(e).split('__')[0]);
-    const k=row?(String(row.itemId||'').trim()||String(row.sku||'').trim()):'';
-    if(k) counts[k]=(counts[k]||0)+1;
-  }
+  for(const e of a.scanned){ const k=_variantOfBc(String(e).split('__')[0]); if(k) counts[k]=(counts[k]||0)+1; }
   let best='',bestN=0; for(const k in counts){ if(counts[k]>bestN){ bestN=counts[k]; best=k; } }
   return best;
 }
+// How many distinct SKU variants a single audit spans (scanned + system) — >1 means it can be split.
+function auditVariants(a){
+  const set=new Set();
+  for(const e of (a.scanned||[])){ const v=_variantOfBc(String(e).split('__')[0]); if(v) set.add(v); }
+  for(const b of (a.systemInward||[])){ const v=_variantOfBc(String(b)); if(v) set.add(v); }
+  return [...set];
+}
+// Split one audit that mixes two+ SKU variants (e.g. teal + cobalt under "Blue") into one audit per
+// SKU, each with its own scanned pieces, system set and report. Recovers variants even if a Combine
+// had merged them, since the merged card still holds every barcode.
+async function splitAuditByVariant(id){
+  const a=audits.find(x=>x.id===id); if(!a) return;
+  if(!stockData.length){ toast('⚠️ Load stock first so SKUs can be read'); return; }
+  const vs=auditVariants(a);
+  if(vs.length<=1){ toast('Only one SKU here — nothing to split'); return; }
+  if(!confirm('Split "'+a.product+' · '+a.color+'" into '+vs.length+' cards by SKU?\n\nEach SKU variant becomes its own review card with just its pieces.')) return;
+  const now=new Date().toISOString();
+  const made=[];
+  for(const v of vs){
+    const scanned=(a.scanned||[]).filter(e=>_variantOfBc(String(e).split('__')[0])===v);
+    const sysIn=(a.systemInward||[]).filter(b=>_variantOfBc(String(b))===v);
+    if(!scanned.length && !sysIn.length) continue;
+    const times={}; for(const e of scanned){ const bc=String(e).split('__')[0]; if(a.scanTimes&&a.scanTimes[bc]!=null) times[bc]=a.scanTimes[bc]; }
+    const na={
+      id:Date.now()*1000+made.length+Math.floor(Math.random()*997),
+      date:a.date||now, savedAt:a.savedAt||now, updatedAt:now,
+      product:a.product, color:a.color, auditor:a.auditor, variantSku:v,
+      status:a.status||'review',
+      scanned, scanTimes:times, systemInward:sysIn,
+      removedBarcodes:(a.removedBarcodes||[]).filter(b=>_variantOfBc(String(b))===v),
+      systemUpdated:(a.systemUpdated||[]).filter(b=>_variantOfBc(String(b))===v),
+      followUps:(a.followUps||[]).map(f=>({...f,foundBarcodes:(f.foundBarcodes||[]).filter(b=>_variantOfBc(String(b))===v)})).filter(f=>(f.foundBarcodes||[]).length),
+      notes:a.notes||''
+    };
+    na.report=genReport(na);
+    made.push(na);
+  }
+  if(made.length<2){ toast('Could not split — pieces share one SKU'); return; }
+  audits=audits.filter(x=>x.id!==id);
+  for(const na of made) audits.unshift(na);
+  try{persistAudits();}catch(e){}
+  if(sbCfg.url&&sbCfg.key&&navigator.onLine){
+    for(const na of made){ try{ await pushAuditToCloud(na); }catch(e){} }
+    try{ await fetch(sbCfg.url+'/rest/v1/sa_stock_audits?audit_id=eq.'+encodeURIComponent(String(id)),{method:'DELETE',headers:sbHeaders({'Prefer':'return=minimal'})}); }catch(e){}
+  }
+  toast('✂️ Split into '+made.length+' SKU cards');
+  renderAdminReview(); if(typeof renderResolve==='function') renderResolve();
+}
+
 // How many current-round styles have more than one (settled) audit — drives the "Combine" banner.
 function countDuplicateStyles(){
   const seen={};
